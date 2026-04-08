@@ -25,8 +25,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    // Extrai número e conteúdo
-    const waId = data.key.remoteJid.replace('@s.whatsapp.net', '')
+    // Extrai JID completo e número de exibição
+    const remoteJid = data.key.remoteJid // ex: "5521999@s.whatsapp.net" ou "82038@lid"
+    const contactPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '')
     const content =
       data.message.conversation ||
       data.message.extendedTextMessage?.text ||
@@ -39,8 +40,8 @@ export async function POST(req: NextRequest) {
       .from('conversations')
       .upsert(
         {
-          wa_id: waId,
-          contact_phone: waId,
+          wa_id: remoteJid,      // JID completo para envio correto
+          contact_phone: contactPhone,
           contact_name: contactName,
           last_message: content,
           last_message_at: new Date().toISOString(),
