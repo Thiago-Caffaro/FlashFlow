@@ -1,106 +1,91 @@
 # Arquitetura do Sistema
 
-## Diagrama de componentes
+## Diagrama atual (MVP semana 1)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                      CLIENTE FINAL                       │
-│                  (WhatsApp no celular)                   │
+│                    LEAD FINAL                            │
+│               (WhatsApp no celular)                      │
 └──────────────────────┬──────────────────────────────────┘
                        │ mensagem
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│              Evolution API (self-hosted)                  │
-│         Docker container — porta 8080                    │
+│           Evolution API v2.2.3 (TrueNAS)                │
+│     Docker — http://100.119.152.43:8080                  │
+│     Instância: flashflow-main                            │
+│     Redis: Upstash (cache interno)                       │
 └──────────────────────┬──────────────────────────────────┘
-                       │ webhook HTTP POST
+                       │ webhook POST
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│                  NestJS API (Backend)                    │
+│             Next.js 15 (App Router)                      │
 │                                                          │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐ │
-│  │  WhatsApp    │  │ Flow Executor │  │   Gemini     │ │
-│  │  Controller  │─▶│  (State Mach) │─▶│   Service    │ │
-│  └──────────────┘  └───────┬───────┘  └──────────────┘ │
-│                             │                            │
-│  ┌──────────────┐  ┌────────▼──────┐                   │
-│  │  Socket.io   │  │  Redis        │                   │
-│  │  Gateway     │  │  (state conv) │                   │
-│  └──────┬───────┘  └───────────────┘                   │
-└─────────┼───────────────────────────────────────────────┘
-          │ WebSocket
-          ▼
+│  POST /api/webhook/evolution  ← recebe mensagens         │
+│  POST /api/messages/send      ← envia mensagens          │
+│  GET  /api/conversations      ← lista conversas          │
+└──────────────┬───────────────────────────────────────────┘
+               │ Supabase client
+               ▼
 ┌─────────────────────────────────────────────────────────┐
-│               Next.js Frontend                           │
-│                                                          │
-│  ┌────────────────┐  ┌──────────────┐  ┌─────────────┐ │
-│  │  Flow Builder  │  │  Chat UI     │  │  Dashboard  │ │
-│  │  (xyflow)      │  │  (WA Web)    │  │  (Recharts) │ │
-│  └────────────────┘  └──────────────┘  └─────────────┘ │
+│                    Supabase                              │
+│         PostgreSQL + Realtime                            │
+│  Tabelas: conversations, messages                        │
 └─────────────────────────────────────────────────────────┘
-          │
-          ▼
+               │ Supabase Realtime
+               ▼
 ┌─────────────────────────────────────────────────────────┐
-│              PostgreSQL 16 + Redis                       │
+│             Interface de Chat (Next.js)                  │
+│   Sidebar conversas | Bolhas | Input envio               │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Fluxo de uma conversa (passo a passo)
+## Fluxo de uma mensagem recebida
 
 ```
-1. Lead clica no link externo (ex: "wa.me/...?text=Quero+o+Vistaplus")
-2. WhatsApp abre com mensagem pré-preenchida
-3. Lead envia a mensagem
-4. Evolution API recebe e faz POST no webhook do NestJS
-5. WhatsApp Controller valida o payload
-6. Busca no Redis: já existe sessão para esse número?
-   └─ NÃO → identifica gatilho → carrega fluxo do produto → cria sessão no Redis
-   └─ SIM → recupera estado atual da sessão
-7. Flow Executor processa o próximo bloco
-8. Se bloco = GeminiAssistant:
-   a. Monta prompt (base + produto + histórico)
-   b. Chama Gemini API (Flash-Lite primeiro)
-   c. Recebe structured output
-   d. Formata resposta
-9. Envia resposta via Evolution API
-10. Atualiza estado no Redis
-11. Persiste mensagem no PostgreSQL
-12. Emite evento via Socket.io para o frontend
+1. Lead envia mensagem no WhatsApp
+2. Evolution API recebe e faz POST em /api/webhook/evolution
+3. Webhook valida o payload
+4. Busca conversa existente pelo número (wa_id) no Supabase
+   └─ NÃO existe → cria nova conversa
+   └─ SIM existe → atualiza last_message e last_message_at
+5. Salva mensagem na tabela messages (direction: inbound)
+6. Supabase Realtime notifica o frontend automaticamente
+7. Interface atualiza sem reload
 ```
 
 ---
 
-## Estado de uma conversa (Redis)
+## Fluxo de envio de mensagem
 
-```typescript
-interface ConversationState {
-  conversationId: string
-  organizationId: string
-  whatsappNumber: string
-  currentNodeId: string
-  flowId: string
-  productId: string
-  variables: Record<string, string>  // variáveis coletadas no fluxo
-  isHuman: boolean                    // atendente assumiu?
-  isAiEnabled: boolean
-  lastActivityAt: number              // timestamp para timeout
-  geminiHistory: GeminiMessage[]      // contexto para o bloco IA
-}
 ```
-
-TTL no Redis: 24 horas (renovado a cada mensagem)
+1. Atendente digita mensagem e clica enviar
+2. Frontend chama POST /api/messages/send
+3. API chama Evolution API → envia pro WhatsApp real
+4. Salva mensagem no Supabase (direction: outbound)
+5. Supabase Realtime atualiza a interface
+```
 
 ---
 
-## Decisões de arquitetura
+## Roadmap de arquitetura
 
-| Decisão | Escolha | Motivo |
-|---------|---------|--------|
-| ORM | Prisma | type-safe, migrations simples |
-| State da conversa | Redis (não Postgres) | latência < 5ms, TTL nativo |
-| Real-time | Socket.io | simples, battle-tested |
-| Auth | Clerk | multi-tenant pronto, sem boilerplate |
-| Monorepo | pnpm workspaces | compartilhar types facilmente |
-| WhatsApp | Evolution API | gratuito, multi-device, QR code |
+```
+Fase 2: Flow Builder (xyflow) + Flow Executor (state machine)
+Fase 3: Bloco Gemini (IA conversacional)
+Fase 4: Dashboard analytics
+Fase 5: Auth (Supabase Auth)
+Fase 6: Multi-número WhatsApp
+```
+
+---
+
+## Infraestrutura atual
+
+| Serviço | Onde roda | Endereço |
+|---|---|---|
+| Next.js | localhost:3000 / Vercel | — |
+| Evolution API | TrueNAS Scale (Docker) | http://100.119.152.43:8080 |
+| Supabase | Cloud grátis | lyaaxlbzahvklibomske.supabase.co |
+| Upstash Redis | Cloud grátis | prompt-finch-83300.upstash.io |

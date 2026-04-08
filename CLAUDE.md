@@ -1,68 +1,68 @@
+## CLAUDE.md:
+
+```markdown
 # FlashFlow — Contexto para Claude Code
 
 ## O que é este projeto
-SaaS de automação de atendimento WhatsApp com construtor visual de fluxos (drag-and-drop) e IA integrada (Gemini). Substitui o BotConversa com controle total e custo menor.
+SaaS de atendimento WhatsApp com construtor visual de fluxos e IA (Gemini).
 
-## Stack (não altere sem consultar)
-- **Frontend**: Next.js 15 (App Router) + React 19 + TypeScript + Tailwind CSS + shadcn/ui
-- **Flow Builder**: xyflow (React Flow v12+)
-- **Backend**: NestJS + TypeScript
-- **Banco**: PostgreSQL 16 + JSONB + Redis
-- **ORM**: Prisma
-- **Auth**: Clerk (multi-tenant)
-- **Real-time**: Socket.io + Redis
-- **IA**: Google Gemini 2.5 Flash / Flash-Lite
-- **WhatsApp**: Evolution API (self-hosted)
-- **Deploy**: Docker + Railway / Hetzner
+## Stack real (não altere)
+- **Frontend + Backend**: Next.js 15 (App Router) + TypeScript + Tailwind + shadcn/ui
+- **Banco**: Supabase (PostgreSQL + Realtime)
+- **Auth**: Nenhuma no MVP
+- **WhatsApp**: Evolution API v2.2.3 (self-hosted no TrueNAS via Tailscale)
+- **IA**: Google Gemini (Fase 5 — não implementar agora)
+- **Flow Builder**: xyflow (Fase 3 — não implementar agora)
 
-## Estrutura de pastas esperada
+## Infraestrutura
+- Evolution API: http://100.119.152.43:8080
+- Instance: flashflow-main
+- Evolution API Key: flashflow123456 (usar via env)
+
+## Estrutura de pastas
 ```
 flashflow/
-├── apps/
-│   ├── web/          # Next.js 15 frontend
-│   └── api/          # NestJS backend
-├── packages/
-│   ├── db/           # Prisma schema + migrations
-│   ├── types/        # TypeScript types compartilhados
-│   └── utils/        # Helpers compartilhados
-├── docker-compose.yml
-├── CLAUDE.md
-└── docs/
-    ├── ARCHITECTURE.md
-    ├── DATABASE.md
-    ├── API.md
-    └── FLOWS.md
+├── app/
+│   ├── api/
+│   │   ├── webhook/evolution/route.ts  # recebe mensagens
+│   │   └── messages/route.ts           # envia mensagens
+│   └── page.tsx                        # interface de chat
+├── lib/
+│   └── supabase.ts                     # cliente Supabase
+├── components/                         # componentes UI
+├── .env.local
+└── CLAUDE.md
 ```
 
-## Princípios de código (sempre siga)
-1. TypeScript strict — sem `any`
-2. Zod para validação em todas as entradas
-3. Tratar erros explicitamente (sem silenciar exceções)
-4. Comentários apenas em lógica não óbvia
-5. Nomes em inglês no código, português nos comentários/docs
-6. Nunca commitar segredos — usar `.env.example`
+## Variáveis de ambiente
+```
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+EVOLUTION_API_URL=http://100.119.152.43:8080
+EVOLUTION_API_KEY=flashflow123456
+```
 
-## Fase atual: MVP
-Foco exclusivo no MVP. Ver `docs/MVP.md` para escopo exato.
-Não implemente nada da Fase 2 ou 3 sem sinalizar claramente.
+## Schema do banco (Supabase)
+```sql
+conversations: id, wa_id, contact_name, contact_phone, 
+               last_message, last_message_at, unread_count,
+               created_at, updated_at
 
-## Comandos úteis
-```bash
-# Dev
-pnpm dev              # roda frontend + backend
-pnpm dev:web          # só frontend
-pnpm dev:api          # só backend
+messages: id, conversation_id, wa_message_id, content,
+          type, direction (inbound/outbound), status, created_at
+```
 
-# DB
-pnpm db:migrate       # roda migrations
-pnpm db:studio        # Prisma Studio
-pnpm db:seed          # seed de dev
+## Fase atual: MVP semana 1
+Escopo exato:
+1. Webhook recebe mensagem → salva no Supabase
+2. Interface lista conversas (sidebar)
+3. Interface mostra mensagens (chat)
+4. Enviar mensagem pela interface → Evolution API → WhatsApp
 
-# Testes
-pnpm test             # unit tests
-pnpm test:e2e         # e2e tests
-
-# Build
-pnpm build
-pnpm docker:up        # sobe todos os containers
+## Princípios
+1. TypeScript — sem `any`
+2. Tratar erros explicitamente
+3. Não implementar nada fora do escopo MVP semana 1
+4. Tudo em Next.js App Router — sem backend separado
 ```

@@ -1,209 +1,137 @@
 # API Reference
 
-**Base URL**: `/api/v1`  
-**Auth**: Bearer token (Clerk JWT) em todas as rotas, exceto `/webhook/*`  
+**Base URL**: `/api`  
+**Auth**: nenhuma no MVP semana 1  
 **Content-Type**: `application/json`
 
 ---
 
-## Módulos
-
-### WhatsApp (`/whatsapp`)
+## Webhook Evolution API
 
 ```
-POST   /whatsapp/connect          → Criar instância e obter QR code
-GET    /whatsapp/status            → Status da conexão atual
-DELETE /whatsapp/disconnect        → Desconectar número
-POST   /whatsapp/send              → Enviar mensagem manual
+POST /api/webhook/evolution
 ```
 
+Rota pública — recebe eventos da Evolution API.
+
+**Payload recebido:**
 ```typescript
-// POST /whatsapp/connect - response
 {
-  instanceName: string
-  qrCode: string        // base64 da imagem QR
-  status: "QR_PENDING"
-}
-
-// GET /whatsapp/status - response
-{
-  status: "CONNECTED" | "DISCONNECTED" | "QR_PENDING"
-  phoneNumber: string | null
-  connectedAt: string | null
-}
-
-// POST /whatsapp/send
-{
-  conversationId: string
-  content: string
-  type: "TEXT"
-}
-```
-
----
-
-### Webhook Evolution API (`/webhook`)
-
-```
-POST /webhook/evolution/:instanceName  → Recebe eventos do WhatsApp
-```
-
-> ⚠️ Rota pública (sem auth Clerk). Validar `x-evolution-secret` header.
-
-```typescript
-// Payload recebido da Evolution API
-{
-  event: "messages.upsert"
+  event: "messages.upsert" | "connection.update" | ...
   instance: string
   data: {
-    key: { remoteJid: string, fromMe: boolean, id: string }
-    message: { conversation?: string, ... }
-    pushName?: string
+    key: {
+      remoteJid: string   // ex: "5511999999999@s.whatsapp.net"
+      fromMe: boolean
+      id: string          // ID da mensagem no WhatsApp
+    }
+    message: {
+      conversation?: string   // texto simples
+      extendedTextMessage?: { text: string }
+    }
+    pushName?: string         // nome do contato
   }
 }
 ```
 
+**Lógica interna:**
+1. Ignora eventos que não sejam `messages.upsert`
+2. Ignora mensagens `fromMe: true`
+3. Extrai número: remove `@s.whatsapp.net`
+4. Upsert em `conversations` (cria ou atualiza)
+5. Insert em `messages` com `direction: inbound`
+
 ---
 
-### Fluxos (`/flows`)
+## Enviar Mensagem
 
 ```
-GET    /flows?productId=...        → Listar fluxos do produto
-POST   /flows                      → Criar fluxo
-GET    /flows/:id                  → Buscar fluxo por ID
-PUT    /flows/:id                  → Atualizar fluxo (salva JSON)
-POST   /flows/:id/publish          → Publicar fluxo
-DELETE /flows/:id/publish          → Despublicar fluxo
+POST /api/messages/send
 ```
 
 ```typescript
-// PUT /flows/:id - body
+// body
 {
-  name: string
-  data: FlowData   // nodes[] + edges[] do xyflow
-}
-
-// FlowData type
-interface FlowData {
-  nodes: FlowNode[]
-  edges: FlowEdge[]
-  variables: FlowVariable[]
-}
-```
-
----
-
-### Produtos (`/products`)
-
-```
-GET    /products                   → Listar produtos
-POST   /products                   → Criar produto
-PUT    /products/:id               → Atualizar produto
-PATCH  /products/:id/toggle        → Ativar/desativar
-```
-
----
-
-### Conversas (`/conversations`)
-
-```
-GET    /conversations              → Listar (paginado, filtros)
-GET    /conversations/:id          → Detalhes + mensagens
-PATCH  /conversations/:id/human    → { isHuman: true/false }
-PATCH  /conversations/:id/ai       → { isAiEnabled: true/false }
-POST   /conversations/:id/tags     → Adicionar tag
-```
-
-```typescript
-// GET /conversations - query params
-{
-  status?: "ACTIVE" | "WAITING_HUMAN" | "RESOLVED"
-  productId?: string
-  page?: number     // default 1
-  limit?: number    // default 30
-}
-```
-
----
-
-### Dashboard (`/analytics`)
-
-```
-GET /analytics/overview            → Métricas principais
-GET /analytics/conversations       → Conversas por período
-GET /analytics/products            → Performance por produto
-GET /analytics/ai-costs            → Custo estimado IA
-```
-
-```typescript
-// GET /analytics/overview - query params
-{
-  startDate: string   // ISO 8601
-  endDate: string
+  conversationId: string
+  content: string
 }
 
 // response
 {
-  conversationsStarted: number
-  responseRate: number          // % que respondeu à msg inicial
-  activeConversations: number
-  estimatedAiCost: number       // em USD
+  success: boolean
+  messageId: string
 }
 ```
 
+**Lógica interna:**
+1. Busca `contact_phone` da conversa no Supabase
+2. Chama Evolution API: `POST /message/sendText/flashflow-main`
+3. Salva mensagem no Supabase com `direction: outbound`
+
 ---
 
-## Tipos do Flow Builder
+## Listar Conversas
+
+```
+GET /api/conversations
+```
 
 ```typescript
-// Tipos dos nodes do xyflow
-type NodeType = "start" | "message" | "button" | "condition" | "gemini" | "action" | "end"
-
-interface FlowNode {
-  id: string
-  type: NodeType
-  position: { x: number; y: number }
-  data: NodeData
-}
-
-// NodeData por tipo
-interface MessageNodeData {
-  content: string
-  delayMs?: number
-}
-
-interface ButtonNodeData {
-  content: string
-  buttons: { id: string; label: string }[]
-}
-
-interface ConditionNodeData {
-  conditions: {
-    variable: string
-    operator: "equals" | "contains" | "starts_with"
-    value: string
+// response
+{
+  conversations: {
+    id: string
+    wa_id: string
+    contact_name: string | null
+    contact_phone: string
+    last_message: string | null
+    last_message_at: string | null
+    unread_count: number
+    created_at: string
   }[]
-  logic: "OR" | "AND"
-}
-
-interface GeminiNodeData {
-  temperature: number           // 0.0 – 1.0
-  maxTokens: number
-  additionalInstructions?: string
-  structuredOutput: JsonSchema  // schema Zod serializado
 }
 ```
 
 ---
 
-## Códigos de erro
+## Buscar Mensagens
 
-| Código | Significado |
-|--------|-------------|
-| 400 | Validação falhou (body inválido) |
-| 401 | Token ausente ou expirado |
-| 403 | Sem permissão para o recurso |
-| 404 | Recurso não encontrado |
-| 409 | Conflito (ex: fluxo já publicado) |
-| 429 | Rate limit atingido |
-| 500 | Erro interno — ver logs |
+```
+GET /api/conversations/[id]/messages
+```
+
+```typescript
+// response
+{
+  messages: {
+    id: string
+    content: string
+    direction: "inbound" | "outbound"
+    status: string
+    created_at: string
+  }[]
+}
+```
+
+---
+
+## Evolution API (referência interna)
+
+Base URL: `http://100.119.152.43:8080`  
+Header obrigatório: `apikey: flashflow123456`  
+Instância: `flashflow-main`
+
+```
+GET  /instance/fetchInstances              → status das instâncias
+GET  /instance/connect/flashflow-main      → QR code
+POST /message/sendText/flashflow-main      → enviar mensagem
+POST /webhook/set/flashflow-main           → configurar webhook
+```
+
+**Payload envio de mensagem:**
+```typescript
+{
+  number: "5511999999999",    // sem @s.whatsapp.net
+  text: "Olá!"
+}
+```

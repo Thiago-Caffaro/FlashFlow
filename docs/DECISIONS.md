@@ -1,63 +1,60 @@
-# Decisões Técnicas (ADR simplificado)
+# Decisões Técnicas
 
-Registro das decisões importantes para não reabrir discussões resolvidas.
-
----
-
-## [001] Monorepo com pnpm workspaces
-**Decisão**: usar monorepo  
-**Motivo**: compartilhar tipos TypeScript entre frontend e backend sem duplicação  
-**Alternativa descartada**: repositórios separados (sincronização de tipos manual = dor de cabeça)
+Registro das decisões para não reabrir discussões resolvidas.
 
 ---
 
-## [002] NestJS no backend (não FastAPI)
-**Decisão**: NestJS  
-**Motivo**: TypeScript end-to-end, decorators familiares, excelente integração com Socket.io e Prisma  
-**Alternativa descartada**: FastAPI Python (team é mais forte em JS/TS)
+## [001] Next.js full-stack (sem backend separado)
+**Decisão**: tudo em Next.js 15 App Router — frontend + API Routes  
+**Motivo**: solo dev, menos infraestrutura, deploy simples  
+**Descartado**: NestJS separado — overhead desnecessário no MVP  
 
 ---
 
-## [003] Evolution API (não WhatsApp Cloud API)
-**Decisão**: Evolution API no MVP  
-**Motivo**: sem aprovação Meta, sem custo por mensagem, QR code imediato  
-**Risco assumido**: possibilidade de banimento do número  
-**Mitigação**: rate limit (máx 30 msg/min), delays humanizados, proxy  
-**Plano**: migrar para Cloud API oficial na Fase 2
+## [002] Supabase (não PostgreSQL self-hosted)
+**Decisão**: Supabase como banco gerenciado  
+**Motivo**: PostgreSQL gerenciado grátis, Realtime nativo, zero infra  
+**Descartado**: PostgreSQL + Redis local  
+**ORM**: nenhum — supabase-js direto
 
 ---
 
-## [004] Gemini (não OpenAI)
-**Decisão**: Google Gemini 2.5  
-**Motivo**: custo ~10x menor que GPT-4, context caching nativo, Flash-Lite para casos simples  
-**Alternativa**: GPT-4o (mais caro, sem context caching eficiente)
+## [003] Sem autenticação no MVP semana 1
+**Decisão**: sem auth na primeira semana  
+**Motivo**: não bloqueia validação do core  
+**Revisão**: Supabase Auth após MVP funcionar
 
 ---
 
-## [005] Estado da conversa no Redis (não só no Postgres)
-**Decisão**: Redis como estado primário, Postgres como histórico  
-**Motivo**: latência < 5ms para leitura de estado, TTL nativo  
-**Trade-off**: se Redis cair, perda de estado de conversas ativas  
-**Mitigação**: backup periódico do estado no Postgres (a cada 5 min)
+## [004] Evolution API self-hosted no TrueNAS
+**Decisão**: Evolution API v2.2.3 no TrueNAS Scale via Docker  
+**Acesso**: Tailscale — IP fixo privado 100.119.152.43  
+**Risco**: banimento do número WhatsApp  
+**Mitigação**: rate limit, delays humanizados  
+**Fase 2**: migrar para WhatsApp Cloud API oficial
 
 ---
 
-## [006] Structured Output obrigatório no Gemini
-**Decisão**: toda chamada ao Gemini retorna JSON validado com Zod  
-**Motivo**: evitar parsing de texto livre, garantir que a IA sempre retorne `action` correta  
-**Alternativa descartada**: parsing de texto livre (frágil demais)
+## [005] Supabase Realtime (não Socket.io)
+**Decisão**: Supabase Realtime para tempo real  
+**Motivo**: incluso no Supabase, zero config extra  
+**Descartado**: Socket.io — requer servidor dedicado
 
 ---
 
-## [007] Clerk para autenticação (não NextAuth)
-**Decisão**: Clerk  
-**Motivo**: multi-tenant (organizations) pronto, webhook de eventos, UI components  
-**Custo**: free tier suficiente para MVP, ~$25/mês em escala
+## [006] Upstash Redis
+**Decisão**: Upstash Redis grátis  
+**Motivo**: Evolution API v2.2.3 requer Redis  
+**Uso**: exclusivo para Evolution API internamente
 
 ---
 
-## [008] JSONB no Postgres para fluxos (não tabela relacional de nodes)
-**Decisão**: fluxo salvo como JSON único no campo `data`  
-**Motivo**: schema do xyflow muda com frequência, JSONB é flexível e indexável  
-**Trade-off**: queries analíticas dentro do fluxo são mais complexas  
-**Mitigação**: analytics em tabela separada (`analytics_events`), nunca em cima do JSONB
+## [007] Gemini — Fase 3
+**Status**: não implementado  
+**Modelo**: Gemini 2.5 Flash-Lite (primário) + Flash (fallback)
+
+---
+
+## [008] Flow Builder — Fase 2
+**Status**: não implementado  
+**Lib**: xyflow, fluxo salvo como JSONB no Supabase
