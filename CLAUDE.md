@@ -23,16 +23,59 @@ SaaS de atendimento WhatsApp com construtor visual de fluxos e IA (Gemini).
 ```
 flashflow/
 ├── app/
-│   ├── api/
-│   │   ├── webhook/evolution/route.ts  # recebe mensagens
-│   │   └── messages/route.ts           # envia mensagens
-│   └── page.tsx                        # interface de chat
-├── lib/
-│   └── supabase.ts                     # cliente Supabase
-├── components/                         # componentes UI
+├── api/                    # API Routes (backend)
+│   ├── webhook/evolution/route.ts
+│   ├── messages/route.ts
+│   └── conversations/route.ts
+├── (chat)/                 # Grupo de rotas da interface
+│   └── page.tsx
+├── layout.tsx
+└── globals.css
+components/
+├── ui/                     # Componentes shadcn (não editar)
+├── chat/                   # Componentes do chat
+│   ├── conversation-list.tsx
+│   ├── conversation-item.tsx
+│   ├── chat-window.tsx
+│   ├── message-bubble.tsx
+│   └── message-input.tsx
+└── shared/                 # Componentes reutilizáveis
+lib/
+├── supabase.ts             # cliente Supabase (client-side)
+├── supabase-server.ts      # cliente Supabase (server-side, service role)
+└── evolution.ts            # wrapper Evolution API
+types/
+└── index.ts                # todos os tipos TypeScript do projeto
+hooks/
+└── use-conversations.ts    # hooks customizados
 ├── .env.local
 └── CLAUDE.md
 ```
+### Regras de componentes
+- 1 componente por arquivo
+- Nome do arquivo = nome do componente em kebab-case
+- Componentes client-side: adicionar 'use client' no topo
+- Componentes server-side: sem diretiva (padrão no App Router)
+- Props sempre tipadas com interface explícita
+
+### Regras de API Routes
+- Toda lógica de banco fica na route, não no componente
+- Sempre usar supabaseAdmin (service role) nas API routes
+- Nunca expor SUPABASE_SERVICE_ROLE_KEY no client-side
+- Retornar sempre { ok: true/false } + dados ou erro
+
+### Nomenclatura
+- Arquivos: kebab-case (conversation-list.tsx)
+- Componentes: PascalCase (ConversationList)
+- Funções: camelCase (fetchConversations)
+- Tipos/Interfaces: PascalCase (Conversation, Message)
+- Constantes: UPPER_SNAKE_CASE (EVOLUTION_API_URL)
+
+### Estilo
+- Tailwind para tudo — sem CSS modules, sem styled-components
+- shadcn/ui para componentes base
+- Tema escuro como padrão (fundo #111b21 estilo WhatsApp)
+- Mobile-first
 
 ## Variáveis de ambiente
 ```
