@@ -1,4 +1,0 @@
-[ZoneTransfer]
-ZoneId=3
-ReferrerUrl=https://claude.ai/chat/d16ed81d-f94d-4119-8758-eebc97f6f7d5
-HostUrl=https://claude.ai/api/organizations/ab1725e7-f2d4-49e8-98f1-14290c929202/conversations/d16ed81d-f94d-4119-8758-eebc97f6f7d5/wiggle/download-files?paths=%2Fmnt%2Fuser-data%2Foutputs%2Fflashflow%2FCLAUDE.md&paths=%2Fmnt%2Fuser-data%2Foutputs%2Fflashflow%2Fdocs%2FMVP.md&paths=%2Fmnt%2Fuser-data%2Foutputs%2Fflashflow%2Fdocs%2FARCHITECTURE.md&paths=%2Fmnt%2Fuser-data%2Foutputs%2Fflashflow%2Fdocs%2FDATABASE.md&paths=%2Fmnt%2Fuser-data%2Foutputs%2Fflashflow%2Fdocs%2FAPI.md&paths=%2Fmnt%2Fuser-data%2Foutputs%2Fflashflow%2Fdocs%2FFLOWS.md&paths=%2Fmnt%2Fuser-data%2Foutputs%2Fflashflow%2F.env.example&paths=%2Fmnt%2Fuser-data%2Foutputs%2Fflashflow%2Fdocs%2FDECISIONS.md
