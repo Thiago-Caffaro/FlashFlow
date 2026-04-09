@@ -27,8 +27,11 @@ export async function POST(req: NextRequest) {
       }
     )
 
+    const evoData = await evoRes.json().catch(() => ({}))
+    const waMessageId: string | null = evoData?.key?.id ?? null
+
     if (!evoRes.ok) {
-      console.error('Erro Evolution API:', await evoRes.text())
+      console.error('Erro Evolution API:', evoData)
       return NextResponse.json({ error: 'Falha ao enviar mensagem' }, { status: 500 })
     }
 
@@ -37,6 +40,7 @@ export async function POST(req: NextRequest) {
       .from('messages')
       .insert({
         conversation_id: conversationId,
+        wa_message_id: waMessageId,
         content,
         type: 'text',
         direction: 'outbound',

@@ -5,12 +5,14 @@ import { Send, Smile, Paperclip } from 'lucide-react'
 
 interface MessageInputProps {
   onSend: (content: string) => void
+  onSendImage: (file: File) => void
   disabled?: boolean
 }
 
-export default function MessageInput({ onSend, disabled }: MessageInputProps) {
+export default function MessageInput({ onSend, onSendImage, disabled }: MessageInputProps) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const el = textareaRef.current
@@ -33,6 +35,13 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
     }
   }
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || disabled) return
+    onSendImage(file)
+    e.target.value = ''
+  }
+
   return (
     <div className="flex items-end gap-2 px-3 py-2 bg-[#f0f2f5] shrink-0">
       <button
@@ -41,12 +50,22 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
       >
         <Smile size={22} />
       </button>
+
       <button
         type="button"
-        className="p-2 text-[#54656f] hover:bg-[#e9edef] rounded-full transition-colors shrink-0"
+        disabled={disabled}
+        onClick={() => fileInputRef.current?.click()}
+        className="p-2 text-[#54656f] hover:bg-[#e9edef] rounded-full transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <Paperclip size={22} />
       </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
 
       <div className="flex-1 bg-white rounded-lg px-4 py-2">
         <textarea
