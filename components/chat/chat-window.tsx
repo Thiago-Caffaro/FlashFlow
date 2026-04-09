@@ -28,39 +28,58 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
+  const [imgError, setImgError] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  const fetchMessages = useCallback(async () => {
-    if (!conversation) return
-    setLoading(true)
+  useEffect(() => setImgError(false), [conversation?.wa_id])
+
+  const conversationId = conversation?.id ?? null
+
+  const fetchMessages = useCallback(async (showLoading = false) => {
+    if (!conversationId) return
+    if (showLoading) setLoading(true)
     const { data } = await supabase
       .from('messages')
       .select('*')
-      .eq('conversation_id', conversation.id)
+      .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true })
     setMessages(data ?? [])
     setLoading(false)
-  }, [conversation])
+  }, [conversationId])
 
   useEffect(() => {
-    if (!conversation) {
+    if (!conversationId) {
       setMessages([])
       return
     }
-    fetchMessages()
+    // Show loading indicator only on first load (messages list is empty)
+    fetchMessages(true)
 
     const channel = supabase
-      .channel(`messages:${conversation.id}`)
+      .channel(`messages:${conversationId}`)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'messages',
-          filter: `conversation_id=eq.${conversation.id}`,
+          filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
-          setMessages((prev) => [...prev, payload.new as Message])
+          const newMessage = payload.new as Message
+          setMessages((prev) => {
+            // Deduplicação: se a nova mensagem for 'outbound', removemos mensagens 'sending' idênticas
+            if (newMessage.direction === 'outbound') {
+              const exists = prev.some(m => m.id === newMessage.id)
+              if (exists) return prev
+
+              const filtered = prev.filter(m => 
+                !(m.status === 'sending' && m.content === newMessage.content && m.type === newMessage.type)
+              )
+              return [...filtered, newMessage]
+            }
+            return [...prev, newMessage]
+          })
         }
       )
       .subscribe()
@@ -68,15 +87,31 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [conversation, fetchMessages])
+  }, [conversationId, fetchMessages])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
   const handleSend = async (content: string) => {
-    if (!conversation || sending) return
-    setSending(true)
+    if (!conversation) return
+    
+    // Optimistic Update
+    const tempId = `temp-${Date.now()}`
+    const optimisticMsg: Message = {
+      id: tempId,
+      conversation_id: conversation.id,
+      wa_message_id: null,
+      content,
+      type: 'text',
+      direction: 'outbound',
+      status: 'sending',
+      created_at: new Date().toISOString()
+    }
+    
+    setMessages(prev => [...prev, optimisticMsg])
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+
     try {
       await fetch('/api/messages', {
         method: 'POST',
@@ -88,8 +123,45 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
         }),
       })
       onMessageSent()
+    } catch (err) {
+      console.error('Erro ao enviar:', err)
+      // Marcar como erro ou remover se falhar
+      setMessages(prev => prev.filter(m => m.id !== tempId))
+    }
+  }
+
+  const handleSendImage = async (file: File) => {
+    if (!conversation) return
+    
+    // Optimistic Update for images
+    const tempId = `temp-img-${Date.now()}`
+    const localUrl = URL.createObjectURL(file)
+    const optimisticMsg: Message = {
+      id: tempId,
+      conversation_id: conversation.id,
+      wa_message_id: null,
+      content: localUrl,
+      type: 'image',
+      direction: 'outbound',
+      status: 'sending',
+      created_at: new Date().toISOString()
+    }
+
+    setMessages(prev => [...prev, optimisticMsg])
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('conversationId', conversation.id)
+      formData.append('waId', conversation.wa_id)
+      await fetch('/api/messages/image', { method: 'POST', body: formData })
+      onMessageSent()
+    } catch (err) {
+      console.error('Erro ao enviar imagem:', err)
+      setMessages(prev => prev.filter(m => m.id !== tempId))
     } finally {
-      setSending(false)
+      URL.revokeObjectURL(localUrl)
     }
   }
 
@@ -116,20 +188,38 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     )
   }
 
-  const displayName = conversation.contact_name ?? conversation.contact_phone
-  const initials = getInitials(conversation.contact_name, conversation.contact_phone)
+  const contactName = conversation.contact_name
+  const contactPhone = conversation.contact_phone
+  const initials = getInitials(contactName, contactPhone)
+  const proxyUrl = `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}`
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-[#f0f2f5] border-b border-[#d1d7db] shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-[#dfe5e7] flex items-center justify-center text-[#667781] font-semibold text-sm select-none">
-            {initials}
+          <div className="w-10 h-10 rounded-full bg-[#dfe5e7] flex items-center justify-center text-[#667781] font-semibold text-sm select-none overflow-hidden shrink-0">
+            {!imgError ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={proxyUrl}
+                alt={contactName ?? contactPhone}
+                className="w-full h-full object-cover"
+                onError={() => setImgError(true)}
+              />
+            ) : (
+              initials
+            )}
           </div>
           <div>
-            <p className="font-medium text-[#111b21] text-sm leading-tight">{displayName}</p>
-            <p className="text-xs text-[#667781]">{conversation.contact_phone}</p>
+            {contactName ? (
+              <>
+                <p className="font-medium text-[#111b21] text-sm leading-tight">{contactName}</p>
+                <p className="text-xs text-[#667781]">{contactPhone}</p>
+              </>
+            ) : (
+              <p className="font-medium text-[#111b21] text-sm leading-tight">{contactPhone}</p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -168,7 +258,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       </div>
 
       {/* Input */}
-      <MessageInput onSend={handleSend} disabled={sending} />
+      <MessageInput onSend={handleSend} onSendImage={handleSendImage} disabled={sending} />
     </div>
   )
 }
