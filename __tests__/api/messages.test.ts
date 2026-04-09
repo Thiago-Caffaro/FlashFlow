@@ -47,6 +47,7 @@ function mockEvolutionSuccess() {
 function mockEvolutionFailure() {
   fetchMock.mockResolvedValue({
     ok: false,
+    json: jest.fn().mockResolvedValue({ error: 'Bad Request' }),
     text: jest.fn().mockResolvedValue('Bad Request'),
   })
 }
@@ -161,7 +162,7 @@ describe('POST /api/messages', () => {
 
   // ── Persistência no Supabase ──────────────────────────────────────────────
 
-  it('salva mensagem no Supabase com direction "outbound"', async () => {
+  it('salva mensagem no Supabase com direction "outbound" e wa_message_id da Evolution', async () => {
     mockEvolutionSuccess()
     mockSupabaseSuccess()
 
@@ -181,6 +182,7 @@ describe('POST /api/messages', () => {
     expect(insertArg.content).toBe('mensagem outbound')
     expect(insertArg.conversation_id).toBe('conv-1')
     expect(insertArg.type).toBe('text')
+    expect(insertArg.wa_message_id).toBe('evo-msg-id') // capturado da Evolution API
   })
 
   it('atualiza last_message na conversa após envio', async () => {

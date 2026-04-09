@@ -12,13 +12,29 @@ import { NextRequest } from 'next/server'
 
 // ─── Mock do Supabase ──────────────────────────────────────────────────────────
 
+const storageFromMock = {
+  upload: jest.fn().mockResolvedValue({ error: null }),
+  getPublicUrl: jest.fn().mockReturnValue({
+    data: { publicUrl: 'https://storage.example.com/test.jpg' },
+  }),
+}
+
 const supabaseMock = {
   from: jest.fn(),
+  storage: {
+    createBucket: jest.fn().mockResolvedValue({ data: null, error: null }),
+    from: jest.fn().mockReturnValue(storageFromMock),
+  },
 }
 
 jest.mock('@supabase/supabase-js', () => ({
   createClient: jest.fn(() => supabaseMock),
 }))
+
+// ─── Mock global do fetch ──────────────────────────────────────────────────────
+
+const fetchMock = jest.fn()
+global.fetch = fetchMock
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -76,6 +92,24 @@ function mockSupabaseFailure() {
   })
 }
 
+/** Simula Evolution API retornando base64 para download de mídia */
+function mockMediaDownloadSuccess(base64 = 'abc123', mimetype = 'image/jpeg') {
+  fetchMock.mockResolvedValue({
+    ok: true,
+    json: jest.fn().mockResolvedValue({ base64, mimetype }),
+    text: jest.fn().mockResolvedValue(''),
+  })
+}
+
+/** Simula falha no download de mídia via Evolution API */
+function mockMediaDownloadFailure() {
+  fetchMock.mockResolvedValue({
+    ok: false,
+    json: jest.fn().mockResolvedValue({}),
+    text: jest.fn().mockResolvedValue('error'),
+  })
+}
+
 // ─── Import da rota (após os mocks) ───────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -86,8 +120,18 @@ const { POST } = require('@/app/api/webhook/evolution/route')
 describe('POST /api/webhook/evolution', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    // Restaura mocks de storage após clearAllMocks
+    storageFromMock.upload.mockResolvedValue({ error: null })
+    storageFromMock.getPublicUrl.mockReturnValue({
+      data: { publicUrl: 'https://storage.example.com/test.jpg' },
+    })
+    supabaseMock.storage.createBucket.mockResolvedValue({ data: null, error: null })
+    supabaseMock.storage.from.mockReturnValue(storageFromMock)
+
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co'
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-key'
+    process.env.EVOLUTION_API_URL = 'http://localhost:8080'
+    process.env.EVOLUTION_API_KEY = 'test-key'
   })
 
   // ── Filtragem de eventos ───────────────────────────────────────────────────
@@ -102,11 +146,25 @@ describe('POST /api/webhook/evolution', () => {
     expect(supabaseMock.from).not.toHaveBeenCalled()
   })
 
-  it('ignora mensagens com fromMe === true', async () => {
+  it('ignora mensagens com fromMe === true cujo wa_message_id JÁ existe no banco', async () => {
+    // Simula que o wa_message_id já existe (mensagem enviada pelo FlashFlow)
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === 'messages') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              maybeSingle: jest.fn().mockResolvedValue({ data: { id: 'existing-msg' }, error: null }),
+            }),
+          }),
+          insert: jest.fn().mockResolvedValue({ error: null }),
+        }
+      }
+    })
+
     const req = buildRequest({
       event: 'messages.upsert',
       data: {
-        key: { remoteJid: '5521999887766@s.whatsapp.net', fromMe: true, id: 'msg-1' },
+        key: { remoteJid: '5521999887766@s.whatsapp.net', fromMe: true, id: 'evo-msg-known' },
         message: { conversation: 'oi' },
         pushName: 'Eu',
       },
@@ -116,7 +174,43 @@ describe('POST /api/webhook/evolution', () => {
 
     expect(res.status).toBe(200)
     expect(json).toEqual({ ok: true })
-    expect(supabaseMock.from).not.toHaveBeenCalled()
+    // Não deve tentar upsert em conversations nem insert de nova mensagem
+    const insertCalled = supabaseMock.from.mock.results.some(
+      r => r.value?.insert && r.value.insert.mock?.calls?.length > 0
+    )
+    expect(insertCalled).toBe(false)
+  })
+
+  it('salva mensagem outbound quando fromMe === true e wa_message_id é NOVO (outro dispositivo)', async () => {
+    // Simula que o wa_message_id NÃO existe ainda
+    supabaseMock.from.mockImplementationOnce((table: string) => {
+      if (table === 'messages') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        }
+      }
+    })
+    // Em seguida processa normalmente
+    mockSupabaseSuccess()
+
+    const req = buildRequest({
+      event: 'messages.upsert',
+      data: {
+        key: { remoteJid: '5521999887766@s.whatsapp.net', fromMe: true, id: 'evo-msg-new' },
+        message: { conversation: 'mensagem de outro cel' },
+        pushName: 'Contato X',
+      },
+    })
+    const res = await POST(req)
+    expect(res.status).toBe(200)
+
+    // O insert deve ter sido chamado com direction 'outbound'
+    const allFromCalls = supabaseMock.from.mock.calls.map(c => c[0])
+    expect(allFromCalls).toContain('messages')
   })
 
   it('ignora payload sem data.key', async () => {
@@ -186,6 +280,7 @@ describe('POST /api/webhook/evolution', () => {
 
     const insertCall = supabaseMock.from.mock.results[1].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('texto direto')
+    expect(insertCall.mock.calls[0][0].type).toBe('text')
   })
 
   it('usa message.extendedTextMessage.text como conteúdo', async () => {
@@ -203,15 +298,125 @@ describe('POST /api/webhook/evolution', () => {
 
     const insertCall = supabaseMock.from.mock.results[1].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('texto estendido')
+    expect(insertCall.mock.calls[0][0].type).toBe('text')
   })
 
-  it('usa "[mídia]" quando não há texto na mensagem', async () => {
+  // ── imageMessage: inline base64 (webhookBase64=true) ─────────────────────
+
+  it('processa imageMessage com base64 inline e salva URL do storage', async () => {
     mockSupabaseSuccess()
     const req = buildRequest({
       event: 'messages.upsert',
       data: {
+        key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-img-1' },
+        message: {
+          imageMessage: {
+            base64: 'dGVzdA==', // "test" em base64
+            mimetype: 'image/jpeg',
+            caption: 'foto',
+          },
+        },
+        pushName: null,
+      },
+    })
+
+    await POST(req)
+
+    const insertCall = supabaseMock.from.mock.results[1].value.insert
+    const insertArg = insertCall.mock.calls[0][0]
+
+    expect(insertArg.type).toBe('image')
+    expect(insertArg.content).toBe('https://storage.example.com/test.jpg')
+    expect(fetchMock).not.toHaveBeenCalled() // não chama API se já tem base64
+  })
+
+  // ── imageMessage: download via Evolution API (webhookBase64=false) ────────
+
+  it('processa imageMessage sem base64 inline chamando getBase64FromMediaMessage', async () => {
+    mockSupabaseSuccess()
+    mockMediaDownloadSuccess('dGVzdA==', 'image/jpeg')
+
+    const req = buildRequest({
+      event: 'messages.upsert',
+      data: {
+        key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-img-2' },
+        message: {
+          imageMessage: {
+            mimetype: 'image/jpeg',
+            caption: 'imagem sem base64',
+          },
+        },
+        pushName: null,
+      },
+    })
+
+    await POST(req)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][0]).toContain('/chat/getBase64FromMediaMessage/')
+
+    const insertCall = supabaseMock.from.mock.results[1].value.insert
+    const insertArg = insertCall.mock.calls[0][0]
+
+    expect(insertArg.type).toBe('image')
+    expect(insertArg.content).toBe('https://storage.example.com/test.jpg')
+  })
+
+  it('usa caption como fallback quando download de mídia falha', async () => {
+    mockSupabaseSuccess()
+    mockMediaDownloadFailure()
+
+    const req = buildRequest({
+      event: 'messages.upsert',
+      data: {
+        key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-img-3' },
+        message: {
+          imageMessage: {
+            mimetype: 'image/jpeg',
+            caption: 'legenda da imagem',
+          },
+        },
+        pushName: null,
+      },
+    })
+
+    await POST(req)
+
+    const insertCall = supabaseMock.from.mock.results[1].value.insert
+    const insertArg = insertCall.mock.calls[0][0]
+
+    expect(insertArg.type).toBe('image')
+    expect(insertArg.content).toBe('legenda da imagem')
+  })
+
+  it('usa "[imagem]" quando download falha e não há caption', async () => {
+    mockSupabaseSuccess()
+    mockMediaDownloadFailure()
+
+    const req = buildRequest({
+      event: 'messages.upsert',
+      data: {
+        key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-img-4' },
+        message: { imageMessage: { mimetype: 'image/jpeg' } },
+        pushName: null,
+      },
+    })
+
+    await POST(req)
+
+    const insertCall = supabaseMock.from.mock.results[1].value.insert
+    expect(insertCall.mock.calls[0][0].content).toBe('[imagem]')
+    expect(insertCall.mock.calls[0][0].type).toBe('image')
+  })
+
+  it('salva type "media" para outros tipos de mídia', async () => {
+    mockSupabaseSuccess()
+
+    const req = buildRequest({
+      event: 'messages.upsert',
+      data: {
         key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-6' },
-        message: { imageMessage: { url: 'http://...' } },
+        message: { audioMessage: {} },
         pushName: null,
       },
     })
@@ -220,6 +425,7 @@ describe('POST /api/webhook/evolution', () => {
 
     const insertCall = supabaseMock.from.mock.results[1].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('[mídia]')
+    expect(insertCall.mock.calls[0][0].type).toBe('media')
   })
 
   // ── Resultado da operação ─────────────────────────────────────────────────
@@ -276,5 +482,68 @@ describe('POST /api/webhook/evolution', () => {
     const res = await POST(req)
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual({ ok: false })
+  })
+
+  // ── messages.update ───────────────────────────────────────────────────────
+
+  it('atualiza status da mensagem para "read" quando status é READ', async () => {
+    const updateMock = jest.fn().mockReturnValue({
+      eq: jest.fn().mockResolvedValue({ error: null }),
+    })
+    supabaseMock.from.mockReturnValue({ update: updateMock })
+
+    const req = buildRequest({
+      event: 'messages.update',
+      data: [
+        { key: { id: 'msg-abc', fromMe: true }, update: { status: 'READ' } },
+      ],
+    })
+
+    const res = await POST(req)
+    expect(res.status).toBe(200)
+    expect(updateMock).toHaveBeenCalledWith({ status: 'read' })
+    const eqCall = updateMock.mock.results[0].value.eq
+    expect(eqCall.mock.calls[0]).toEqual(['wa_message_id', 'msg-abc'])
+  })
+
+  it('atualiza status para "delivered" quando status é DELIVERY_ACK', async () => {
+    const updateMock = jest.fn().mockReturnValue({
+      eq: jest.fn().mockResolvedValue({ error: null }),
+    })
+    supabaseMock.from.mockReturnValue({ update: updateMock })
+
+    const req = buildRequest({
+      event: 'messages.update',
+      data: [
+        { key: { id: 'msg-xyz', fromMe: true }, update: { status: 'DELIVERY_ACK' } },
+      ],
+    })
+
+    await POST(req)
+    expect(updateMock).toHaveBeenCalledWith({ status: 'delivered' })
+  })
+
+  it('ignora updates de mensagens recebidas (fromMe false)', async () => {
+    const req = buildRequest({
+      event: 'messages.update',
+      data: [
+        { key: { id: 'msg-inbound', fromMe: false }, update: { status: 'READ' } },
+      ],
+    })
+
+    await POST(req)
+    expect(supabaseMock.from).not.toHaveBeenCalled()
+  })
+
+  it('ignora status desconhecido no messages.update', async () => {
+    const req = buildRequest({
+      event: 'messages.update',
+      data: [
+        { key: { id: 'msg-unk', fromMe: true }, update: { status: 'PENDING' } },
+      ],
+    })
+
+    await POST(req)
+    expect(supabaseMock.from).not.toHaveBeenCalled()
   })
 })
