@@ -1,3 +1,6 @@
+'use client'
+
+import { useEffect, useState } from 'react'
 import { Conversation } from '@/types'
 
 interface ConversationItemProps {
@@ -47,6 +50,11 @@ function formatTime(dateStr: string | null): string {
 export default function ConversationItem({ conversation, isActive, onClick }: ConversationItemProps) {
   const displayName = conversation.contact_name ?? conversation.contact_phone
   const initials = getInitials(conversation.contact_name, conversation.contact_phone)
+  const proxyUrl = `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}`
+  const [imgError, setImgError] = useState(false)
+
+  // Reset erro ao trocar de contato
+  useEffect(() => setImgError(false), [conversation.wa_id])
 
   return (
     <button
@@ -55,8 +63,18 @@ export default function ConversationItem({ conversation, isActive, onClick }: Co
         isActive ? 'bg-[#f0f2f5]' : 'bg-white'
       }`}
     >
-      <div className="w-12 h-12 rounded-full bg-[#dfe5e7] flex items-center justify-center text-[#667781] font-semibold text-sm shrink-0 select-none">
-        {initials}
+      <div className="w-12 h-12 rounded-full bg-[#dfe5e7] flex items-center justify-center text-[#667781] font-semibold text-sm shrink-0 select-none overflow-hidden">
+        {!imgError ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={proxyUrl}
+            alt={displayName}
+            className="w-full h-full object-cover"
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          initials
+        )}
       </div>
 
       <div className="flex-1 min-w-0">
