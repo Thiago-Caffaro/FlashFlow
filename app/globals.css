@@ -128,3 +128,13 @@
     @apply font-sans;
   }
 }
+
+@keyframes move-right {
+  0% { transform: translateX(-2px); opacity: 0.5; }
+  50% { transform: translateX(2px); opacity: 1; }
+  100% { transform: translateX(-2px); opacity: 0.5; }
+}
+
+.animate-move-right {
+  animation: move-right 1s ease-in-out infinite;
+}

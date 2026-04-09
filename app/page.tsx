@@ -11,7 +11,8 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const fetchConversations = useCallback(async () => {
+  const fetchConversations = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true)
     const { data } = await supabase
       .from('conversations')
       .select('*')
@@ -21,14 +22,15 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    fetchConversations()
+    fetchConversations(true)
 
     const channel = supabase
       .channel('conversations-changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'conversations' },
-        fetchConversations
+        // Silent refresh: no loading indicator on realtime updates
+        () => fetchConversations(false)
       )
       .subscribe()
 
@@ -49,7 +51,7 @@ export default function Home() {
       />
       <ChatWindow
         conversation={selectedConversation}
-        onMessageSent={fetchConversations}
+        onMessageSent={() => {/* realtime handles conversation list updates */}}
       />
     </div>
   )
