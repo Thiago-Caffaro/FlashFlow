@@ -78,8 +78,19 @@ export default function AccountSwitcher() {
       setTimeLeft((t) => {
         if (t <= 1) {
           stopQrTimers()
-          handleDeletePending(instanceName)
           closeModal()
+          // Verifica se conectou no último segundo antes de deletar
+          fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
+            .then((r) => r.json())
+            .then(({ state }) => {
+              if (state === 'open') {
+                refreshAccounts()
+                setIsOpen(true)
+              } else {
+                handleDeletePending(instanceName)
+              }
+            })
+            .catch(() => handleDeletePending(instanceName))
           return 0
         }
         return t - 1
@@ -88,10 +99,12 @@ export default function AccountSwitcher() {
 
     pollerRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`/api/accounts/${instanceName}/status`)
+        const res = await fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
         const { state } = await res.json()
         if (state === 'open') {
           stopQrTimers()
+          // Sincroniza os contatos/conversas automaticamente após conectar
+          await fetch(`/api/sync?instance=${instanceName}`, { method: 'POST' }).catch(() => {})
           await refreshAccounts()
           closeModal()
           setIsOpen(true)
@@ -247,7 +260,7 @@ export default function AccountSwitcher() {
       )}
 
       {/* Fixed bottom element inside sidebar */}
-      <div ref={wrapperRef} className="relative border-t border-[#d1d7db]">
+      <div ref={wrapperRef} className="relative border-t border-[#d1d7db] shrink-0">
         {/* Expanded panel */}
         {isOpen && (
           <div className="absolute bottom-full left-0 right-0 bg-white border-t border-[#d1d7db] shadow-lg z-40">
@@ -264,6 +277,8 @@ export default function AccountSwitcher() {
                   onClick={() => {
                     setActiveAccount(account)
                     setIsOpen(false)
+                    // Sincroniza em background ao trocar de conta
+                    fetch(`/api/sync?instance=${account.instanceName}`, { method: 'POST' }).catch(() => {})
                   }}
                 >
                   <StateIcon state={account.state} />
@@ -308,7 +323,10 @@ export default function AccountSwitcher() {
 
         {/* Trigger bar */}
         <button
-          onClick={() => setIsOpen((o) => !o)}
+          onClick={() => {
+            if (!isOpen) refreshAccounts()
+            setIsOpen((o) => !o)
+          }}
           className="w-full flex items-center gap-2.5 px-3 py-3 bg-[#f0f2f5] hover:bg-[#e9edef] transition-colors"
         >
           {activeAccount?.state === 'open' ? (

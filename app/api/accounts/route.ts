@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+export const dynamic = 'force-dynamic'
+
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -34,7 +36,11 @@ export async function GET() {
     const evoRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
       headers: { apikey: EVOLUTION_API_KEY },
     })
-    const evoData = evoRes.ok ? await evoRes.json() : []
+    let evoData = evoRes.ok ? await evoRes.json() : []
+    // Se vier { instances: [...] } ou similar
+    if (!Array.isArray(evoData) && evoData && typeof evoData === 'object') {
+      evoData = evoData.instances ?? evoData.data ?? []
+    }
 
     // Normaliza o formato variável da Evolution API
     const stateMap = new Map<string, { state: string; profileName?: string; profilePicUrl?: string }>()
@@ -51,10 +57,11 @@ export async function GET() {
 
     const accounts = (stored ?? []).map((row) => {
       const evo = stateMap.get(row.instance_name)
+      const rawState = (evo?.state ?? 'close').toLowerCase()
       return {
         instanceName: row.instance_name,
         label: row.label,
-        state: (evo?.state === 'open' ? 'open' : evo?.state === 'connecting' ? 'connecting' : 'close') as
+        state: (rawState === 'open' ? 'open' : rawState === 'connecting' ? 'connecting' : 'close') as
           'open' | 'connecting' | 'close',
         profileName: evo?.profileName ?? null,
         profilePicUrl: evo?.profilePicUrl ?? null,
@@ -89,7 +96,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Já existe uma conta com esse nome' }, { status: 409 })
     }
 
-    // Cria instância na Evolution API
+    // Cria instância na Evolution API com webhook já configurado
+    const webhookUrl = `${WEBHOOK_BASE_URL}/api/webhook/evolution`
     const createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
@@ -97,6 +105,22 @@ export async function POST(req: NextRequest) {
         instanceName,
         qrcode: false,
         integration: 'WHATSAPP-BAILEYS',
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          webhook_by_events: true,
+          webhook_base64: false,
+          events: [
+            'MESSAGES_UPSERT',
+            'MESSAGES_UPDATE',
+            'MESSAGES_DELETE',
+            'SEND_MESSAGE',
+            'CONNECTION_UPDATE',
+            'TYPE_UPDATE',
+            'CHATS_UPSERT',
+            'CHATS_UPDATE'
+          ],
+        }
       }),
     })
 
@@ -106,19 +130,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao criar instância' }, { status: 500 })
     }
 
-    // Configura webhook
-    const webhookUrl = `${WEBHOOK_BASE_URL}/api/webhook/evolution`
-    await fetch(`${EVOLUTION_API_URL}/webhook/set/${instanceName}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-      body: JSON.stringify({
-        url: webhookUrl,
-        enabled: true,
-        webhookByEvents: false,
-        webhookBase64: false,
-        events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE'],
-      }),
-    })
+    // Salva no banco
+    const { error: insertError } = await supabaseAdmin
+      .from('accounts')
+      .insert({ instance_name: instanceName, label: label.trim() })
+
+    if (insertError) {
+      console.error('Erro ao salvar conta no banco:', insertError)
+      return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
+    }
 
     // Obtém QR code
     const qrRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
@@ -126,9 +146,6 @@ export async function POST(req: NextRequest) {
     })
     const qrData = qrRes.ok ? await qrRes.json() : {}
     const qr: string | null = qrData?.base64 ?? qrData?.qrcode?.base64 ?? qrData?.code ?? null
-
-    // Salva no banco
-    await supabaseAdmin.from('accounts').insert({ instance_name: instanceName, label: label.trim() })
 
     return NextResponse.json({ instanceName, qr })
   } catch (err) {
