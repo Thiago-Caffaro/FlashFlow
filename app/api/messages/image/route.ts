@@ -6,8 +6,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-const INSTANCE = 'flashflow-main'
-
 async function ensureMediaBucket() {
   await supabase.storage.createBucket('media', { public: true }).catch(() => {})
 }
@@ -42,8 +40,16 @@ export async function POST(req: NextRequest) {
 
     const { data: { publicUrl } } = supabase.storage.from('media').getPublicUrl(path)
 
+    // Busca instance_name da conversa
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('instance_name')
+      .eq('id', conversationId)
+      .maybeSingle()
+    const instanceName = conv?.instance_name ?? 'flashflow-main'
+
     const evoRes = await fetch(
-      `${process.env.EVOLUTION_API_URL}/message/sendMedia/${INSTANCE}`,
+      `${process.env.EVOLUTION_API_URL}/message/sendMedia/${instanceName}`,
       {
         method: 'POST',
         headers: {

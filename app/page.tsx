@@ -5,31 +5,42 @@ import { supabase } from '@/lib/supabase'
 import { Conversation } from '@/types'
 import ConversationList from '@/components/chat/conversation-list'
 import ChatWindow from '@/components/chat/chat-window'
+import { AccountProvider, useAccount } from '@/contexts/account-context'
 
-export default function Home() {
+function ChatApp() {
+  const { activeAccount } = useAccount()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const fetchConversations = useCallback(async (showLoading = false) => {
+    if (!activeAccount) {
+      setConversations([])
+      setLoading(false)
+      return
+    }
     if (showLoading) setLoading(true)
     const { data } = await supabase
       .from('conversations')
       .select('*')
+      .eq('instance_name', activeAccount.instanceName)
       .order('last_message_at', { ascending: false })
     setConversations(data ?? [])
     setLoading(false)
-  }, [])
+  }, [activeAccount])
+
+  // Reset selected conversation when switching accounts
+  useEffect(() => {
+    setSelectedId(null)
+    fetchConversations(true)
+  }, [activeAccount?.instanceName, fetchConversations])
 
   useEffect(() => {
-    fetchConversations(true)
-
     const channel = supabase
       .channel('conversations-changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'conversations' },
-        // Silent refresh: no loading indicator on realtime updates
         () => fetchConversations(false)
       )
       .subscribe()
@@ -51,8 +62,16 @@ export default function Home() {
       />
       <ChatWindow
         conversation={selectedConversation}
-        onMessageSent={() => {/* realtime handles conversation list updates */}}
+        onMessageSent={() => {}}
       />
     </div>
+  )
+}
+
+export default function Home() {
+  return (
+    <AccountProvider>
+      <ChatApp />
+    </AccountProvider>
   )
 }

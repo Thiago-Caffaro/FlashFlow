@@ -194,7 +194,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const contactName = conversation.contact_name
   const contactPhone = conversation.contact_phone
   const initials = getInitials(contactName, contactPhone)
-  const proxyUrl = `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}`
+  const proxyUrl = `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">

@@ -50,7 +50,7 @@ function formatTime(dateStr: string | null): string {
 export default function ConversationItem({ conversation, isActive, onClick }: ConversationItemProps) {
   const displayName = conversation.contact_name ?? conversation.contact_phone
   const initials = getInitials(conversation.contact_name, conversation.contact_phone)
-  const proxyUrl = `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}`
+  const proxyUrl = `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
   const [imgError, setImgError] = useState(false)
 
   // Reset erro ao trocar de contato

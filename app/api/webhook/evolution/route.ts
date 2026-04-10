@@ -8,7 +8,6 @@ const supabase = createClient(
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
-const INSTANCE = 'flashflow-main'
 
 async function ensureMediaBucket() {
   await supabase.storage.createBucket('media', { public: true }).catch(() => {})
@@ -44,12 +43,13 @@ async function storeBase64Media(
 
 async function downloadAndStoreMedia(
   fullMessageData: Record<string, unknown>,
-  messageId: string
+  messageId: string,
+  instanceName: string
 ): Promise<string | null> {
   try {
     // Tenta obter base64 via Evolution API (necessário quando webhookBase64 = false)
     const res = await fetch(
-      `${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${INSTANCE}`,
+      `${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${instanceName}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
@@ -112,6 +112,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
+    const instanceName: string = body.instance ?? 'flashflow-main'
     const waMessageId: string = data.key.id
     const remoteJid: string = data.key.remoteJid
 
@@ -173,7 +174,7 @@ export async function POST(req: NextRequest) {
       if (inlineBase64) {
         mediaUrl = await storeBase64Media(inlineBase64, mimetype, waMessageId)
       } else {
-        mediaUrl = await downloadAndStoreMedia(data, waMessageId)
+        mediaUrl = await downloadAndStoreMedia(data, waMessageId, instanceName)
       }
       content = mediaUrl ?? msgObj.imageMessage.caption ?? '[imagem]'
     } else {
@@ -186,6 +187,7 @@ export async function POST(req: NextRequest) {
       .upsert(
         {
           wa_id: remoteJid,
+          instance_name: instanceName,
           contact_phone: contactPhone,
           // Só atualiza contact_name se pushName veio preenchido,
           // para não sobrescrever um nome existente com null
@@ -194,7 +196,7 @@ export async function POST(req: NextRequest) {
           last_message_at: new Date().toISOString(),
           unread_count: 1,
         },
-        { onConflict: 'wa_id' }
+        { onConflict: 'wa_id, instance_name' }
       )
       .select()
       .single()

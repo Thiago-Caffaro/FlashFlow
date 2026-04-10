@@ -6,9 +6,7 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-const INSTANCE = 'flashflow-main'
-
-async function getPicUrl(remoteJid: string, phone: string): Promise<string | null> {
+async function getPicUrl(remoteJid: string, phone: string, instanceName: string): Promise<string | null> {
   // 1. Tenta banco (Contact da Evolution — requer GRANT SELECT na tabela)
   const { data } = await supabaseAdmin
     .from('Contact')
@@ -24,7 +22,7 @@ async function getPicUrl(remoteJid: string, phone: string): Promise<string | nul
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), 5000)
     const res = await fetch(
-      `${process.env.EVOLUTION_API_URL}/chat/fetchProfilePictureUrl/${INSTANCE}`,
+      `${process.env.EVOLUTION_API_URL}/chat/fetchProfilePictureUrl/${instanceName}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: process.env.EVOLUTION_API_KEY! },
@@ -44,6 +42,7 @@ async function getPicUrl(remoteJid: string, phone: string): Promise<string | nul
 
 export async function GET(req: NextRequest) {
   const waId = req.nextUrl.searchParams.get('waId')
+  const instanceName = req.nextUrl.searchParams.get('instance') ?? 'flashflow-main'
   if (!waId) return new NextResponse(null, { status: 404 })
   // Tipos sem foto de perfil ou que causam timeout na Evolution API
   if (
@@ -59,7 +58,7 @@ export async function GET(req: NextRequest) {
     const remoteJid = waId.includes('@') ? waId : `${waId}@s.whatsapp.net`
     const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '')
 
-    const picUrl = await getPicUrl(remoteJid, phone)
+    const picUrl = await getPicUrl(remoteJid, phone, instanceName)
     if (!picUrl) return new NextResponse(null, { status: 404 })
 
     const imgRes = await fetch(picUrl, {

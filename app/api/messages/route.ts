@@ -14,9 +14,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
     }
 
+    // Busca instance_name da conversa
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('instance_name')
+      .eq('id', conversationId)
+      .maybeSingle()
+    const instanceName = conv?.instance_name ?? 'flashflow-main'
+
     // Envia pelo Evolution API
     const evoRes = await fetch(
-      `${process.env.EVOLUTION_API_URL}/message/sendText/flashflow-main`,
+      `${process.env.EVOLUTION_API_URL}/message/sendText/${instanceName}`,
       {
         method: 'POST',
         headers: {

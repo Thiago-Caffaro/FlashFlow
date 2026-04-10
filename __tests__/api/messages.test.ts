@@ -56,21 +56,39 @@ function mockEvolutionFailure() {
  * Configura supabaseMock para insert em messages + update em conversations,
  * ambos com sucesso.
  */
+// Tracks how many times 'conversations' has been called to distinguish
+// the first call (select instance_name) from the second (update last_message).
 function mockSupabaseSuccess(savedMessage = { id: 'msg-saved', content: 'oi' }) {
+  const convCallCount = { n: 0 }
   supabaseMock.from.mockImplementation((table: string) => {
+    if (table === 'conversations') {
+      convCallCount.n++
+      if (convCallCount.n === 1) {
+        // First call: select instance_name
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              maybeSingle: jest.fn().mockResolvedValue({
+                data: { instance_name: 'flashflow-main' },
+                error: null,
+              }),
+            }),
+          }),
+        }
+      }
+      // Second call: update last_message
+      return {
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ error: null }),
+        }),
+      }
+    }
     if (table === 'messages') {
       return {
         insert: jest.fn().mockReturnValue({
           select: jest.fn().mockReturnValue({
             single: jest.fn().mockResolvedValue({ data: savedMessage, error: null }),
           }),
-        }),
-      }
-    }
-    if (table === 'conversations') {
-      return {
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null }),
         }),
       }
     }
@@ -174,7 +192,8 @@ describe('POST /api/messages', () => {
 
     await POST(req)
 
-    const insertCall = supabaseMock.from.mock.results[0].value.insert
+    // results[0] = conversations (select instance_name), results[1] = messages (insert)
+    const insertCall = supabaseMock.from.mock.results[1].value.insert
     const insertArg = insertCall.mock.calls[0][0]
 
     expect(insertArg.direction).toBe('outbound')
@@ -197,7 +216,8 @@ describe('POST /api/messages', () => {
 
     await POST(req)
 
-    const updateCall = supabaseMock.from.mock.results[1].value.update
+    // results[2] = conversations (update last_message)
+    const updateCall = supabaseMock.from.mock.results[2].value.update
     const updateArg = updateCall.mock.calls[0][0]
 
     expect(updateArg.last_message).toBe('atualiza conversa')
@@ -231,6 +251,21 @@ describe('POST /api/messages', () => {
   // ── Falha da Evolution API ────────────────────────────────────────────────
 
   it('retorna 500 se a Evolution API retornar erro', async () => {
+    // Precisa mockar o select de instance_name que ocorre antes da chamada à Evolution
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === 'conversations') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              maybeSingle: jest.fn().mockResolvedValue({
+                data: { instance_name: 'flashflow-main' },
+                error: null,
+              }),
+            }),
+          }),
+        }
+      }
+    })
     mockEvolutionFailure()
 
     const req = buildRequest({
@@ -242,7 +277,8 @@ describe('POST /api/messages', () => {
     const res = await POST(req)
     expect(res.status).toBe(500)
     expect(await res.json()).toMatchObject({ error: expect.any(String) })
-    // Não deve tentar salvar no Supabase se a Evolution falhou
-    expect(supabaseMock.from).not.toHaveBeenCalled()
+    // Não deve tentar salvar mensagem no Supabase se a Evolution falhou
+    const calledTables = supabaseMock.from.mock.calls.map((c: string[]) => c[0])
+    expect(calledTables).not.toContain('messages')
   })
 })

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Search } from 'lucide-react'
 import { Conversation } from '@/types'
 import ConversationItem from './conversation-item'
+import AccountSwitcher from './account-switcher'
 
 interface ConversationListProps {
   conversations: Conversation[]
@@ -73,6 +74,7 @@ export default function ConversationList({
           ))
         )}
       </div>
+      <AccountSwitcher />
     </div>
   )
 }

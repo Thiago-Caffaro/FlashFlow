@@ -8,7 +8,6 @@ const supabaseAdmin = createClient(
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
-const INSTANCE = 'flashflow-main'
 
 // POST /api/conversations/[id]/read
 // Marca todas as mensagens inbound não-lidas como lidas e zera unread_count.
@@ -22,7 +21,7 @@ export async function POST(
   // Busca a conversa para obter wa_id
   const { data: conversation, error: convErr } = await supabaseAdmin
     .from('conversations')
-    .select('id, wa_id, unread_count')
+    .select('id, wa_id, instance_name, unread_count')
     .eq('id', id)
     .maybeSingle()
 
@@ -66,7 +65,7 @@ export async function POST(
     }))
 
     try {
-      await fetch(`${EVOLUTION_API_URL}/chat/markMessageAsRead/${INSTANCE}`, {
+      await fetch(`${EVOLUTION_API_URL}/chat/markMessageAsRead/${conversation.instance_name}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
