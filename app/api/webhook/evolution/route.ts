@@ -131,7 +131,30 @@ export async function POST(req: NextRequest) {
     }
 
     const contactPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '')
-    const contactName: string | null = data.pushName || null
+
+    // Para mensagens recebidas (fromMe=false), usar pushName do payload.
+    // Para enviadas por outro dispositivo (fromMe=true) ou pushName nulo,
+    // consultar Contact.pushName → Chat.name como fallback.
+    let contactName: string | null =
+      data.key.fromMe === false ? (data.pushName || null) : null
+
+    if (!contactName) {
+      const { data: contactRow } = await supabase
+        .from('Contact')
+        .select('pushName')
+        .eq('remoteJid', remoteJid)
+        .maybeSingle()
+      contactName = contactRow?.pushName || null
+
+      if (!contactName) {
+        const { data: chatRow } = await supabase
+          .from('Chat')
+          .select('name')
+          .eq('remoteJid', remoteJid)
+          .maybeSingle()
+        contactName = chatRow?.name || null
+      }
+    }
     const msgObj = data.message
 
     let content = ''

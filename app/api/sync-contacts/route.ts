@@ -12,11 +12,10 @@ const supabase = createClient(
 // Requer: GRANT SELECT ON TABLE public."Contact" TO service_role;
 export async function POST() {
   try {
-    // Busca conversas sem nome
+    // Busca todas as conversas (para corrigir nomes errados também)
     const { data: conversations, error: convErr } = await supabase
       .from('conversations')
       .select('id, wa_id')
-      .is('contact_name', null)
 
     if (convErr) {
       return NextResponse.json({ error: convErr.message }, { status: 500 })
@@ -27,22 +26,31 @@ export async function POST() {
 
     const waIds = conversations.map((c) => c.wa_id)
 
-    // Busca pushName na tabela Contact da Evolution
-    const { data: contacts, error: contactErr } = await supabase
+    // 1. Busca pushName na tabela Contact da Evolution
+    const { data: contacts } = await supabase
       .from('Contact')
       .select('remoteJid, pushName')
       .in('remoteJid', waIds)
-
-    if (contactErr) {
-      return NextResponse.json({ error: contactErr.message }, { status: 500 })
-    }
 
     const nameMap = new Map<string, string>()
     for (const c of contacts ?? []) {
       if (c.pushName) nameMap.set(c.remoteJid, c.pushName)
     }
 
-    // Atualiza conversas que têm pushName disponível
+    // 2. Para os wa_ids sem pushName, tenta Chat.name como fallback
+    const missingIds = waIds.filter((id) => !nameMap.has(id))
+    if (missingIds.length > 0) {
+      const { data: chats } = await supabase
+        .from('Chat')
+        .select('remoteJid, name')
+        .in('remoteJid', missingIds)
+
+      for (const ch of chats ?? []) {
+        if (ch.name) nameMap.set(ch.remoteJid, ch.name)
+      }
+    }
+
+    // 3. Atualiza conversas que têm nome disponível
     let updated = 0
     await Promise.all(
       conversations

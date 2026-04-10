@@ -55,6 +55,9 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     // Show loading indicator only on first load (messages list is empty)
     fetchMessages(true)
 
+    // Marca mensagens como lidas ao abrir a conversa
+    fetch(`/api/conversations/${conversationId}/read`, { method: 'POST' }).catch(() => {})
+
     const channel = supabase
       .channel(`messages:${conversationId}`)
       .on(
