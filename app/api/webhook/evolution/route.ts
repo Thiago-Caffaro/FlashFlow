@@ -83,8 +83,9 @@ const EVO_STATUS_MAP: Record<string, string> = {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
+    const event = (body.event ?? '').toLowerCase()
 
-    if (body.event === 'messages.update') {
+    if (event === 'messages.update') {
       const updates: Array<{ key: { id: string; fromMe: boolean }; update: { status: string } }> =
         Array.isArray(body.data) ? body.data : []
 
@@ -103,7 +104,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    if (body.event !== 'messages.upsert') {
+    if (event !== 'messages.upsert') {
       return NextResponse.json({ ok: true })
     }
 

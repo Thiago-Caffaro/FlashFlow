@@ -23,7 +23,7 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
 
   const refreshAccounts = useCallback(async () => {
     try {
-      const res = await fetch('/api/accounts')
+      const res = await fetch('/api/accounts', { cache: 'no-store' })
       const json = await res.json()
       const fetched: Account[] = json.accounts ?? []
       setAccounts(fetched)

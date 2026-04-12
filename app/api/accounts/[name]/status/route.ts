@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
@@ -19,7 +21,7 @@ export async function GET(
     if (!res.ok) return NextResponse.json({ state: 'close' })
 
     const data = await res.json()
-    const state: string = data?.instance?.state ?? data?.state ?? 'close'
+    const state: string = (data?.instance?.state ?? data?.state ?? 'close').toLowerCase()
 
     return NextResponse.json({ state })
   } catch {
