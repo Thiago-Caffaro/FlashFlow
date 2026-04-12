@@ -7,39 +7,39 @@ interface SyncOverlayProps {
   onComplete: () => void
 }
 
-interface SyncState {
-  stage: 'contacts' | 'messages' | 'done' | 'error'
+interface SyncProgress {
+  stage: 'idle' | 'contacts' | 'messages' | 'done' | 'error'
   total: number
   done: number
-  message?: string
+  error?: string
 }
 
 export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayProps) {
-  const [sync, setSync] = useState<SyncState>({ stage: 'contacts', total: 0, done: 0 })
-  const esRef = useRef<EventSource | null>(null)
+  const [sync, setSync] = useState<SyncProgress>({ stage: 'contacts', total: 0, done: 0 })
+  const doneRef = useRef(false)
 
   useEffect(() => {
-    const es = new EventSource(`/api/sync/initial?instance=${encodeURIComponent(instanceName)}`)
-    esRef.current = es
+    // Start the sync
+    fetch(`/api/sync/initial?instance=${encodeURIComponent(instanceName)}`, { method: 'POST' })
+      .catch(() => {})
 
-    es.onmessage = (e) => {
+    // Poll for progress every 800ms
+    const interval = setInterval(async () => {
+      if (doneRef.current) return
       try {
-        const data: SyncState = JSON.parse(e.data)
+        const res = await fetch(`/api/sync/initial?instance=${encodeURIComponent(instanceName)}`)
+        const data: SyncProgress = await res.json()
         setSync(data)
+
         if (data.stage === 'done' || data.stage === 'error') {
-          es.close()
-          // Small delay so the user sees 100% before the overlay disappears
+          doneRef.current = true
+          clearInterval(interval)
           setTimeout(onComplete, 1200)
         }
-      } catch { /* ignore parse errors */ }
-    }
+      } catch { /* ignore transient errors */ }
+    }, 800)
 
-    es.onerror = () => {
-      es.close()
-      setTimeout(onComplete, 1000)
-    }
-
-    return () => es.close()
+    return () => clearInterval(interval)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instanceName])
 
@@ -49,14 +49,12 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
       : sync.stage === 'messages' && sync.total > 0
       ? Math.round((sync.done / sync.total) * 100)
       : sync.stage === 'contacts'
-      ? 0
-      : 100
-
-  const estimatedMsgs = sync.total > 0 ? sync.total * 30 : null
+      ? 2 // show a sliver so the bar isn't empty
+      : 0
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#111b21]">
-      {/* Logo / icon */}
+      {/* Icon */}
       <div className="mb-8 w-20 h-20 rounded-full bg-[#00a884] flex items-center justify-center">
         <svg viewBox="0 0 56 56" width="44" height="44" fill="none">
           <path
@@ -71,7 +69,7 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
       </h2>
 
       <p className="text-[#8696a0] text-sm text-center max-w-xs px-8 mb-8 leading-relaxed">
-        Aguarde alguns minutos enquanto baixamos suas conversas.{' '}
+        Aguarde enquanto baixamos suas conversas.{' '}
         <span className="text-[#00a884]">Isso acontecerá apenas uma vez</span> ao conectar.
       </p>
 
@@ -79,15 +77,15 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
       <div className="w-72 mb-3">
         <div className="h-1.5 bg-[#2a3942] rounded-full overflow-hidden">
           <div
-            className="h-full bg-[#00a884] rounded-full transition-all duration-300 ease-out"
+            className="h-full bg-[#00a884] rounded-full transition-all duration-500 ease-out"
             style={{ width: `${progress}%` }}
           />
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="text-center">
-        {sync.stage === 'contacts' && (
+      {/* Status text */}
+      <div className="text-center min-h-8">
+        {(sync.stage === 'contacts' || sync.stage === 'idle') && (
           <p className="text-[#8696a0] text-xs">Buscando conversas...</p>
         )}
         {sync.stage === 'messages' && (
@@ -95,9 +93,9 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
             <p className="text-[#8696a0] text-xs tabular-nums">
               {sync.done} / {sync.total} conversas
             </p>
-            {estimatedMsgs && (
+            {sync.total > 0 && (
               <p className="text-[#8696a0] text-xs mt-1">
-                ~{estimatedMsgs.toLocaleString('pt-BR')} mensagens estimadas
+                ~{(sync.total * 30).toLocaleString('pt-BR')} mensagens estimadas
               </p>
             )}
           </>
@@ -110,7 +108,7 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
         )}
       </div>
 
-      <p className="text-[#8696a0] text-xs mt-8 tabular-nums font-mono">
+      <p className="text-[#8696a0] text-xs mt-6 tabular-nums font-mono">
         {progress}%
       </p>
     </div>

@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
@@ -11,21 +11,23 @@ const supabase = createClient(
 const EVOLUTION_URL = process.env.EVOLUTION_API_URL
 const EVOLUTION_KEY = process.env.EVOLUTION_API_KEY
 
-// Prevents duplicate initial syncs for the same instance
-const initialSyncInProgress = new Set<string>()
+// ─── In-process progress store ────────────────────────────────────────────────
+// Keyed by instanceName. Cleared when sync finishes or errors.
 
-interface SyncEvent {
+export interface SyncProgress {
   stage: 'contacts' | 'messages' | 'done' | 'error'
-  total?: number
-  done?: number
-  message?: string
+  total: number
+  done: number
+  error?: string
 }
 
-function sseChunk(data: SyncEvent): string {
-  return `data: ${JSON.stringify(data)}\n\n`
+const progress = new Map<string, SyncProgress>()
+
+export function getProgress(instanceName: string): SyncProgress | null {
+  return progress.get(instanceName) ?? null
 }
 
-// ─── contacts sync (reuses logic from /api/sync) ──────────────────────────────
+// ─── contacts sync ────────────────────────────────────────────────────────────
 
 async function syncContacts(instanceName: string): Promise<string[]> {
   const contactsRes = await fetch(`${EVOLUTION_URL}/chat/findContacts/${instanceName}`, {
@@ -181,7 +183,7 @@ async function syncConversationMessages(
   conversationId: string,
   instanceId: string,
   remoteJid: string
-): Promise<number> {
+): Promise<void> {
   const { data: evoMessages, error } = await supabase
     .from('Message')
     .select('key, message, messageType, messageTimestamp, status')
@@ -190,7 +192,7 @@ async function syncConversationMessages(
     .order('messageTimestamp', { ascending: false })
     .limit(30)
 
-  if (error || !evoMessages?.length) return 0
+  if (error || !evoMessages?.length) return
 
   const waIds = evoMessages
     .map((m) => (m.key as { id?: string })?.id)
@@ -231,79 +233,70 @@ async function syncConversationMessages(
   if (toInsert.length > 0) {
     await supabase.from('messages').insert(toInsert)
   }
-  return toInsert.length
 }
 
-// ─── SSE handler ──────────────────────────────────────────────────────────────
+// ─── background sync runner ───────────────────────────────────────────────────
 
-export async function GET(req: NextRequest) {
+async function runSync(instanceName: string) {
+  try {
+    progress.set(instanceName, { stage: 'contacts', total: 0, done: 0 })
+
+    const conversationIds = await syncContacts(instanceName)
+    const total = conversationIds.length
+
+    if (total === 0) {
+      progress.set(instanceName, { stage: 'done', total: 0, done: 0 })
+      return
+    }
+
+    progress.set(instanceName, { stage: 'messages', total, done: 0 })
+
+    const instanceId = await getInstanceId(instanceName)
+
+    const { data: convRows } = await supabase
+      .from('conversations')
+      .select('id, wa_id')
+      .in('id', conversationIds)
+
+    const convMap = new Map((convRows ?? []).map((r) => [r.id, r.wa_id as string]))
+
+    for (let i = 0; i < conversationIds.length; i++) {
+      const convId = conversationIds[i]
+      const waId = convMap.get(convId)
+
+      if (instanceId && waId) {
+        await syncConversationMessages(convId, instanceId, waId)
+      }
+
+      progress.set(instanceName, { stage: 'messages', total, done: i + 1 })
+    }
+
+    progress.set(instanceName, { stage: 'done', total, done: total })
+  } catch (err) {
+    progress.set(instanceName, { stage: 'error', total: 0, done: 0, error: String(err) })
+  }
+}
+
+// ─── routes ───────────────────────────────────────────────────────────────────
+
+/** POST — starts the sync in the background and returns immediately */
+export async function POST(req: NextRequest) {
   const instanceName = req.nextUrl.searchParams.get('instance') ?? 'flashflow-main'
 
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (event: SyncEvent) => {
-        try { controller.enqueue(new TextEncoder().encode(sseChunk(event))) } catch { /* closed */ }
-      }
+  const current = progress.get(instanceName)
+  if (current && current.stage !== 'done' && current.stage !== 'error') {
+    return NextResponse.json({ ok: true, alreadyRunning: true })
+  }
 
-      if (initialSyncInProgress.has(instanceName)) {
-        send({ stage: 'error', message: 'Sincronização já em andamento' })
-        controller.close()
-        return
-      }
+  // Fire and forget — client polls GET for progress
+  runSync(instanceName)
 
-      initialSyncInProgress.add(instanceName)
-      try {
-        // ── 1. Sync contacts ──────────────────────────────────────────────
-        send({ stage: 'contacts', total: 0, done: 0 })
-        const conversationIds = await syncContacts(instanceName)
-        const total = conversationIds.length
+  return NextResponse.json({ ok: true })
+}
 
-        if (total === 0) {
-          send({ stage: 'done', total: 0, done: 0 })
-          controller.close()
-          return
-        }
-
-        // ── 2. Get instance UUID for Message table queries ────────────────
-        const instanceId = await getInstanceId(instanceName)
-
-        // ── 3. Sync messages for each conversation ────────────────────────
-        send({ stage: 'messages', total, done: 0 })
-
-        // Fetch all conversation wa_ids in one query
-        const { data: convRows } = await supabase
-          .from('conversations')
-          .select('id, wa_id')
-          .in('id', conversationIds)
-
-        const convMap = new Map((convRows ?? []).map((r) => [r.id, r.wa_id as string]))
-
-        for (let i = 0; i < conversationIds.length; i++) {
-          const convId = conversationIds[i]
-          const waId = convMap.get(convId)
-
-          if (instanceId && waId) {
-            await syncConversationMessages(convId, instanceId, waId)
-          }
-
-          send({ stage: 'messages', total, done: i + 1 })
-        }
-
-        send({ stage: 'done', total, done: total })
-      } catch (err) {
-        send({ stage: 'error', message: String(err) })
-      } finally {
-        initialSyncInProgress.delete(instanceName)
-        controller.close()
-      }
-    },
-  })
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  })
+/** GET — returns current progress for the given instance */
+export async function GET(req: NextRequest) {
+  const instanceName = req.nextUrl.searchParams.get('instance') ?? 'flashflow-main'
+  const p = progress.get(instanceName) ?? { stage: 'idle', total: 0, done: 0 }
+  return NextResponse.json(p)
 }
