@@ -47,14 +47,16 @@ function extractContent(row: EvoMessageRow): { content: string; type: string } {
     case 'audioMessage':
     case 'pttMessage':
       return { content: '[áudio]', type: 'media' }
-    case 'videoMessage':
-      return { content: '[vídeo]', type: 'media' }
+    case 'videoMessage': {
+      const caption = (msg.videoMessage as { caption?: string } | undefined)?.caption ?? ''
+      return { content: caption || '[vídeo]', type: 'video' }
+    }
     case 'documentMessage': {
       const doc = msg.documentMessage as { title?: string; fileName?: string } | undefined
       return { content: doc?.title ?? doc?.fileName ?? '[documento]', type: 'media' }
     }
     case 'stickerMessage':
-      return { content: '[figurinha]', type: 'media' }
+      return { content: '[figurinha]', type: 'sticker' }
     default:
       return { content: '[mídia]', type: 'media' }
   }

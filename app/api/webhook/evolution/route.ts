@@ -178,6 +178,15 @@ export async function POST(req: NextRequest) {
         mediaUrl = await downloadAndStoreMedia(data, waMessageId, instanceName)
       }
       content = mediaUrl ?? msgObj.imageMessage.caption ?? '[imagem]'
+    } else if (msgObj.videoMessage) {
+      content = msgObj.videoMessage.caption ?? '[vídeo]'
+      type = 'video'
+    } else if (msgObj.stickerMessage) {
+      content = '[figurinha]'
+      type = 'sticker'
+    } else if (msgObj.audioMessage || msgObj.pttMessage) {
+      content = '[áudio]'
+      type = 'media'
     } else {
       content = '[mídia]'
       type = 'media'
@@ -193,7 +202,11 @@ export async function POST(req: NextRequest) {
           // Só atualiza contact_name se pushName veio preenchido,
           // para não sobrescrever um nome existente com null
           ...(contactName ? { contact_name: contactName } : {}),
-          last_message: type === 'image' ? '📷 Imagem' : content,
+          last_message:
+            type === 'image' ? '[imagem]' :
+            type === 'video' ? '[vídeo]' :
+            type === 'sticker' ? '[figurinha]' :
+            content,
           last_message_at: new Date().toISOString(),
           unread_count: 1,
         },

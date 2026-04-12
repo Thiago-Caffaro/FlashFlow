@@ -301,7 +301,7 @@ describe('POST /api/messages/sync/[conversationId]', () => {
     expect(inserted[0].content).toBe('foto bonita')
   })
 
-  it('representa tipos de mídia desconhecidos como [mídia]', async () => {
+  it('salva type "sticker" para stickerMessage', async () => {
     mockHappyPath([
       {
         key: { remoteJid: REMOTE_JID, fromMe: false, id: 'msg-sticker' },
@@ -316,6 +316,24 @@ describe('POST /api/messages/sync/[conversationId]', () => {
 
     const inserted = getInsertedRows()
     expect(inserted[0].content).toBe('[figurinha]')
-    expect(inserted[0].type).toBe('media')
+    expect(inserted[0].type).toBe('sticker')
+  })
+
+  it('salva type "video" para videoMessage com caption', async () => {
+    mockHappyPath([
+      {
+        key: { remoteJid: REMOTE_JID, fromMe: false, id: 'msg-video' },
+        message: { videoMessage: { caption: 'legenda do vídeo' } },
+        messageType: 'videoMessage',
+        messageTimestamp: 1700000001,
+        status: 'DELIVERY_ACK',
+      },
+    ])
+
+    await POST(buildRequest('conv-1'), makeParams('conv-1'))
+
+    const inserted = getInsertedRows()
+    expect(inserted[0].type).toBe('video')
+    expect(inserted[0].content).toBe('legenda do vídeo')
   })
 })

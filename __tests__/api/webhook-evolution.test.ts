@@ -440,7 +440,7 @@ describe('POST /api/webhook/evolution', () => {
     expect(insertCall.mock.calls[0][0].type).toBe('image')
   })
 
-  it('salva type "media" para outros tipos de mídia', async () => {
+  it('salva type "media" e content "[áudio]" para audioMessage', async () => {
     mockSupabaseSuccess()
 
     const req = buildRequest({
@@ -456,8 +456,47 @@ describe('POST /api/webhook/evolution', () => {
 
     // pushName=null → Contact(0) + Chat(1) → conversations(2) → messages(3)
     const insertCall = supabaseMock.from.mock.results[3].value.insert
-    expect(insertCall.mock.calls[0][0].content).toBe('[mídia]')
+    expect(insertCall.mock.calls[0][0].content).toBe('[áudio]')
     expect(insertCall.mock.calls[0][0].type).toBe('media')
+  })
+
+  it('salva type "sticker" para stickerMessage', async () => {
+    mockSupabaseSuccess()
+
+    const req = buildRequest({
+      event: 'messages.upsert',
+      data: {
+        key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-sticker' },
+        message: { stickerMessage: {} },
+        pushName: 'Contato',
+      },
+    })
+
+    await POST(req)
+
+    // pushName preenchido → Contact(0) + Chat(1) pulados → conversations(0) → messages(1)
+    const insertCall = supabaseMock.from.mock.results[1].value.insert
+    expect(insertCall.mock.calls[0][0].content).toBe('[figurinha]')
+    expect(insertCall.mock.calls[0][0].type).toBe('sticker')
+  })
+
+  it('salva type "video" para videoMessage', async () => {
+    mockSupabaseSuccess()
+
+    const req = buildRequest({
+      event: 'messages.upsert',
+      data: {
+        key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-video' },
+        message: { videoMessage: { caption: 'meu vídeo' } },
+        pushName: 'Contato',
+      },
+    })
+
+    await POST(req)
+
+    const insertCall = supabaseMock.from.mock.results[1].value.insert
+    expect(insertCall.mock.calls[0][0].content).toBe('meu vídeo')
+    expect(insertCall.mock.calls[0][0].type).toBe('video')
   })
 
   // ── Resultado da operação ─────────────────────────────────────────────────

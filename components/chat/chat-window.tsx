@@ -272,7 +272,14 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
             <span className="text-[#667781] text-sm">Nenhuma mensagem ainda</span>
           </div>
         ) : (
-          messages.map((msg) => <MessageBubble key={msg.id} message={msg} />)
+          messages.map((msg) => (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                waId={conversation.wa_id}
+                instanceName={conversation.instance_name}
+              />
+            ))
         )}
         <div ref={bottomRef} />
       </div>
