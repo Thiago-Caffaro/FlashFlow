@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ChevronUp, Plus, X, Wifi, WifiOff, Loader2 } from 'lucide-react'
 import { useAccount } from '@/contexts/account-context'
 import { Account } from '@/types'
+import SyncOverlay from './sync-overlay'
 
 type ModalStep = 'label' | 'qr'
 
@@ -36,6 +37,8 @@ export default function AccountSwitcher() {
   const [timeLeft, setTimeLeft] = useState(60)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Initial sync overlay
+  const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
 
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -103,11 +106,9 @@ export default function AccountSwitcher() {
         const { state } = await res.json()
         if (state === 'open') {
           stopQrTimers()
-          // Sincroniza os contatos/conversas automaticamente após conectar
-          await fetch(`/api/sync?instance=${instanceName}`, { method: 'POST' }).catch(() => {})
-          await refreshAccounts()
           closeModal()
-          setIsOpen(true)
+          // Show full-screen sync overlay for initial connection
+          setSyncingInstance(instanceName)
         }
       } catch { /* silent */ }
     }, 3000)
@@ -160,6 +161,18 @@ export default function AccountSwitcher() {
 
   return (
     <>
+      {/* Initial sync overlay */}
+      {syncingInstance && (
+        <SyncOverlay
+          instanceName={syncingInstance}
+          onComplete={async () => {
+            setSyncingInstance(null)
+            await refreshAccounts()
+            setIsOpen(true)
+          }}
+        />
+      )}
+
       {/* Confirmation dialog */}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">

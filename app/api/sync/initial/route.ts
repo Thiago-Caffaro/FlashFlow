@@ -1,0 +1,305 @@
+import { NextRequest } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
+
+export const dynamic = 'force-dynamic'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
+const EVOLUTION_URL = process.env.EVOLUTION_API_URL
+const EVOLUTION_KEY = process.env.EVOLUTION_API_KEY
+
+// Prevents duplicate initial syncs for the same instance
+const initialSyncInProgress = new Set<string>()
+
+interface SyncEvent {
+  stage: 'contacts' | 'messages' | 'done' | 'error'
+  total?: number
+  done?: number
+  message?: string
+}
+
+function sseChunk(data: SyncEvent): string {
+  return `data: ${JSON.stringify(data)}\n\n`
+}
+
+// ─── contacts sync (reuses logic from /api/sync) ──────────────────────────────
+
+async function syncContacts(instanceName: string): Promise<string[]> {
+  const contactsRes = await fetch(`${EVOLUTION_URL}/chat/findContacts/${instanceName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_KEY! },
+    body: JSON.stringify({}),
+  }).catch(() => null)
+
+  const contactsMap = new Map<string, { name: string | null; picUrl: string | null }>()
+  if (contactsRes?.ok) {
+    const data = await contactsRes.json().catch(() => [])
+    if (Array.isArray(data)) {
+      for (const c of data) {
+        if (c.remoteJid) {
+          contactsMap.set(c.remoteJid, {
+            name: c.pushName || c.name || null,
+            picUrl: c.profilePicUrl ?? null,
+          })
+        }
+      }
+    }
+  }
+
+  const chatsRes = await fetch(`${EVOLUTION_URL}/chat/findChats/${instanceName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_KEY! },
+    body: JSON.stringify({}),
+  }).catch(() => null)
+
+  if (!chatsRes?.ok) return []
+  const chats = await chatsRes.json().catch(() => [])
+  if (!Array.isArray(chats)) return []
+
+  const conversationIds: string[] = []
+
+  for (const chat of chats) {
+    const jid: string = chat.remoteJid
+    if (!jid || jid.endsWith('@g.us')) continue
+
+    let contactPhone: string
+    let fallbackJid = jid
+    if (jid.endsWith('@s.whatsapp.net')) {
+      contactPhone = jid.replace('@s.whatsapp.net', '')
+    } else if (jid.endsWith('@lid')) {
+      const alt = chat.lastMessage?.key?.remoteJidAlt
+      contactPhone = alt ? alt.replace('@s.whatsapp.net', '') : jid.replace('@lid', '')
+      if (alt) fallbackJid = alt
+    } else {
+      contactPhone = jid
+    }
+
+    const info = contactsMap.get(jid) ?? contactsMap.get(fallbackJid) ?? null
+    const contactName = info?.name ?? chat.pushName ?? null
+    const profilePicUrl = info?.picUrl ?? null
+
+    const lastMsg =
+      chat.lastMessage?.message?.conversation ||
+      chat.lastMessage?.message?.extendedTextMessage?.text ||
+      (chat.lastMessage?.message?.imageMessage ? '[imagem]' : null)
+
+    const lastMsgAt = chat.lastMessage?.messageTimestamp
+      ? new Date(chat.lastMessage.messageTimestamp * 1000).toISOString()
+      : null
+
+    const { data: conv } = await supabase
+      .from('conversations')
+      .upsert(
+        {
+          wa_id: jid,
+          instance_name: instanceName,
+          contact_phone: contactPhone,
+          last_message: lastMsg,
+          last_message_at: lastMsgAt,
+          unread_count: chat.unreadCount ?? 0,
+          ...(contactName ? { contact_name: contactName } : {}),
+          ...(profilePicUrl ? { profile_pic_url: profilePicUrl } : {}),
+        },
+        { onConflict: 'wa_id, instance_name' }
+      )
+      .select('id')
+      .single()
+
+    if (conv?.id) conversationIds.push(conv.id)
+  }
+
+  return conversationIds
+}
+
+// ─── instance id lookup ───────────────────────────────────────────────────────
+
+async function getInstanceId(instanceName: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('Instance')
+    .select('id')
+    .eq('name', instanceName)
+    .maybeSingle()
+  return (data as { id?: string } | null)?.id ?? null
+}
+
+// ─── messages sync for one conversation ───────────────────────────────────────
+
+const STATUS_MAP: Record<string, string> = {
+  READ: 'read', PLAYED: 'read',
+  DELIVERY_ACK: 'delivered',
+  SERVER_ACK: 'sent', PENDING: 'sent',
+}
+
+interface EvoMsg {
+  key: { id: string; fromMe: boolean; remoteJid: string }
+  message: Record<string, unknown> | null
+  messageType: string
+  messageTimestamp: number
+  status: string | null
+}
+
+function extractContent(row: EvoMsg): { content: string; type: string } {
+  const msg = row.message ?? {}
+  switch (row.messageType) {
+    case 'conversation':
+    case 'extendedTextMessage': {
+      const text =
+        (msg.conversation as string) ||
+        ((msg.extendedTextMessage as { text?: string } | undefined)?.text ?? '')
+      return { content: text || '[texto]', type: 'text' }
+    }
+    case 'imageMessage': {
+      const caption = (msg.imageMessage as { caption?: string } | undefined)?.caption ?? ''
+      return { content: caption || '[imagem]', type: 'image' }
+    }
+    case 'videoMessage': {
+      const caption = (msg.videoMessage as { caption?: string } | undefined)?.caption ?? ''
+      return { content: caption || '[vídeo]', type: 'video' }
+    }
+    case 'audioMessage':
+    case 'pttMessage':
+      return { content: '[áudio]', type: 'audio' }
+    case 'stickerMessage':
+      return { content: '[figurinha]', type: 'sticker' }
+    case 'documentMessage': {
+      const doc = msg.documentMessage as { title?: string; fileName?: string } | undefined
+      return { content: doc?.title ?? doc?.fileName ?? '[documento]', type: 'media' }
+    }
+    default:
+      return { content: '[mídia]', type: 'media' }
+  }
+}
+
+async function syncConversationMessages(
+  conversationId: string,
+  instanceId: string,
+  remoteJid: string
+): Promise<number> {
+  const { data: evoMessages, error } = await supabase
+    .from('Message')
+    .select('key, message, messageType, messageTimestamp, status')
+    .eq('instanceId', instanceId)
+    .filter('key->>remoteJid', 'eq', remoteJid)
+    .order('messageTimestamp', { ascending: false })
+    .limit(30)
+
+  if (error || !evoMessages?.length) return 0
+
+  const waIds = evoMessages
+    .map((m) => (m.key as { id?: string })?.id)
+    .filter(Boolean) as string[]
+
+  const { data: existing } = await supabase
+    .from('messages')
+    .select('wa_message_id')
+    .eq('conversation_id', conversationId)
+    .in('wa_message_id', waIds)
+
+  const existingIds = new Set((existing ?? []).map((m) => m.wa_message_id))
+
+  const toInsert = evoMessages
+    .filter((m) => {
+      const id = (m.key as { id?: string })?.id
+      return id && !existingIds.has(id)
+    })
+    .map((m) => {
+      const key = m.key as { id: string; fromMe: boolean }
+      const { content, type } = extractContent(m as EvoMsg)
+      const status = STATUS_MAP[m.status ?? ''] ?? (key.fromMe ? 'sent' : 'delivered')
+      const ts =
+        m.messageTimestamp > 0
+          ? new Date(m.messageTimestamp * 1000).toISOString()
+          : new Date().toISOString()
+      return {
+        conversation_id: conversationId,
+        wa_message_id: key.id,
+        content, type,
+        direction: key.fromMe ? 'outbound' : 'inbound',
+        status,
+        created_at: ts,
+      }
+    })
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+
+  if (toInsert.length > 0) {
+    await supabase.from('messages').insert(toInsert)
+  }
+  return toInsert.length
+}
+
+// ─── SSE handler ──────────────────────────────────────────────────────────────
+
+export async function GET(req: NextRequest) {
+  const instanceName = req.nextUrl.searchParams.get('instance') ?? 'flashflow-main'
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: SyncEvent) => {
+        try { controller.enqueue(new TextEncoder().encode(sseChunk(event))) } catch { /* closed */ }
+      }
+
+      if (initialSyncInProgress.has(instanceName)) {
+        send({ stage: 'error', message: 'Sincronização já em andamento' })
+        controller.close()
+        return
+      }
+
+      initialSyncInProgress.add(instanceName)
+      try {
+        // ── 1. Sync contacts ──────────────────────────────────────────────
+        send({ stage: 'contacts', total: 0, done: 0 })
+        const conversationIds = await syncContacts(instanceName)
+        const total = conversationIds.length
+
+        if (total === 0) {
+          send({ stage: 'done', total: 0, done: 0 })
+          controller.close()
+          return
+        }
+
+        // ── 2. Get instance UUID for Message table queries ────────────────
+        const instanceId = await getInstanceId(instanceName)
+
+        // ── 3. Sync messages for each conversation ────────────────────────
+        send({ stage: 'messages', total, done: 0 })
+
+        // Fetch all conversation wa_ids in one query
+        const { data: convRows } = await supabase
+          .from('conversations')
+          .select('id, wa_id')
+          .in('id', conversationIds)
+
+        const convMap = new Map((convRows ?? []).map((r) => [r.id, r.wa_id as string]))
+
+        for (let i = 0; i < conversationIds.length; i++) {
+          const convId = conversationIds[i]
+          const waId = convMap.get(convId)
+
+          if (instanceId && waId) {
+            await syncConversationMessages(convId, instanceId, waId)
+          }
+
+          send({ stage: 'messages', total, done: i + 1 })
+        }
+
+        send({ stage: 'done', total, done: total })
+      } catch (err) {
+        send({ stage: 'error', message: String(err) })
+      } finally {
+        initialSyncInProgress.delete(instanceName)
+        controller.close()
+      }
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  })
+}
