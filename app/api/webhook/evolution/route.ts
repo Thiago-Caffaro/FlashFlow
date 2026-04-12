@@ -132,29 +132,52 @@ export async function POST(req: NextRequest) {
       // Não existe: enviada por outro dispositivo — processa como outbound
     }
 
-    const contactPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '')
+    const isGroup = remoteJid.endsWith('@g.us')
+    const contactPhone = isGroup ? remoteJid : remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '')
 
-    // Para mensagens recebidas (fromMe=false), usar pushName do payload.
-    // Para enviadas por outro dispositivo (fromMe=true) ou pushName nulo,
-    // consultar Contact.pushName → Chat.name como fallback.
-    let contactName: string | null =
-      data.key.fromMe === false ? (data.pushName || null) : null
+    // For groups: pushName is the SENDER's name, not the group name.
+    // Never overwrite the group name with a sender's name — look up the group name from our DB.
+    // For contacts: use pushName from payload, fall back to Contact/Chat tables.
+    let contactName: string | null = null
 
-    if (!contactName) {
-      const { data: contactRow } = await supabase
-        .from('Contact')
-        .select('pushName')
-        .eq('remoteJid', remoteJid)
+    if (isGroup) {
+      // Preserve the group name already stored — don't touch it from webhook payload
+      const { data: existing } = await supabase
+        .from('conversations')
+        .select('contact_name')
+        .eq('wa_id', remoteJid)
+        .eq('instance_name', instanceName)
         .maybeSingle()
-      contactName = contactRow?.pushName || null
+      contactName = (existing as { contact_name?: string | null } | null)?.contact_name ?? null
 
       if (!contactName) {
+        // First time seeing this group — look it up from Evolution's Chat table
         const { data: chatRow } = await supabase
           .from('Chat')
           .select('name')
           .eq('remoteJid', remoteJid)
           .maybeSingle()
         contactName = chatRow?.name || null
+      }
+    } else {
+      contactName = data.key.fromMe === false ? (data.pushName || null) : null
+
+      if (!contactName) {
+        const { data: contactRow } = await supabase
+          .from('Contact')
+          .select('pushName')
+          .eq('remoteJid', remoteJid)
+          .maybeSingle()
+        contactName = contactRow?.pushName || null
+
+        if (!contactName) {
+          const { data: chatRow } = await supabase
+            .from('Chat')
+            .select('name')
+            .eq('remoteJid', remoteJid)
+            .maybeSingle()
+          contactName = chatRow?.name || null
+        }
       }
     }
     const msgObj = data.message

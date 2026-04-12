@@ -63,11 +63,15 @@ async function syncContacts(instanceName: string): Promise<string[]> {
 
   for (const chat of chats) {
     const jid: string = chat.remoteJid
-    if (!jid || jid.endsWith('@g.us')) continue
+    if (!jid) continue
 
+    const isGroup = jid.endsWith('@g.us')
     let contactPhone: string
     let fallbackJid = jid
-    if (jid.endsWith('@s.whatsapp.net')) {
+
+    if (isGroup) {
+      contactPhone = jid
+    } else if (jid.endsWith('@s.whatsapp.net')) {
       contactPhone = jid.replace('@s.whatsapp.net', '')
     } else if (jid.endsWith('@lid')) {
       const alt = chat.lastMessage?.key?.remoteJidAlt
@@ -77,8 +81,8 @@ async function syncContacts(instanceName: string): Promise<string[]> {
       contactPhone = jid
     }
 
-    const info = contactsMap.get(jid) ?? contactsMap.get(fallbackJid) ?? null
-    const contactName = info?.name ?? chat.pushName ?? null
+    const info = isGroup ? null : (contactsMap.get(jid) ?? contactsMap.get(fallbackJid) ?? null)
+    const contactName = isGroup ? (chat.pushName ?? null) : (info?.name ?? chat.pushName ?? null)
     const profilePicUrl = info?.picUrl ?? null
 
     const lastMsg =

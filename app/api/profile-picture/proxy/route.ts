@@ -104,7 +104,6 @@ export async function GET(req: NextRequest) {
 
   if (
     waId.includes('@broadcast') ||
-    waId.includes('@g.us') ||
     waId.includes('@lid') ||
     waId === '0@s.whatsapp.net'
   ) {
@@ -113,7 +112,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const remoteJid = waId.includes('@') ? waId : `${waId}@s.whatsapp.net`
-    const phone = remoteJid.replace('@s.whatsapp.net', '')
+    // For groups, pass the full JID as the "number" — Evolution API accepts it
+    const phone = remoteJid.endsWith('@g.us')
+      ? remoteJid
+      : remoteJid.replace('@s.whatsapp.net', '')
 
     const resolved = await resolvePicUrl(remoteJid, phone, instanceName)
     if (!resolved) return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })

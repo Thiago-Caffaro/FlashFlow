@@ -88,17 +88,18 @@ export async function POST(req: NextRequest) {
     for (const chat of chats) {
       const jid = chat.remoteJid
       if (!jid) continue
-      // Ignora grupos
-      if (jid.endsWith('@g.us')) continue
+
+      const isGroup = jid.endsWith('@g.us')
 
       // Extrai telefone e fallback name: JID normal ou fallback do lastMessage para contas LID
       let contactPhone: string
       let fallbackJid = jid
-      
-      if (jid.endsWith('@s.whatsapp.net')) {
+
+      if (isGroup) {
+        contactPhone = jid // use full JID as identifier for groups
+      } else if (jid.endsWith('@s.whatsapp.net')) {
         contactPhone = jid.replace('@s.whatsapp.net', '')
       } else if (jid.endsWith('@lid')) {
-        // Tenta pegar telefone real do campo alternativo
         const alt = chat.lastMessage?.key?.remoteJidAlt
         if (alt) {
           contactPhone = alt.replace('@s.whatsapp.net', '')
@@ -110,9 +111,10 @@ export async function POST(req: NextRequest) {
         contactPhone = jid
       }
 
-      // Usa o nome e foto mapeados dos contatos (por JID ou fallback JID)
-      const contactInfo = contactsMap.get(jid) ?? contactsMap.get(fallbackJid) ?? null
-      const contactName = contactInfo?.name ?? chat.pushName ?? null
+      // For groups, pushName on the chat IS the group name.
+      // For contacts, prefer contactsMap (has profile pic too), fall back to chat.pushName.
+      const contactInfo = isGroup ? null : (contactsMap.get(jid) ?? contactsMap.get(fallbackJid) ?? null)
+      const contactName = isGroup ? (chat.pushName ?? null) : (contactInfo?.name ?? chat.pushName ?? null)
       const profilePicUrl = contactInfo?.picUrl ?? null
 
       const lastMsg =
