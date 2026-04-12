@@ -12,8 +12,8 @@ const MIME_TYPE: Record<string, string> = {
   stickerMessage: 'image/webp',
   imageMessage: 'image/jpeg',
   videoMessage: 'video/mp4',
-  audioMessage: 'audio/ogg',
-  pttMessage: 'audio/ogg',
+  audioMessage: 'audio/ogg; codecs=opus',
+  pttMessage: 'audio/ogg; codecs=opus',
 }
 
 export async function GET(req: NextRequest) {

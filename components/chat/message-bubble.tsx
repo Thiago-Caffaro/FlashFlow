@@ -1,10 +1,15 @@
 import { CheckCheck, ChevronsRight, Play } from 'lucide-react'
 import { Message } from '@/types'
+import AudioPlayer from './audio-player'
 
 interface MessageBubbleProps {
   message: Message
   waId?: string
   instanceName?: string
+  /** Proxy URL for the contact's profile picture (used in audio bubbles) */
+  avatarUrl?: string | null
+  /** Initials fallback for the contact (used in audio bubbles) */
+  initials?: string
 }
 
 function formatTime(dateStr: string): string {
@@ -80,12 +85,48 @@ function TimestampRow({
   )
 }
 
-export default function MessageBubble({ message, waId, instanceName }: MessageBubbleProps) {
+export default function MessageBubble({ message, waId, instanceName, avatarUrl, initials }: MessageBubbleProps) {
   const isOutbound = message.direction === 'outbound'
   const time = formatTime(message.created_at)
   const fromMe = isOutbound
   const canLoadMedia =
     !!message.wa_message_id && !!waId && !!instanceName
+
+  // ── Audio ─────────────────────────────────────────────────────────────────
+  if (message.type === 'audio') {
+    const msgType =
+      canLoadMedia
+        ? 'audioMessage' // proxy accepts audioMessage or pttMessage; audioMessage covers both
+        : null
+    const src = canLoadMedia && msgType
+      ? buildMediaProxyUrl(message.wa_message_id!, fromMe, waId!, instanceName!, msgType)
+      : null
+
+    return (
+      <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'} mb-1`}>
+        <div
+          className={`relative rounded-2xl shadow-sm px-3 pt-2 pb-1 ${
+            isOutbound ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'
+          }`}
+        >
+          {src ? (
+            <AudioPlayer
+              src={src}
+              isOutbound={isOutbound}
+              avatarUrl={avatarUrl}
+              initials={initials}
+            />
+          ) : (
+            <span className="text-sm text-[#667781]">[áudio]</span>
+          )}
+          <div className="flex items-center justify-end gap-1 mt-1">
+            <span className="text-[10px] text-[#667781] leading-none">{time}</span>
+            {isOutbound && <StatusIcon status={message.status} />}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   // ── Sticker ──────────────────────────────────────────────────────────────
   if (message.type === 'sticker') {

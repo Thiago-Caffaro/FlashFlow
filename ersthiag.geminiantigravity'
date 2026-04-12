@@ -1,0 +1,51 @@
+[33mcommit 897bc928eb22b42c0ea9c7672b5b5619c1558ee9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: Thiago-Caffaro <thiagocaffaro223@gmail.com>
+Date:   Thu Apr 9 13:18:49 2026 -0400
+
+    fix: sync msgs from other devices + save wa_message_id + optimistic UI
+    
+    - fix: webhook now handles fromMe=true messages by checking wa_message_id
+      in DB before discarding — unknown IDs are saved as outbound (from other
+      devices), known IDs are skipped to prevent duplicates
+    - fix: /api/messages and /api/messages/image now capture and persist the
+      wa_message_id returned by Evolution API, enabling deduplication
+    - fix: message direction/status are dynamic (outbound/sent for fromMe,
+      inbound/delivered for received) instead of hardcoded
+    - feat: optimistic UI for text and image messages — messages appear
+      instantly in chat with ChevronsRight animated icon while sending
+    - fix: blob: URLs now recognized as images in message-bubble for local
+      image previews during upload
+    - fix: chat screen no longer flickers with loading state on every
+      realtime update (stabilized dependency on conversation.id string)
+    - fix: conversation list does silent refresh on realtime updates
+    - test: updated and added tests for new fromMe deduplication behavior
+      and wa_message_id persistence
+
+[33mcommit 175f6f74c4dc49d6744dcb7a7bb7d4198f191994[m[33m ([m[1;31morigin/main[m[33m)[m
+Author: Thiago-Caffaro <thiagocaffaro223@gmail.com>
+Date:   Wed Apr 8 17:53:11 2026 -0400
+
+    test: adiciona testes unitários para webhook e envio de mensagens
+    
+    Cobre todos os branches de webhook-evolution e messages com Jest + ts-jest,
+    incluindo validação de campos, mocks de Supabase e Evolution API.
+    
+    Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+[33mcommit dccaadc8f092db45fbd31082ead201cf735dee1d[m
+Author: Thiago-Caffaro <thiagocaffaro223@gmail.com>
+Date:   Wed Apr 8 17:10:37 2026 -0400
+
+    feat: interface de chat com lista de conversas e janela de mensagens
+
+[33mcommit 356f6313c93b6454fd61eaf689b259eabab8a91f[m
+Author: Thiago-Caffaro <thiagocaffaro223@gmail.com>
+Date:   Wed Apr 8 17:10:35 2026 -0400
+
+    api: adiciona rota de sync com Evolution API
+
+[33mcommit 8deaee5505f19c0ae3d26c50771ab09d5cd66226[m
+Author: Thiago-Caffaro <thiagocaffaro223@gmail.com>
+Date:   Wed Apr 8 17:10:32 2026 -0400
+
+    api: reestrutura rotas de messages e webhook

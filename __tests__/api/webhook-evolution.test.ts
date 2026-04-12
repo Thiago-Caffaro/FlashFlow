@@ -457,7 +457,7 @@ describe('POST /api/webhook/evolution', () => {
     // pushName=null → Contact(0) + Chat(1) → conversations(2) → messages(3)
     const insertCall = supabaseMock.from.mock.results[3].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('[áudio]')
-    expect(insertCall.mock.calls[0][0].type).toBe('media')
+    expect(insertCall.mock.calls[0][0].type).toBe('audio')
   })
 
   it('salva type "sticker" para stickerMessage', async () => {

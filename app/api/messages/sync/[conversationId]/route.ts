@@ -46,7 +46,7 @@ function extractContent(row: EvoMessageRow): { content: string; type: string } {
     }
     case 'audioMessage':
     case 'pttMessage':
-      return { content: '[áudio]', type: 'media' }
+      return { content: '[áudio]', type: 'audio' }
     case 'videoMessage': {
       const caption = (msg.videoMessage as { caption?: string } | undefined)?.caption ?? ''
       return { content: caption || '[vídeo]', type: 'video' }

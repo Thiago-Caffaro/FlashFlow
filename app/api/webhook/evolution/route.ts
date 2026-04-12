@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
       type = 'sticker'
     } else if (msgObj.audioMessage || msgObj.pttMessage) {
       content = '[áudio]'
-      type = 'media'
+      type = 'audio'
     } else {
       content = '[mídia]'
       type = 'media'

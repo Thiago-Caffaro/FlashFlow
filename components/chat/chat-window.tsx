@@ -278,6 +278,8 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
                 message={msg}
                 waId={conversation.wa_id}
                 instanceName={conversation.instance_name}
+                avatarUrl={proxyUrl}
+                initials={initials}
               />
             ))
         )}
