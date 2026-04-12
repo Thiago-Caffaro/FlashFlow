@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -8,7 +8,10 @@ const supabase = createClient(
 
 const EVOLUTION_URL = process.env.EVOLUTION_API_URL
 const EVOLUTION_KEY = process.env.EVOLUTION_API_KEY
-const INSTANCE = 'flashflow-main'
+
+// Prevents concurrent syncs for the same instance from mixing data.
+// Module-scoped — persists for the lifetime of the server process.
+const syncInProgress = new Set<string>()
 
 interface EvoChat {
   id: string
@@ -28,9 +31,39 @@ interface EvoChat {
   unreadCount?: number
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const instanceName = req.nextUrl.searchParams.get('instance') || 'flashflow-main'
+
+  if (syncInProgress.has(instanceName)) {
+    return NextResponse.json({ ok: true, skipped: true })
+  }
+
+  syncInProgress.add(instanceName)
   try {
-    const chatsRes = await fetch(`${EVOLUTION_URL}/chat/findChats/${INSTANCE}`, {
+    // 1. Busca os contatos da Evolution API para mapear os nomes corretamente
+    const contactsRes = await fetch(`${EVOLUTION_URL}/chat/findContacts/${instanceName}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_KEY! },
+      body: JSON.stringify({}),
+    })
+    
+    const contactsMap = new Map<string, { name: string; picUrl: string | null }>()
+    if (contactsRes.ok) {
+      const contactsData = await contactsRes.json()
+      if (Array.isArray(contactsData)) {
+        for (const c of contactsData) {
+          if (c.remoteJid && (c.pushName || c.name)) {
+            contactsMap.set(c.remoteJid, {
+              name: c.pushName || c.name,
+              picUrl: c.profilePicUrl ?? null,
+            })
+          }
+        }
+      }
+    }
+
+    // 2. Busca os chats da Evolution API
+    const chatsRes = await fetch(`${EVOLUTION_URL}/chat/findChats/${instanceName}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_KEY! },
       body: JSON.stringify({}),
@@ -58,19 +91,29 @@ export async function POST() {
       // Ignora grupos
       if (jid.endsWith('@g.us')) continue
 
-      // Extrai telefone: JID normal ou fallback do lastMessage para contas LID
+      // Extrai telefone e fallback name: JID normal ou fallback do lastMessage para contas LID
       let contactPhone: string
+      let fallbackJid = jid
+      
       if (jid.endsWith('@s.whatsapp.net')) {
         contactPhone = jid.replace('@s.whatsapp.net', '')
       } else if (jid.endsWith('@lid')) {
         // Tenta pegar telefone real do campo alternativo
         const alt = chat.lastMessage?.key?.remoteJidAlt
-        contactPhone = alt ? alt.replace('@s.whatsapp.net', '') : jid.replace('@lid', '')
+        if (alt) {
+          contactPhone = alt.replace('@s.whatsapp.net', '')
+          fallbackJid = alt
+        } else {
+          contactPhone = jid.replace('@lid', '')
+        }
       } else {
         contactPhone = jid
       }
 
-      const contactName = chat.pushName || null
+      // Usa o nome e foto mapeados dos contatos (por JID ou fallback JID)
+      const contactInfo = contactsMap.get(jid) ?? contactsMap.get(fallbackJid) ?? null
+      const contactName = contactInfo?.name ?? chat.pushName ?? null
+      const profilePicUrl = contactInfo?.picUrl ?? null
 
       const lastMsg =
         chat.lastMessage?.message?.conversation ||
@@ -84,13 +127,16 @@ export async function POST() {
       const { error } = await supabase.from('conversations').upsert(
         {
           wa_id: jid,
+          instance_name: instanceName,
           contact_phone: contactPhone,
           contact_name: contactName,
           last_message: lastMsg,
           last_message_at: lastMsgAt,
           unread_count: chat.unreadCount ?? 0,
+          // Only write pic URL when known — never overwrite an existing URL with null
+          ...(profilePicUrl ? { profile_pic_url: profilePicUrl } : {}),
         },
-        { onConflict: 'wa_id' }
+        { onConflict: 'wa_id, instance_name' }
       )
 
       if (error) {
@@ -105,5 +151,7 @@ export async function POST() {
   } catch (err) {
     console.error('Sync error:', err)
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 })
+  } finally {
+    syncInProgress.delete(instanceName)
   }
 }

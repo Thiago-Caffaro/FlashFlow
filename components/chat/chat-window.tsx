@@ -7,6 +7,10 @@ import { Conversation, Message } from '@/types'
 import MessageBubble from './message-bubble'
 import MessageInput from './message-input'
 
+// Module-level set persists across remounts for the browser session,
+// preventing repeated sync calls for conversations already fetched.
+const syncedConversations = new Set<string>()
+
 interface ChatWindowProps {
   conversation: Conversation | null
   onMessageSent: () => void
@@ -43,8 +47,17 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       .select('*')
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true })
-    setMessages(data ?? [])
+    const msgs = data ?? []
+    setMessages(msgs)
     setLoading(false)
+
+    // If we have fewer than 30 messages and haven't synced this conversation
+    // yet this session, silently fetch historical messages from Evolution API.
+    // New messages will arrive via the Realtime subscription below.
+    if (msgs.length < 30 && !syncedConversations.has(conversationId)) {
+      syncedConversations.add(conversationId)
+      fetch(`/api/messages/sync/${conversationId}`, { method: 'POST' }).catch(() => {})
+    }
   }, [conversationId])
 
   useEffect(() => {
@@ -194,7 +207,11 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const contactName = conversation.contact_name
   const contactPhone = conversation.contact_phone
   const initials = getInitials(contactName, contactPhone)
-  const proxyUrl = `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
+  // @lid contacts have no resolvable profile picture — skip the proxy request
+  const canHavePic = !conversation.wa_id.endsWith('@lid')
+  const proxyUrl = canHavePic
+    ? `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
+    : null
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">
@@ -202,7 +219,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       <div className="flex items-center justify-between px-4 py-2 bg-[#f0f2f5] border-b border-[#d1d7db] shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-[#dfe5e7] flex items-center justify-center text-[#667781] font-semibold text-sm select-none overflow-hidden shrink-0">
-            {!imgError ? (
+            {proxyUrl && !imgError ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={proxyUrl}

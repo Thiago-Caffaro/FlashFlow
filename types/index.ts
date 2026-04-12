@@ -4,6 +4,7 @@ export interface Conversation {
   instance_name: string
   contact_name: string | null
   contact_phone: string
+  profile_pic_url: string | null
   last_message: string | null
   last_message_at: string | null
   unread_count: number

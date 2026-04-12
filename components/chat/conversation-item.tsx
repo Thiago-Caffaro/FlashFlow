@@ -50,7 +50,11 @@ function formatTime(dateStr: string | null): string {
 export default function ConversationItem({ conversation, isActive, onClick }: ConversationItemProps) {
   const displayName = conversation.contact_name ?? conversation.contact_phone
   const initials = getInitials(conversation.contact_name, conversation.contact_phone)
-  const proxyUrl = `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
+  // @lid contacts have no resolvable profile picture — skip the proxy request entirely
+  const canHavePic = !conversation.wa_id.endsWith('@lid')
+  const proxyUrl = canHavePic
+    ? `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
+    : null
   const [imgError, setImgError] = useState(false)
 
   // Reset erro ao trocar de contato
@@ -64,7 +68,7 @@ export default function ConversationItem({ conversation, isActive, onClick }: Co
       }`}
     >
       <div className="w-12 h-12 rounded-full bg-[#dfe5e7] flex items-center justify-center text-[#667781] font-semibold text-sm shrink-0 select-none overflow-hidden">
-        {!imgError ? (
+        {proxyUrl && !imgError ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={proxyUrl}
