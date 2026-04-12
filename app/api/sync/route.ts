@@ -52,9 +52,9 @@ export async function POST(req: NextRequest) {
       const contactsData = await contactsRes.json()
       if (Array.isArray(contactsData)) {
         for (const c of contactsData) {
-          if (c.remoteJid && (c.pushName || c.name)) {
+          if (c.remoteJid) {
             contactsMap.set(c.remoteJid, {
-              name: c.pushName || c.name,
+              name: c.pushName || c.name || null,
               picUrl: c.profilePicUrl ?? null,
             })
           }
@@ -129,11 +129,11 @@ export async function POST(req: NextRequest) {
           wa_id: jid,
           instance_name: instanceName,
           contact_phone: contactPhone,
-          contact_name: contactName,
           last_message: lastMsg,
           last_message_at: lastMsgAt,
           unread_count: chat.unreadCount ?? 0,
-          // Only write pic URL when known — never overwrite an existing URL with null
+          // Never overwrite existing values with null
+          ...(contactName ? { contact_name: contactName } : {}),
           ...(profilePicUrl ? { profile_pic_url: profilePicUrl } : {}),
         },
         { onConflict: 'wa_id, instance_name' }
