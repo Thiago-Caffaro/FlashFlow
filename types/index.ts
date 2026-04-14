@@ -29,6 +29,8 @@ export interface Message {
   direction: 'inbound' | 'outbound'
   status: string
   created_at: string
+  sender_jid?: string | null
+  sender_name?: string | null
 }
 
 export type TriggerTipo = 'contains' | 'exact'

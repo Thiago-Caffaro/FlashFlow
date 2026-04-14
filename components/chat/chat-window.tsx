@@ -7,6 +7,32 @@ import { Conversation, Message } from '@/types'
 import MessageBubble from './message-bubble'
 import MessageInput from './message-input'
 
+function getDateLabel(dateStr: string): string {
+  const msgDate = new Date(dateStr)
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+
+  const same = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+
+  if (same(msgDate, today)) return 'Hoje'
+  if (same(msgDate, yesterday)) return 'Ontem'
+
+  return msgDate.toLocaleDateString('pt-BR', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+}
+
+function msgDayKey(dateStr: string): string {
+  const d = new Date(dateStr)
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+
 // Module-level set persists across remounts for the browser session,
 // preventing repeated sync calls for conversations already fetched.
 const syncedConversations = new Set<string>()
@@ -89,12 +115,12 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
               const exists = prev.some(m => m.id === newMessage.id)
               if (exists) return prev
 
-              const filtered = prev.filter(m => 
+              const filtered = prev.filter(m =>
                 !(m.status === 'sending' && m.content === newMessage.content && m.type === newMessage.type)
               )
-              return [...filtered, newMessage]
+              return [...filtered, newMessage].sort((a, b) => a.created_at.localeCompare(b.created_at))
             }
-            return [...prev, newMessage]
+            return [...prev, newMessage].sort((a, b) => a.created_at.localeCompare(b.created_at))
           })
         }
       )
@@ -204,6 +230,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     )
   }
 
+  const isGroup = conversation.wa_id.endsWith('@g.us')
   const contactName = conversation.contact_name
   const contactPhone = conversation.contact_phone
   const initials = getInitials(contactName, contactPhone)
@@ -272,16 +299,31 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
             <span className="text-[#667781] text-sm">Nenhuma mensagem ainda</span>
           </div>
         ) : (
-          messages.map((msg) => (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                waId={conversation.wa_id}
-                instanceName={conversation.instance_name}
-                avatarUrl={proxyUrl}
-                initials={initials}
-              />
-            ))
+          messages.map((msg, i) => {
+              const dayKey = msgDayKey(msg.created_at)
+              const prevDayKey = i > 0 ? msgDayKey(messages[i - 1].created_at) : null
+              const showSeparator = dayKey !== prevDayKey
+
+              return (
+                <div key={msg.id}>
+                  {showSeparator && (
+                    <div className="flex items-center justify-center my-3">
+                      <span className="px-3 py-1 rounded-full text-[11px] text-[#54656f] bg-[#e1f3fb] shadow-sm select-none">
+                        {getDateLabel(msg.created_at)}
+                      </span>
+                    </div>
+                  )}
+                  <MessageBubble
+                    message={msg}
+                    waId={conversation.wa_id}
+                    instanceName={conversation.instance_name}
+                    avatarUrl={proxyUrl}
+                    initials={initials}
+                    isGroup={isGroup}
+                  />
+                </div>
+              )
+            })
         )}
         <div ref={bottomRef} />
       </div>

@@ -21,11 +21,12 @@ const STATUS_MAP: Record<string, string> = {
 }
 
 interface EvoMessageRow {
-  key: { id: string; fromMe: boolean; remoteJid: string }
+  key: { id: string; fromMe: boolean; remoteJid: string; participant?: string }
   message: Record<string, unknown> | null
   messageType: string
   messageTimestamp: number
   status: string | null
+  pushName?: string | null
 }
 
 function extractContent(row: EvoMessageRow): { content: string; type: string } {
@@ -102,6 +103,7 @@ export async function POST(
   if (!conv) return NextResponse.json({ ok: false, added: 0 })
 
   const { wa_id: remoteJid, instance_name: instanceName } = conv
+  const isGroup = remoteJid.endsWith('@g.us')
 
   // Map instance name to the UUID used in the Message table
   const instanceId = await getInstanceId(instanceName)
@@ -110,7 +112,7 @@ export async function POST(
   try {
     const { data: evoMessages, error } = await supabase
       .from('Message')
-      .select('key, message, messageType, messageTimestamp, status')
+      .select('key, message, messageType, messageTimestamp, status, pushName')
       .eq('instanceId', instanceId)
       .filter('key->>remoteJid', 'eq', remoteJid)
       .order('messageTimestamp', { ascending: false })
@@ -153,6 +155,8 @@ export async function POST(
           direction: (key.fromMe ? 'outbound' : 'inbound') as 'outbound' | 'inbound',
           status,
           created_at: ts,
+          sender_jid:  isGroup && key.participant ? key.participant : null,
+          sender_name: isGroup ? (m.pushName ?? null) : null,
         }
       })
       // Query returned newest-first; restore chronological order before inserting

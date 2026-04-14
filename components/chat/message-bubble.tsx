@@ -10,6 +10,50 @@ interface MessageBubbleProps {
   avatarUrl?: string | null
   /** Initials fallback for the contact (used in audio bubbles) */
   initials?: string
+  /** Whether this conversation is a group */
+  isGroup?: boolean
+}
+
+const GROUP_NAME_COLORS = ['#e17055', '#0984e3', '#00b894', '#6c5ce7', '#fdcb6e', '#e84393']
+
+function senderColor(jid: string): string {
+  let h = 0
+  for (const c of jid) h = (h * 31 + c.charCodeAt(0)) & 0xffffffff
+  return GROUP_NAME_COLORS[Math.abs(h) % GROUP_NAME_COLORS.length]
+}
+
+function SenderLabel({
+  senderJid,
+  senderName,
+  instanceName,
+}: {
+  senderJid: string
+  senderName: string | null | undefined
+  instanceName?: string
+}) {
+  const color = senderColor(senderJid)
+  const phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '')
+  const displayName = senderName || phone
+  const proxyUrl = instanceName
+    ? `/api/profile-picture/proxy?waId=${encodeURIComponent(senderJid)}&instance=${encodeURIComponent(instanceName)}`
+    : null
+
+  return (
+    <div className="flex items-center gap-1.5 mb-0.5">
+      {proxyUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={proxyUrl}
+          alt={displayName}
+          className="w-5 h-5 rounded-full object-cover shrink-0"
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+        />
+      )}
+      <span className="text-[11px] font-semibold leading-none" style={{ color }}>
+        {displayName}
+      </span>
+    </div>
+  )
 }
 
 function formatTime(dateStr: string): string {
@@ -85,7 +129,7 @@ function TimestampRow({
   )
 }
 
-export default function MessageBubble({ message, waId, instanceName, avatarUrl, initials }: MessageBubbleProps) {
+export default function MessageBubble({ message, waId, instanceName, avatarUrl, initials, isGroup }: MessageBubbleProps) {
   const isOutbound = message.direction === 'outbound'
   const time = formatTime(message.created_at)
   const fromMe = isOutbound
@@ -93,6 +137,8 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
     !!message.wa_message_id && !!waId && !!instanceName
 
   // ── Audio ─────────────────────────────────────────────────────────────────
+  const showSenderCompact = isGroup && !isOutbound && !!message.sender_jid
+
   if (message.type === 'audio') {
     const msgType =
       canLoadMedia
@@ -109,6 +155,13 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
             isOutbound ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'
           }`}
         >
+          {showSenderCompact && (
+            <SenderLabel
+              senderJid={message.sender_jid!}
+              senderName={message.sender_name}
+              instanceName={instanceName}
+            />
+          )}
           {src ? (
             <AudioPlayer
               src={src}
@@ -170,6 +223,15 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
           }`}
           style={{ maxWidth: 280 }}
         >
+          {showSenderCompact && (
+            <div className="px-3 pt-2">
+              <SenderLabel
+                senderJid={message.sender_jid!}
+                senderName={message.sender_name}
+                instanceName={instanceName}
+              />
+            </div>
+          )}
           {src ? (
             <div className="relative">
               <video
@@ -217,6 +279,15 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
             isOutbound ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'
           } max-w-[60%] min-w-[120px] p-1`}
         >
+          {showSenderCompact && (
+            <div className="px-1 pt-1">
+              <SenderLabel
+                senderJid={message.sender_jid!}
+                senderName={message.sender_name}
+                instanceName={instanceName}
+              />
+            </div>
+          )}
           {src ? (
             <div className="relative">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -247,6 +318,8 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
   }
 
   // ── Text / fallback ───────────────────────────────────────────────────────
+  const showSender = isGroup && !isOutbound && !!message.sender_jid
+
   return (
     <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'} mb-1`}>
       <div
@@ -254,6 +327,13 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
           isOutbound ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'
         } max-w-[65%] min-w-[80px] px-3 pt-2 pb-1`}
       >
+        {showSender && (
+          <SenderLabel
+            senderJid={message.sender_jid!}
+            senderName={message.sender_name}
+            instanceName={instanceName}
+          />
+        )}
         <p className="text-[#111b21] text-sm whitespace-pre-wrap break-words leading-relaxed">
           {message.content}
         </p>

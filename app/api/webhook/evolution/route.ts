@@ -326,6 +326,8 @@ export async function POST(req: NextRequest) {
       type,
       direction: data.key.fromMe === true ? 'outbound' : 'inbound',
       status: data.key.fromMe === true ? 'sent' : 'delivered',
+      sender_jid:  isGroup ? (data.key.participant ?? null) : null,
+      sender_name: isGroup ? (data.pushName || null)        : null,
     })
 
     if (data.key.fromMe !== true && type === 'text') {
