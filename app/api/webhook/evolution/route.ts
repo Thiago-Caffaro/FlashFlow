@@ -80,6 +80,82 @@ const EVO_STATUS_MAP: Record<string, string> = {
   '5': 'read',
 }
 
+async function executeTriggers(
+  instanceName: string,
+  remoteJid: string,
+  conversationId: string,
+  messageContent: string,
+  messageType: string
+) {
+  if (messageType !== 'text') return
+
+  const { data: triggers, error } = await supabase
+    .from('triggers')
+    .select('*')
+    .eq('instance_name', instanceName)
+
+  if (error || !triggers || triggers.length === 0) return
+
+  for (const trigger of triggers) {
+    const valor = (trigger.valor ?? '').trim().toLowerCase()
+    if (!valor) continue
+
+    const content = messageContent.toLowerCase()
+    const matched =
+      trigger.tipo === 'exact' ? content === valor : content.includes(valor)
+    if (!matched) continue
+
+    if (trigger.action !== 'send_message') continue
+
+    const replyText: string = trigger.action_payload?.message ?? ''
+    if (!replyText.trim()) continue
+
+    const delayMs: number = trigger.delay_ms ?? 0
+    const sendReply = async () => {
+      try {
+        const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${instanceName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: EVOLUTION_API_KEY,
+          },
+          body: JSON.stringify({ number: remoteJid, text: replyText }),
+        })
+
+        const evoData = await res.json().catch(() => ({}))
+        const waMessageId: string | null = evoData?.key?.id ?? null
+
+        // Salva a mensagem enviada pelo bot no banco para aparecer no chat
+        await supabase.from('messages').insert({
+          conversation_id: conversationId,
+          wa_message_id: waMessageId,
+          content: replyText,
+          type: 'text',
+          direction: 'outbound',
+          status: 'sent',
+        })
+
+        // Atualiza last_message e zera unread_count (mensagens já foram "lidas" pelo bot)
+        await supabase.from('conversations').update({
+          last_message: replyText,
+          last_message_at: new Date().toISOString(),
+          unread_count: 0,
+        }).eq('id', conversationId)
+      } catch (err) {
+        console.error('Trigger send error:', err)
+      }
+    }
+
+    if (delayMs > 0) {
+      setTimeout(sendReply, delayMs)
+    } else {
+      sendReply()
+    }
+
+    break // para no primeiro gatilho que bateu
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -251,6 +327,12 @@ export async function POST(req: NextRequest) {
       direction: data.key.fromMe === true ? 'outbound' : 'inbound',
       status: data.key.fromMe === true ? 'sent' : 'delivered',
     })
+
+    if (data.key.fromMe !== true && type === 'text') {
+      executeTriggers(instanceName, remoteJid, conversation.id, content, type).catch((err) => {
+        console.error('executeTriggers error:', err)
+      })
+    }
 
     return NextResponse.json({ ok: true })
   } catch (err) {

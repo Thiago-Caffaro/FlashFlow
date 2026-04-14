@@ -30,3 +30,21 @@ export interface Message {
   status: string
   created_at: string
 }
+
+export type TriggerTipo = 'contains' | 'exact'
+export type TriggerAction = 'send_message' | 'flow'
+
+export interface Trigger {
+  id: string
+  instance_name: string
+  alias: string
+  tipo: TriggerTipo
+  valor: string
+  delay_ms: number
+  action: TriggerAction
+  action_payload: { message?: string; flow_id?: string }
+  created_at: string
+  updated_at: string
+}
+
+export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>

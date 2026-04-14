@@ -1,10 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Conversation } from '@/types'
 import ConversationList from '@/components/chat/conversation-list'
 import ChatWindow from '@/components/chat/chat-window'
+import RightSidebar from '@/components/sidebar-right/right-sidebar'
 import { AccountProvider, useAccount } from '@/contexts/account-context'
 
 function ChatApp() {
@@ -12,6 +14,7 @@ function ChatApp() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const fetchConversations = useCallback(async (showLoading = false) => {
@@ -82,7 +85,7 @@ function ChatApp() {
   const selectedConversation = conversations.find((c) => c.id === selectedId) ?? null
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#f0f2f5]">
+    <div className="relative flex h-screen w-full overflow-hidden bg-[#f0f2f5]">
       <ConversationList
         conversations={conversations}
         loading={loading}
@@ -92,6 +95,17 @@ function ChatApp() {
       <ChatWindow
         conversation={selectedConversation}
         onMessageSent={() => {}}
+      />
+      <button
+        onClick={() => setSidebarOpen((o) => !o)}
+        className="absolute top-3 right-3 z-20 p-1.5 rounded-full hover:bg-[#e9edef] text-[#54656f] transition-colors"
+        title={sidebarOpen ? 'Fechar painel' : 'Abrir painel'}
+      >
+        {sidebarOpen ? <PanelRightClose size={20} /> : <PanelRightOpen size={20} />}
+      </button>
+      <RightSidebar
+        instanceName={activeAccount?.instanceName ?? null}
+        isOpen={sidebarOpen}
       />
     </div>
   )
