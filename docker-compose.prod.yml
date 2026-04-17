@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+
+  # ─── Nginx Proxy Manager ───────────────────────────────────────────────────
+  # Admin UI: http://IP_DA_VPS:81  (admin@example.com / changeme)
+  nginx-proxy:
+    image: jc21/nginx-proxy-manager:latest
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+
+  # ─── Evolution API ─────────────────────────────────────────────────────────
+  evolution:
+    image: atendai/evolution-api:v2.2.3
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_URL: https://evolution.seudominio.com
+      AUTHENTICATION_API_KEY: flashflow123456
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:evolution123@evolution-db:5432/evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+    depends_on:
+      - evolution-db
+
+  evolution-db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution123
+      POSTGRES_DB: evolution
+    volumes:
+      - evolution_pgdata:/var/lib/postgresql/data
+
+  # ─── FlashFlow ─────────────────────────────────────────────────────────────
+  flashflow:
+    image: ghcr.io/SEU_USUARIO_GITHUB/flashflow:latest
+    # Alternativa: build direto na VPS (mais lento, não recomendado)
+    # build: .
+    restart: always
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: https://xxxx.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJ...
+      SUPABASE_SERVICE_ROLE_KEY: eyJ...
+      EVOLUTION_API_URL: http://evolution:8080
+      EVOLUTION_API_KEY: flashflow123456
+    depends_on:
+      - evolution
+
+volumes:
+  npm_data:
+  npm_letsencrypt:
+  evolution_pgdata:
