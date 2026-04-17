@@ -139,7 +139,7 @@ export async function POST(
         return id && !existingIds.has(id)
       })
       .map((m) => {
-        const key = m.key as { id: string; fromMe: boolean }
+        const key = m.key as { id: string; fromMe: boolean; participant?: string }
         const { content, type } = extractContent(m as EvoMessageRow)
         const status = STATUS_MAP[m.status ?? ''] ?? (key.fromMe ? 'sent' : 'delivered')
         const ts =
