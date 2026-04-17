@@ -22,7 +22,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SERVER_URL: https://evolution.seudominio.com
+      SERVER_URL: http://100.84.37.67:8080
       AUTHENTICATION_API_KEY: flashflow123456
       DATABASE_ENABLED: "true"
       DATABASE_PROVIDER: postgresql
@@ -48,14 +48,14 @@ services:
 
   # ─── FlashFlow ─────────────────────────────────────────────────────────────
   flashflow:
-    image: ghcr.io/SEU_USUARIO_GITHUB/flashflow:latest
+    image: ghcr.io/thiago-caffaro/flashflow:latest
     # Alternativa: build direto na VPS (mais lento, não recomendado)
     # build: .
     restart: always
     environment:
-      NEXT_PUBLIC_SUPABASE_URL: https://xxxx.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJ...
-      SUPABASE_SERVICE_ROLE_KEY: eyJ...
+      NEXT_PUBLIC_SUPABASE_URL: https://lyaaxlbzahvklibomske.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YWF4bGJ6YWh2a2xpYm9tc2tlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1ODM4NjcsImV4cCI6MjA5MTE1OTg2N30.TCmRt2ylmJ_p4ubIxewQ2EBealT0p0pCZwdKD6ao_-s
+      SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YWF4bGJ6YWh2a2xpYm9tc2tlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU4Mzg2NywiZXhwIjoyMDkxMTU5ODY3fQ.YnvxriFvPK5ppULeYjILKaie1B4MTaNyT6wfYvgHsSU
       EVOLUTION_API_URL: http://evolution:8080
       EVOLUTION_API_KEY: flashflow123456
     depends_on:
