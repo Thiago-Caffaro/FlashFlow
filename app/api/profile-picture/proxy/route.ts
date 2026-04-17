@@ -38,13 +38,11 @@ async function fetchPicUrlFromEvolution(phone: string, instanceName: string): Pr
 
 /** Saves the URL to conversations so future requests hit the fast path. Fire-and-forget. */
 function persistPicUrl(remoteJid: string, instanceName: string, url: string) {
-  supabase
+  void supabase
     .from('conversations')
     .update({ profile_pic_url: url })
     .eq('wa_id', remoteJid)
     .eq('instance_name', instanceName)
-    .then(() => {})
-    .catch(() => {})
 }
 
 /**
