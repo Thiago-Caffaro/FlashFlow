@@ -53,6 +53,7 @@ services:
     # build: .
     restart: always
     environment:
+      SUPABASE_URL: https://lyaaxlbzahvklibomske.supabase.co
       NEXT_PUBLIC_SUPABASE_URL: https://lyaaxlbzahvklibomske.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YWF4bGJ6YWh2a2xpYm9tc2tlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1ODM4NjcsImV4cCI6MjA5MTE1OTg2N30.TCmRt2ylmJ_p4ubIxewQ2EBealT0p0pCZwdKD6ao_-s
       SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YWF4bGJ6YWh2a2xpYm9tc2tlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU4Mzg2NywiZXhwIjoyMDkxMTU5ODY3fQ.YnvxriFvPK5ppULeYjILKaie1B4MTaNyT6wfYvgHsSU
