@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
 
   # ─── Nginx Proxy Manager ───────────────────────────────────────────────────
@@ -33,7 +31,14 @@ services:
       DATABASE_SAVE_DATA_CHATS: "true"
       WEBHOOK_GLOBAL_ENABLED: "false"
     depends_on:
-      - evolution-db
+      evolution-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/manager/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   evolution-db:
     image: postgres:16-alpine
@@ -44,6 +49,11 @@ services:
       POSTGRES_DB: evolution
     volumes:
       - evolution_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ─── FlashFlow ─────────────────────────────────────────────────────────────
   flashflow:
@@ -60,7 +70,8 @@ services:
       EVOLUTION_API_KEY: flashflow123456
       WEBHOOK_BASE_URL: http://flashflow:3000
     depends_on:
-      - evolution
+      evolution:
+        condition: service_healthy
 
 volumes:
   npm_data:
