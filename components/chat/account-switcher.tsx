@@ -166,9 +166,14 @@ export default function AccountSwitcher() {
         <SyncOverlay
           instanceName={syncingInstance}
           onComplete={async () => {
+            const instanceToActivate = syncingInstance
             setSyncingInstance(null)
-            await refreshAccounts()
-            setIsOpen(true)
+            const fresh = await refreshAccounts()
+            const newAcc = fresh.find((a) => a.instanceName === instanceToActivate)
+            if (newAcc) setActiveAccount(newAcc)
+            if (instanceToActivate)
+              fetch(`/api/sync?instance=${instanceToActivate}`, { method: 'POST' }).catch(() => {})
+            setIsOpen(false)
           }}
         />
       )}

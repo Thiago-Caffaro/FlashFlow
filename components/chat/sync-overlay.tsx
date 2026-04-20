@@ -17,6 +17,7 @@ interface SyncProgress {
 export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayProps) {
   const [sync, setSync] = useState<SyncProgress>({ stage: 'contacts', total: 0, done: 0 })
   const doneRef = useRef(false)
+  const startRef = useRef(Date.now())
 
   useEffect(() => {
     // Start the sync
@@ -34,7 +35,9 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
         if (data.stage === 'done' || data.stage === 'error') {
           doneRef.current = true
           clearInterval(interval)
-          setTimeout(onComplete, 1200)
+          // Minimum 3s display time so the overlay doesn't flash
+          const elapsed = Date.now() - startRef.current
+          setTimeout(onComplete, Math.max(1200, 3000 - elapsed))
         }
       } catch { /* ignore transient errors */ }
     }, 800)
