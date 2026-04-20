@@ -12,64 +12,9 @@ services:
       - npm_data:/data
       - npm_letsencrypt:/etc/letsencrypt
 
-  # ─── Evolution API ─────────────────────────────────────────────────────────
-  evolution:
-    image: ghcr.io/thiago-caffaro/evolution-api:2.3.7
-    restart: always
-    ports:
-      - "8080:8080"
-    environment:
-      SERVER_URL: http://100.84.37.67:8080
-      AUTHENTICATION_API_KEY: flashflow123456
-      DATABASE_ENABLED: "true"
-      DATABASE_PROVIDER: postgresql
-      DATABASE_CONNECTION_URI: postgresql://evolution:evolution123@evolution-db:5432/evolution
-      DATABASE_SAVE_DATA_INSTANCE: "true"
-      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
-      DATABASE_SAVE_MESSAGE_UPDATE: "true"
-      DATABASE_SAVE_DATA_CONTACTS: "true"
-      DATABASE_SAVE_DATA_CHATS: "true"
-      WEBHOOK_GLOBAL_ENABLED: "false"
-      REDIS_ENABLED: "true"
-      REDIS_URI: redis://redis:6379
-    depends_on:
-      evolution-db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/manager/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-
-  evolution-db:
-    image: postgres:16-alpine
-    restart: always
-    environment:
-      POSTGRES_USER: evolution
-      POSTGRES_PASSWORD: evolution123
-      POSTGRES_DB: evolution
-    volumes:
-      - evolution_pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ─── Redis ─────────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    restart: always
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # ─── FlashFlow ─────────────────────────────────────────────────────────────
+  # Evolution API roda no TrueNAS local (100.119.152.43) via Tailscale
+  # para contornar o bloqueio de pre-keys do WhatsApp em IPs de datacenter (Hetzner)
   flashflow:
     image: ghcr.io/thiago-caffaro/flashflow:latest
     restart: always
@@ -80,14 +25,10 @@ services:
       NEXT_PUBLIC_SUPABASE_URL: https://lyaaxlbzahvklibomske.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YWF4bGJ6YWh2a2xpYm9tc2tlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1ODM4NjcsImV4cCI6MjA5MTE1OTg2N30.TCmRt2ylmJ_p4ubIxewQ2EBealT0p0pCZwdKD6ao_-s
       SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YWF4bGJ6YWh2a2xpYm9tc2tlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU4Mzg2NywiZXhwIjoyMDkxMTU5ODY3fQ.YnvxriFvPK5ppULeYjILKaie1B4MTaNyT6wfYvgHsSU
-      EVOLUTION_API_URL: http://evolution:8080
+      EVOLUTION_API_URL: http://100.119.152.43:8080
       EVOLUTION_API_KEY: flashflow123456
-      WEBHOOK_BASE_URL: http://flashflow:3000
-    depends_on:
-      evolution:
-        condition: service_healthy
+      WEBHOOK_BASE_URL: http://87.99.134.147:3000
 
 volumes:
   npm_data:
   npm_letsencrypt:
-  evolution_pgdata:
