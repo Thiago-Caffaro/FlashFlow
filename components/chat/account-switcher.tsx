@@ -28,7 +28,6 @@ export default function AccountSwitcher() {
   const [confirmDelete, setConfirmDelete] = useState<Account | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  // Add account modal
   const [modalStep, setModalStep] = useState<ModalStep | null>(null)
   const [label, setLabel] = useState('')
   const [creating, setCreating] = useState(false)
@@ -37,12 +36,10 @@ export default function AccountSwitcher() {
   const [timeLeft, setTimeLeft] = useState(60)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  // Initial sync overlay
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
 
   const wrapperRef = useRef<HTMLDivElement>(null)
 
-  // Close panel when clicking outside
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
@@ -82,7 +79,6 @@ export default function AccountSwitcher() {
         if (t <= 1) {
           stopQrTimers()
           closeModal()
-          // Verifica se conectou no último segundo antes de deletar
           fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
             .then((r) => r.json())
             .then(({ state }) => {
@@ -107,7 +103,6 @@ export default function AccountSwitcher() {
         if (state === 'open') {
           stopQrTimers()
           closeModal()
-          // Show full-screen sync overlay for initial connection
           setSyncingInstance(instanceName)
         }
       } catch { /* silent */ }
@@ -161,7 +156,6 @@ export default function AccountSwitcher() {
 
   return (
     <>
-      {/* Initial sync overlay */}
       {syncingInstance && (
         <SyncOverlay
           instanceName={syncingInstance}
@@ -181,18 +175,18 @@ export default function AccountSwitcher() {
       {/* Confirmation dialog */}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl p-5 w-80 space-y-3">
-            <p className="font-semibold text-[#111b21]">Remover conta</p>
-            <p className="text-sm text-[#667781]">
+          <div className="bg-white dark:bg-[#233138] rounded-xl shadow-xl p-5 w-80 space-y-3">
+            <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Remover conta</p>
+            <p className="text-sm text-[#667781] dark:text-[#8696a0]">
               Tem certeza que deseja remover{' '}
-              <strong className="text-[#111b21]">{confirmDelete.label}</strong>?
+              <strong className="text-[#111b21] dark:text-[#e9edef]">{confirmDelete.label}</strong>?
               <br />
               Todas as conversas e mensagens dessa conta serão excluídas permanentemente.
             </p>
             <div className="flex gap-2 pt-1">
               <button
                 onClick={() => setConfirmDelete(null)}
-                className="flex-1 py-2 rounded-lg border border-[#d1d7db] text-sm text-[#667781] hover:bg-[#f5f6f6]"
+                className="flex-1 py-2 rounded-lg border border-[#d1d7db] dark:border-[#2a3942] text-sm text-[#667781] dark:text-[#8696a0] hover:bg-[#f5f6f6] dark:hover:bg-[#182229]"
               >
                 Cancelar
               </button>
@@ -211,23 +205,23 @@ export default function AccountSwitcher() {
       {/* QR / label modal */}
       {modalStep && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl p-5 w-80 space-y-4">
+          <div className="bg-white dark:bg-[#233138] rounded-xl shadow-xl p-5 w-80 space-y-4">
             {modalStep === 'label' ? (
               <>
                 <div className="flex items-center justify-between">
-                  <p className="font-semibold text-[#111b21]">Nova conta</p>
-                  <button onClick={closeModal} className="text-[#667781] hover:text-[#111b21]">
+                  <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Nova conta</p>
+                  <button onClick={closeModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
                     <X size={18} />
                   </button>
                 </div>
-                <p className="text-sm text-[#667781]">Dê um nome para identificar esta conta</p>
+                <p className="text-sm text-[#667781] dark:text-[#8696a0]">Dê um nome para identificar esta conta</p>
                 <input
                   type="text"
                   placeholder="Ex: Suporte, Vendas..."
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                  className="w-full border border-[#d1d7db] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
+                  className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
                   autoFocus
                 />
                 {createError && <p className="text-xs text-red-500">{createError}</p>}
@@ -242,8 +236,8 @@ export default function AccountSwitcher() {
             ) : (
               <>
                 <div className="flex items-center justify-between">
-                  <p className="font-semibold text-[#111b21]">Escanear QR Code</p>
-                  <button onClick={closeModal} className="text-[#667781] hover:text-[#111b21]">
+                  <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Escanear QR Code</p>
+                  <button onClick={closeModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
                     <X size={18} />
                   </button>
                 </div>
@@ -251,21 +245,21 @@ export default function AccountSwitcher() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={qrState.qr} alt="QR Code" className="w-full rounded-lg" />
                 ) : (
-                  <div className="flex items-center justify-center h-48 text-[#667781] text-sm gap-2">
+                  <div className="flex items-center justify-center h-48 text-[#667781] dark:text-[#8696a0] text-sm gap-2">
                     <Loader2 size={18} className="animate-spin" />
                     Aguardando QR...
                   </div>
                 )}
-                <p className="text-xs text-[#667781] text-center">
+                <p className="text-xs text-[#667781] dark:text-[#8696a0] text-center">
                   Abra o WhatsApp → Dispositivos vinculados → Vincular dispositivo
                 </p>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-[#667781]">Expira em</span>
+                  <span className="text-xs text-[#667781] dark:text-[#8696a0]">Expira em</span>
                   <span className={`text-xs font-medium ${timeLeft <= 10 ? 'text-red-500' : 'text-[#00a884]'}`}>
                     {timeLeft}s
                   </span>
                 </div>
-                <div className="w-full bg-[#f0f2f5] rounded-full h-1">
+                <div className="w-full bg-[#f0f2f5] dark:bg-[#2a3942] rounded-full h-1">
                   <div
                     className="bg-[#00a884] h-1 rounded-full transition-all duration-1000"
                     style={{ width: `${(timeLeft / 60) * 100}%` }}
@@ -278,32 +272,30 @@ export default function AccountSwitcher() {
       )}
 
       {/* Fixed bottom element inside sidebar */}
-      <div ref={wrapperRef} className="relative border-t border-[#d1d7db] shrink-0">
+      <div ref={wrapperRef} className="relative border-t border-[#d1d7db] dark:border-[#2a3942] shrink-0">
         {/* Expanded panel */}
         {isOpen && (
-          <div className="absolute bottom-full left-0 right-0 bg-white border-t border-[#d1d7db] shadow-lg z-40">
-            {/* Account list */}
+          <div className="absolute bottom-full left-0 right-0 bg-white dark:bg-[#111b21] border-t border-[#d1d7db] dark:border-[#2a3942] shadow-lg z-40">
             <div className="max-h-60 overflow-y-auto">
               {accounts.map((account) => (
                 <div
                   key={account.instanceName}
                   onMouseEnter={() => setHoveredName(account.instanceName)}
                   onMouseLeave={() => setHoveredName(null)}
-                  className={`flex items-center gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-[#f5f6f6] transition-colors ${
-                    activeAccount?.instanceName === account.instanceName ? 'bg-[#f0f2f5]' : ''
+                  className={`flex items-center gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-[#f5f6f6] dark:hover:bg-[#182229] transition-colors ${
+                    activeAccount?.instanceName === account.instanceName ? 'bg-[#f0f2f5] dark:bg-[#2a3942]' : ''
                   }`}
                   onClick={() => {
                     setActiveAccount(account)
                     setIsOpen(false)
-                    // Sincroniza em background ao trocar de conta
                     fetch(`/api/sync?instance=${account.instanceName}`, { method: 'POST' }).catch(() => {})
                   }}
                 >
                   <StateIcon state={account.state} />
                   <div className="flex-1 min-w-0">
-                    <span className="text-sm text-[#111b21] truncate block">{account.label}</span>
+                    <span className="text-sm text-[#111b21] dark:text-[#e9edef] truncate block">{account.label}</span>
                     {account.state !== 'open' && (
-                      <span className="text-[11px] text-[#667781]">
+                      <span className="text-[11px] text-[#667781] dark:text-[#8696a0]">
                         {account.state === 'connecting' ? 'Conectando...' : 'Desconectado'}
                       </span>
                     )}
@@ -314,7 +306,7 @@ export default function AccountSwitcher() {
                         e.stopPropagation()
                         setConfirmDelete(account)
                       }}
-                      className="p-1 rounded-full hover:bg-[#e9edef] text-[#667781] hover:text-red-500 transition-colors"
+                      className="p-1 rounded-full hover:bg-[#e9edef] dark:hover:bg-[#2a3942] text-[#667781] dark:text-[#8696a0] hover:text-red-500 transition-colors"
                     >
                       <X size={14} />
                     </button>
@@ -323,18 +315,17 @@ export default function AccountSwitcher() {
               ))}
             </div>
 
-            {/* Add account row */}
             <button
               onClick={() => {
                 setModalStep('label')
                 setIsOpen(false)
               }}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-[#f5f6f6] transition-colors border-t border-[#f0f2f5]"
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-[#f5f6f6] dark:hover:bg-[#182229] transition-colors border-t border-[#f0f2f5] dark:border-[#2a3942]"
             >
               <div className="w-5 h-5 rounded-full bg-[#00a884] flex items-center justify-center shrink-0">
                 <Plus size={12} className="text-white" />
               </div>
-              <span className="text-sm text-[#111b21]">Adicionar conta</span>
+              <span className="text-sm text-[#111b21] dark:text-[#e9edef]">Adicionar conta</span>
             </button>
           </div>
         )}
@@ -345,17 +336,17 @@ export default function AccountSwitcher() {
             if (!isOpen) refreshAccounts()
             setIsOpen((o) => !o)
           }}
-          className="w-full flex items-center gap-2.5 px-3 py-3 bg-[#f0f2f5] hover:bg-[#e9edef] transition-colors"
+          className="w-full flex items-center gap-2.5 px-3 py-3 bg-[#f0f2f5] dark:bg-[#202c33] hover:bg-[#e9edef] dark:hover:bg-[#2a3942] transition-colors"
         >
           {activeAccount?.state === 'open' ? (
             <Wifi size={16} className="text-[#00a884] shrink-0" />
           ) : (
             <WifiOff size={16} className="text-[#aebac1] shrink-0" />
           )}
-          <span className="flex-1 text-sm text-[#111b21] text-left truncate">{activeLabel}</span>
+          <span className="flex-1 text-sm text-[#111b21] dark:text-[#e9edef] text-left truncate">{activeLabel}</span>
           <ChevronUp
             size={16}
-            className={`text-[#667781] transition-transform shrink-0 ${isOpen ? 'rotate-180' : ''}`}
+            className={`text-[#667781] dark:text-[#8696a0] transition-transform shrink-0 ${isOpen ? 'rotate-180' : ''}`}
           />
         </button>
       </div>

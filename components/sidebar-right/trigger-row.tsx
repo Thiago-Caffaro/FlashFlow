@@ -47,7 +47,7 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
   const currentDelayOption = resolveDelayOption(trigger.delay_ms)
 
   async function handleDelayChange(value: number) {
-    if (value === -1) return // espera o input customizado
+    if (value === -1) return
     await onUpdate(trigger.id, { delay_ms: value })
   }
 
@@ -70,10 +70,10 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
   }
 
   const selectClass =
-    'w-full text-xs text-[#111b21] bg-white border border-[#d1d7db] rounded px-1 py-1 outline-none focus:border-[#00a884] cursor-pointer'
+    'w-full text-xs text-[#111b21] dark:text-[#e9edef] bg-white dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded px-1 py-1 outline-none focus:border-[#00a884] cursor-pointer'
 
   return (
-    <div className="flex items-center gap-1 px-2 py-1.5 border-b border-[#f0f2f5] hover:bg-[#fafafa] group">
+    <div className="flex items-center gap-1 px-2 py-1.5 border-b border-[#f0f2f5] dark:border-[#2a3942] hover:bg-[#fafafa] dark:hover:bg-[#182229] group">
       {/* Alias */}
       <div className="flex-1 min-w-0">
         {editingField === 'alias' ? (
@@ -86,15 +86,15 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
               setEditingField(null)
             }}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-            className="w-full text-xs text-[#111b21] bg-white border border-[#00a884] rounded px-1 py-0.5 outline-none"
+            className="w-full text-xs text-[#111b21] dark:text-[#e9edef] bg-white dark:bg-[#2a3942] border border-[#00a884] rounded px-1 py-0.5 outline-none"
           />
         ) : (
           <span
             onClick={() => setEditingField('alias')}
-            className="block truncate text-xs text-[#111b21] cursor-text px-1 py-0.5 hover:bg-[#f0f2f5] rounded"
+            className="block truncate text-xs text-[#111b21] dark:text-[#e9edef] cursor-text px-1 py-0.5 hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] rounded"
             title="Clique para editar o nome"
           >
-            {localAlias || <em className="text-[#aebac1] not-italic">Nome...</em>}
+            {localAlias || <em className="text-[#aebac1] dark:text-[#667781] not-italic">Nome...</em>}
           </span>
         )}
       </div>
@@ -124,15 +124,15 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
               setEditingField(null)
             }}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-            className="w-full text-xs text-[#111b21] bg-white border border-[#00a884] rounded px-1 py-0.5 outline-none"
+            className="w-full text-xs text-[#111b21] dark:text-[#e9edef] bg-white dark:bg-[#2a3942] border border-[#00a884] rounded px-1 py-0.5 outline-none"
           />
         ) : (
           <span
             onClick={() => setEditingField('valor')}
-            className="block truncate text-xs text-[#111b21] cursor-text px-1 py-0.5 hover:bg-[#f0f2f5] rounded font-mono"
+            className="block truncate text-xs text-[#111b21] dark:text-[#e9edef] cursor-text px-1 py-0.5 hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] rounded font-mono"
             title="Clique para editar o valor"
           >
-            {localValor || <em className="text-[#aebac1] not-italic font-sans">Valor...</em>}
+            {localValor || <em className="text-[#aebac1] dark:text-[#667781] not-italic font-sans">Valor...</em>}
           </span>
         )}
       </div>
@@ -145,7 +145,7 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
             const v = Number(e.target.value)
             if (v !== -1) handleDelayChange(v)
           }}
-          className="text-xs text-[#111b21] bg-white border border-[#d1d7db] rounded px-1 py-1 outline-none focus:border-[#00a884] cursor-pointer w-[84px]"
+          className="text-xs text-[#111b21] dark:text-[#e9edef] bg-white dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded px-1 py-1 outline-none focus:border-[#00a884] cursor-pointer w-[84px]"
         >
           {DELAY_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
@@ -161,7 +161,7 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
             onBlur={handleCustomDelayBlur}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
             placeholder="seg"
-            className="w-[44px] text-xs text-[#111b21] bg-white border border-[#d1d7db] rounded px-1 py-1 outline-none focus:border-[#00a884]"
+            className="w-[44px] text-xs text-[#111b21] dark:text-[#e9edef] bg-white dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded px-1 py-1 outline-none focus:border-[#00a884]"
           />
         )}
       </div>
@@ -171,7 +171,7 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
         <select
           value={trigger.action}
           onChange={(e) => handleActionChange(e.target.value as TriggerAction)}
-          className="text-xs text-[#111b21] bg-white border border-[#d1d7db] rounded px-1 py-1 outline-none focus:border-[#00a884] cursor-pointer w-[80px]"
+          className="text-xs text-[#111b21] dark:text-[#e9edef] bg-white dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded px-1 py-1 outline-none focus:border-[#00a884] cursor-pointer w-[80px]"
         >
           {ACTION_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
@@ -180,7 +180,7 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
         {trigger.action === 'send_message' && (
           <button
             onClick={() => onOpenModal(trigger)}
-            className="p-1 rounded text-[#aebac1] hover:text-[#00a884] hover:bg-[#e7f8f4] transition-colors"
+            className="p-1 rounded text-[#aebac1] dark:text-[#667781] hover:text-[#00a884] hover:bg-[#e7f8f4] dark:hover:bg-[#182229] transition-colors"
             title="Editar mensagem"
           >
             <Pencil size={12} />
@@ -192,7 +192,7 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
       <button
         onClick={handleDelete}
         disabled={deleting}
-        className="p-1 rounded text-[#aebac1] hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40 shrink-0"
+        className="p-1 rounded text-[#aebac1] dark:text-[#667781] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-40 shrink-0"
         title="Remover gatilho"
       >
         <Trash2 size={14} />

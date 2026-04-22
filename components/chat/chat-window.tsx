@@ -33,8 +33,6 @@ function msgDayKey(dateStr: string): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
 }
 
-// Module-level set persists across remounts for the browser session,
-// preventing repeated sync calls for conversations already fetched.
 const syncedConversations = new Set<string>()
 
 interface ChatWindowProps {
@@ -59,7 +57,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
   const [imgError, setImgError] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => setImgError(false), [conversation?.wa_id])
 
@@ -77,9 +75,6 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     setMessages(msgs)
     setLoading(false)
 
-    // If we have fewer than 30 messages and haven't synced this conversation
-    // yet this session, silently fetch historical messages from Evolution API.
-    // New messages will arrive via the Realtime subscription below.
     if (msgs.length < 30 && !syncedConversations.has(conversationId)) {
       syncedConversations.add(conversationId)
       fetch(`/api/messages/sync/${conversationId}`, { method: 'POST' }).catch(() => {})
@@ -91,10 +86,8 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       setMessages([])
       return
     }
-    // Show loading indicator only on first load (messages list is empty)
     fetchMessages(true)
 
-    // Marca mensagens como lidas ao abrir a conversa
     fetch(`/api/conversations/${conversationId}/read`, { method: 'POST' }).catch(() => {})
 
     const channel = supabase
@@ -110,7 +103,6 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
         (payload) => {
           const newMessage = payload.new as Message
           setMessages((prev) => {
-            // Deduplicação: se a nova mensagem for 'outbound', removemos mensagens 'sending' idênticas
             if (newMessage.direction === 'outbound') {
               const exists = prev.some(m => m.id === newMessage.id)
               if (exists) return prev
@@ -132,13 +124,13 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   }, [conversationId, fetchMessages])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = messagesContainerRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [messages])
 
   const handleSend = async (content: string) => {
     if (!conversation) return
-    
-    // Optimistic Update
+
     const tempId = `temp-${Date.now()}`
     const optimisticMsg: Message = {
       id: tempId,
@@ -150,9 +142,12 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       status: 'sending',
       created_at: new Date().toISOString()
     }
-    
+
     setMessages(prev => [...prev, optimisticMsg])
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    setTimeout(() => {
+      const el = messagesContainerRef.current
+      if (el) el.scrollTop = el.scrollHeight
+    }, 50)
 
     try {
       await fetch('/api/messages', {
@@ -167,15 +162,13 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       onMessageSent()
     } catch (err) {
       console.error('Erro ao enviar:', err)
-      // Marcar como erro ou remover se falhar
       setMessages(prev => prev.filter(m => m.id !== tempId))
     }
   }
 
   const handleSendImage = async (file: File) => {
     if (!conversation) return
-    
-    // Optimistic Update for images
+
     const tempId = `temp-img-${Date.now()}`
     const localUrl = URL.createObjectURL(file)
     const optimisticMsg: Message = {
@@ -190,7 +183,10 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     }
 
     setMessages(prev => [...prev, optimisticMsg])
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    setTimeout(() => {
+      const el = messagesContainerRef.current
+      if (el) el.scrollTop = el.scrollHeight
+    }, 50)
 
     try {
       const formData = new FormData()
@@ -209,8 +205,8 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
 
   if (!conversation) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#f0f2f5] gap-5 select-none">
-        <div className="w-24 h-24 rounded-full bg-[#dfe5e7] flex items-center justify-center">
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#f0f2f5] dark:bg-[#0b141a] gap-5 select-none">
+        <div className="w-24 h-24 rounded-full bg-[#dfe5e7] dark:bg-[#2a3942] flex items-center justify-center">
           <svg viewBox="0 0 56 56" width="52" height="52" fill="none" xmlns="http://www.w3.org/2000/svg">
             <circle cx="28" cy="28" r="24" fill="#aebac1" />
             <path
@@ -220,10 +216,10 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
           </svg>
         </div>
         <div className="text-center space-y-1">
-          <h2 className="text-[#41525d] text-xl font-light">FlashFlow Web</h2>
-          <p className="text-[#667781] text-sm">Selecione uma conversa para começar a trocar mensagens</p>
+          <h2 className="text-[#41525d] dark:text-[#8696a0] text-xl font-light">FlashFlow Web</h2>
+          <p className="text-[#667781] dark:text-[#8696a0] text-sm">Selecione uma conversa para começar a trocar mensagens</p>
         </div>
-        <div className="mt-2 px-6 py-3 rounded-full border border-[#d1d7db] text-[#667781] text-xs">
+        <div className="mt-2 px-6 py-3 rounded-full border border-[#d1d7db] dark:border-[#2a3942] text-[#667781] dark:text-[#8696a0] text-xs">
           Suas conversas do WhatsApp aparecem aqui
         </div>
       </div>
@@ -234,7 +230,6 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const contactName = conversation.contact_name
   const contactPhone = conversation.contact_phone
   const initials = getInitials(contactName, contactPhone)
-  // @lid contacts have no resolvable profile picture — skip the proxy request
   const canHavePic = !conversation.wa_id.endsWith('@lid')
   const proxyUrl = canHavePic
     ? `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
@@ -243,9 +238,9 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-[#f0f2f5] border-b border-[#d1d7db] shrink-0">
+      <div className="flex items-center justify-between px-4 py-2 bg-[#f0f2f5] dark:bg-[#202c33] border-b border-[#d1d7db] dark:border-[#2a3942] shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-[#dfe5e7] flex items-center justify-center text-[#667781] font-semibold text-sm select-none overflow-hidden shrink-0">
+          <div className="w-10 h-10 rounded-full bg-[#dfe5e7] dark:bg-[#2a3942] flex items-center justify-center text-[#667781] dark:text-[#aebac1] font-semibold text-sm select-none overflow-hidden shrink-0">
             {proxyUrl && !imgError ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -261,24 +256,24 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
           <div>
             {contactName ? (
               <>
-                <p className="font-medium text-[#111b21] text-sm leading-tight">{contactName}</p>
-                <p className="text-xs text-[#667781]">{contactPhone}</p>
+                <p className="font-medium text-[#111b21] dark:text-[#e9edef] text-sm leading-tight">{contactName}</p>
+                <p className="text-xs text-[#667781] dark:text-[#8696a0]">{contactPhone}</p>
               </>
             ) : (
-              <p className="font-medium text-[#111b21] text-sm leading-tight">{contactPhone}</p>
+              <p className="font-medium text-[#111b21] dark:text-[#e9edef] text-sm leading-tight">{contactPhone}</p>
             )}
           </div>
         </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
-            className="p-2 hover:bg-[#e9edef] rounded-full transition-colors text-[#54656f]"
+            className="p-2 hover:bg-[#e9edef] dark:hover:bg-[#2a3942] rounded-full transition-colors text-[#54656f] dark:text-[#aebac1]"
           >
             <Search size={20} />
           </button>
           <button
             type="button"
-            className="p-2 hover:bg-[#e9edef] rounded-full transition-colors text-[#54656f]"
+            className="p-2 hover:bg-[#e9edef] dark:hover:bg-[#2a3942] rounded-full transition-colors text-[#54656f] dark:text-[#aebac1]"
           >
             <MoreVertical size={20} />
           </button>
@@ -287,16 +282,17 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
 
       {/* Messages area */}
       <div
-        className="flex-1 overflow-y-auto px-4 md:px-20 py-4"
-        style={{ backgroundColor: '#efeae2' }}
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto px-4 md:px-20 py-4 min-h-0"
+        style={{ backgroundColor: 'var(--chat-bg)' }}
       >
         {loading ? (
           <div className="flex items-center justify-center h-full">
-            <span className="text-[#667781] text-sm">Carregando mensagens...</span>
+            <span className="text-[#667781] dark:text-[#8696a0] text-sm">Carregando mensagens...</span>
           </div>
         ) : messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <span className="text-[#667781] text-sm">Nenhuma mensagem ainda</span>
+            <span className="text-[#667781] dark:text-[#8696a0] text-sm">Nenhuma mensagem ainda</span>
           </div>
         ) : (
           messages.map((msg, i) => {
@@ -308,7 +304,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
                 <div key={msg.id}>
                   {showSeparator && (
                     <div className="flex items-center justify-center my-3">
-                      <span className="px-3 py-1 rounded-full text-[11px] text-[#54656f] bg-[#e1f3fb] shadow-sm select-none">
+                      <span className="px-3 py-1 rounded-full text-[11px] text-[#54656f] dark:text-[#8696a0] bg-[#e1f3fb] dark:bg-[#182229] shadow-sm select-none">
                         {getDateLabel(msg.created_at)}
                       </span>
                     </div>
@@ -325,7 +321,6 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
               )
             })
         )}
-        <div ref={bottomRef} />
       </div>
 
       {/* Input */}

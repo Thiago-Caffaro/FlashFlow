@@ -43,10 +43,10 @@ export default function MessageInput({ onSend, onSendImage, disabled }: MessageI
   }
 
   return (
-    <div className="flex items-end gap-2 px-3 py-2 bg-[#f0f2f5] shrink-0">
+    <div className="flex items-end gap-2 px-3 py-2 bg-[#f0f2f5] dark:bg-[#202c33] shrink-0">
       <button
         type="button"
-        className="p-2 text-[#54656f] hover:bg-[#e9edef] rounded-full transition-colors shrink-0"
+        className="p-2 text-[#54656f] dark:text-[#aebac1] hover:bg-[#e9edef] dark:hover:bg-[#2a3942] rounded-full transition-colors shrink-0"
       >
         <Smile size={22} />
       </button>
@@ -55,7 +55,7 @@ export default function MessageInput({ onSend, onSendImage, disabled }: MessageI
         type="button"
         disabled={disabled}
         onClick={() => fileInputRef.current?.click()}
-        className="p-2 text-[#54656f] hover:bg-[#e9edef] rounded-full transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="p-2 text-[#54656f] dark:text-[#aebac1] hover:bg-[#e9edef] dark:hover:bg-[#2a3942] rounded-full transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         <Paperclip size={22} />
       </button>
@@ -67,7 +67,7 @@ export default function MessageInput({ onSend, onSendImage, disabled }: MessageI
         onChange={handleFileChange}
       />
 
-      <div className="flex-1 bg-white rounded-lg px-4 py-2">
+      <div className="flex-1 bg-white dark:bg-[#2a3942] rounded-lg px-4 py-2">
         <textarea
           ref={textareaRef}
           value={text}
@@ -76,7 +76,7 @@ export default function MessageInput({ onSend, onSendImage, disabled }: MessageI
           placeholder="Digite uma mensagem"
           disabled={disabled}
           rows={1}
-          className="w-full resize-none bg-transparent text-sm text-[#111b21] placeholder:text-[#667781] outline-none leading-relaxed disabled:opacity-60 block"
+          className="w-full resize-none bg-transparent text-sm text-[#111b21] dark:text-[#e9edef] placeholder:text-[#667781] dark:placeholder:text-[#8696a0] outline-none leading-relaxed disabled:opacity-60 block"
         />
       </div>
 

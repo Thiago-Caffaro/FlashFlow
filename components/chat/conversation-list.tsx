@@ -28,27 +28,27 @@ export default function ConversationList({
     : conversations
 
   return (
-    <div className="flex flex-col w-[360px] min-w-[280px] border-r border-[#d1d7db] bg-white h-full shrink-0">
+    <div className="flex flex-col w-[360px] min-w-[280px] border-r border-[#d1d7db] dark:border-[#2a3942] bg-white dark:bg-[#111b21] h-full shrink-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-[#f0f2f5] shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 bg-[#f0f2f5] dark:bg-[#202c33] shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-[#00a884] flex items-center justify-center text-white font-bold text-sm select-none">
             FF
           </div>
-          <span className="font-semibold text-[#111b21] text-base">FlashFlow</span>
+          <span className="font-semibold text-[#111b21] dark:text-[#e9edef] text-base">FlashFlow</span>
         </div>
       </div>
 
       {/* Search */}
-      <div className="px-3 py-2 bg-white shrink-0">
-        <div className="flex items-center gap-2 bg-[#f0f2f5] rounded-lg px-3 py-2">
-          <Search size={16} className="text-[#54656f] shrink-0" />
+      <div className="px-3 py-2 bg-white dark:bg-[#111b21] shrink-0">
+        <div className="flex items-center gap-2 bg-[#f0f2f5] dark:bg-[#2a3942] rounded-lg px-3 py-2">
+          <Search size={16} className="text-[#54656f] dark:text-[#aebac1] shrink-0" />
           <input
             type="text"
             placeholder="Pesquisar conversa"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="bg-transparent text-sm text-[#111b21] placeholder:text-[#667781] outline-none flex-1 min-w-0"
+            className="bg-transparent text-sm text-[#111b21] dark:text-[#e9edef] placeholder:text-[#667781] dark:placeholder:text-[#8696a0] outline-none flex-1 min-w-0"
           />
         </div>
       </div>
@@ -56,11 +56,11 @@ export default function ConversationList({
       {/* Conversation list */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="flex items-center justify-center h-20 text-[#667781] text-sm">
+          <div className="flex items-center justify-center h-20 text-[#667781] dark:text-[#8696a0] text-sm">
             Carregando...
           </div>
         ) : filtered.length === 0 ? (
-          <div className="flex items-center justify-center h-20 text-[#667781] text-sm">
+          <div className="flex items-center justify-center h-20 text-[#667781] dark:text-[#8696a0] text-sm">
             {query ? 'Nenhum resultado' : 'Nenhuma conversa'}
           </div>
         ) : (
