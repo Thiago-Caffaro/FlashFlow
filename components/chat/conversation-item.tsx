@@ -50,24 +50,22 @@ function formatTime(dateStr: string | null): string {
 export default function ConversationItem({ conversation, isActive, onClick }: ConversationItemProps) {
   const displayName = conversation.contact_name ?? conversation.contact_phone
   const initials = getInitials(conversation.contact_name, conversation.contact_phone)
-  // @lid contacts have no resolvable profile picture — skip the proxy request entirely
   const canHavePic = !conversation.wa_id.endsWith('@lid')
   const proxyUrl = canHavePic
     ? `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
     : null
   const [imgError, setImgError] = useState(false)
 
-  // Reset erro ao trocar de contato
   useEffect(() => setImgError(false), [conversation.wa_id])
 
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-3 hover:bg-[#f5f6f6] transition-colors text-left border-b border-[#e9edef] ${
-        isActive ? 'bg-[#f0f2f5]' : 'bg-white'
+      className={`w-full flex items-center gap-3 px-3 py-3 hover:bg-[#f5f6f6] dark:hover:bg-[#182229] transition-colors text-left border-b border-[#e9edef] dark:border-[#2a3942] ${
+        isActive ? 'bg-[#f0f2f5] dark:bg-[#2a3942]' : 'bg-white dark:bg-[#111b21]'
       }`}
     >
-      <div className="w-12 h-12 rounded-full bg-[#dfe5e7] flex items-center justify-center text-[#667781] font-semibold text-sm shrink-0 select-none overflow-hidden">
+      <div className="w-12 h-12 rounded-full bg-[#dfe5e7] dark:bg-[#2a3942] flex items-center justify-center text-[#667781] dark:text-[#aebac1] font-semibold text-sm shrink-0 select-none overflow-hidden">
         {proxyUrl && !imgError ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -83,13 +81,13 @@ export default function ConversationItem({ conversation, isActive, onClick }: Co
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-0.5">
-          <span className="font-medium text-[#111b21] text-sm truncate">{displayName}</span>
-          <span className="text-xs text-[#667781] shrink-0 ml-2">
+          <span className="font-medium text-[#111b21] dark:text-[#e9edef] text-sm truncate">{displayName}</span>
+          <span className="text-xs text-[#667781] dark:text-[#8696a0] shrink-0 ml-2">
             {formatTime(conversation.last_message_at)}
           </span>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <p className="text-sm text-[#667781] truncate">{conversation.last_message ?? ''}</p>
+          <p className="text-sm text-[#667781] dark:text-[#8696a0] truncate">{conversation.last_message ?? ''}</p>
           {conversation.unread_count > 0 && (
             <span className="min-w-5 h-5 bg-[#00a884] text-white text-[11px] font-medium rounded-full flex items-center justify-center px-1 shrink-0">
               {conversation.unread_count > 99 ? '99+' : conversation.unread_count}

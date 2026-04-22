@@ -6,11 +6,8 @@ interface MessageBubbleProps {
   message: Message
   waId?: string
   instanceName?: string
-  /** Proxy URL for the contact's profile picture (used in audio bubbles) */
   avatarUrl?: string | null
-  /** Initials fallback for the contact (used in audio bubbles) */
   initials?: string
-  /** Whether this conversation is a group */
   isGroup?: boolean
 }
 
@@ -90,12 +87,12 @@ function buildMediaProxyUrl(
 
 function StatusIcon({ status, size = 14 }: { status: string; size?: number }) {
   if (status === 'sending') {
-    return <ChevronsRight size={size} className="text-[#667781] animate-move-right" />
+    return <ChevronsRight size={size} className="text-[#667781] dark:text-[#8696a0] animate-move-right" />
   }
   return (
     <CheckCheck
       size={size}
-      className={status === 'read' ? 'text-[#53bdeb]' : 'text-[#667781]'}
+      className={status === 'read' ? 'text-[#53bdeb]' : 'text-[#667781] dark:text-[#8696a0]'}
     />
   )
 }
@@ -120,7 +117,7 @@ function TimestampRow({
       }`}
     >
       <span
-        className={`text-[10px] leading-none ${overlay ? 'text-white' : 'text-[#667781]'}`}
+        className={`text-[10px] leading-none ${overlay ? 'text-white' : 'text-[#667781] dark:text-[#8696a0]'}`}
       >
         {time}
       </span>
@@ -136,14 +133,10 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
   const canLoadMedia =
     !!message.wa_message_id && !!waId && !!instanceName
 
-  // ── Audio ─────────────────────────────────────────────────────────────────
   const showSenderCompact = isGroup && !isOutbound && !!message.sender_jid
 
   if (message.type === 'audio') {
-    const msgType =
-      canLoadMedia
-        ? 'audioMessage' // proxy accepts audioMessage or pttMessage; audioMessage covers both
-        : null
+    const msgType = canLoadMedia ? 'audioMessage' : null
     const src = canLoadMedia && msgType
       ? buildMediaProxyUrl(message.wa_message_id!, fromMe, waId!, instanceName!, msgType)
       : null
@@ -152,7 +145,7 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
       <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'} mb-1`}>
         <div
           className={`relative rounded-2xl shadow-sm px-3 pt-2 pb-1 ${
-            isOutbound ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'
+            isOutbound ? 'bg-[#d9fdd3] dark:bg-[#005c4b] rounded-tr-none' : 'bg-white dark:bg-[#202c33] rounded-tl-none'
           }`}
         >
           {showSenderCompact && (
@@ -170,10 +163,10 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
               initials={initials}
             />
           ) : (
-            <span className="text-sm text-[#667781]">[áudio]</span>
+            <span className="text-sm text-[#667781] dark:text-[#8696a0]">[áudio]</span>
           )}
           <div className="flex items-center justify-end gap-1 mt-1">
-            <span className="text-[10px] text-[#667781] leading-none">{time}</span>
+            <span className="text-[10px] text-[#667781] dark:text-[#8696a0] leading-none">{time}</span>
             {isOutbound && <StatusIcon status={message.status} />}
           </div>
         </div>
@@ -181,7 +174,6 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
     )
   }
 
-  // ── Sticker ──────────────────────────────────────────────────────────────
   if (message.type === 'sticker') {
     const src = canLoadMedia
       ? buildMediaProxyUrl(message.wa_message_id!, fromMe, waId!, instanceName!, 'stickerMessage')
@@ -199,7 +191,7 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
               style={{ maxWidth: 160, maxHeight: 160 }}
             />
           ) : (
-            <div className="w-20 h-20 rounded bg-[#d9fdd3] flex items-center justify-center text-2xl">
+            <div className="w-20 h-20 rounded bg-[#d9fdd3] dark:bg-[#005c4b] flex items-center justify-center text-2xl">
               🎭
             </div>
           )}
@@ -209,7 +201,6 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
     )
   }
 
-  // ── Video ─────────────────────────────────────────────────────────────────
   if (message.type === 'video') {
     const src = canLoadMedia
       ? buildMediaProxyUrl(message.wa_message_id!, fromMe, waId!, instanceName!, 'videoMessage')
@@ -219,7 +210,7 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
       <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'} mb-1`}>
         <div
           className={`relative rounded-lg shadow-sm overflow-hidden ${
-            isOutbound ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'
+            isOutbound ? 'bg-[#d9fdd3] dark:bg-[#005c4b] rounded-tr-none' : 'bg-white dark:bg-[#202c33] rounded-tl-none'
           }`}
           style={{ maxWidth: 280 }}
         >
@@ -254,7 +245,7 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
             </div>
           )}
           {message.content && message.content !== '[vídeo]' && (
-            <p className="text-[#111b21] text-sm px-3 pt-1 pb-0 whitespace-pre-wrap break-words">
+            <p className="text-[#111b21] dark:text-[#e9edef] text-sm px-3 pt-1 pb-0 whitespace-pre-wrap break-words">
               {message.content}
             </p>
           )}
@@ -264,7 +255,6 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
     )
   }
 
-  // ── Image ─────────────────────────────────────────────────────────────────
   if (message.type === 'image') {
     const src = isImageUrl(message.content)
       ? message.content
@@ -276,7 +266,7 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
       <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'} mb-1`}>
         <div
           className={`relative rounded-lg shadow-sm overflow-hidden ${
-            isOutbound ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'
+            isOutbound ? 'bg-[#d9fdd3] dark:bg-[#005c4b] rounded-tr-none' : 'bg-white dark:bg-[#202c33] rounded-tl-none'
           } max-w-[60%] min-w-[120px] p-1`}
         >
           {showSenderCompact && (
@@ -301,14 +291,14 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
             </div>
           ) : (
             <div
-              className="flex items-center justify-center bg-[#e9edef] rounded"
+              className="flex items-center justify-center bg-[#e9edef] dark:bg-[#2a3942] rounded"
               style={{ width: 160, height: 120 }}
             >
-              <span className="text-[#667781] text-xs">imagem</span>
+              <span className="text-[#667781] dark:text-[#8696a0] text-xs">imagem</span>
             </div>
           )}
           {message.content && !isImageUrl(message.content) && message.content !== '[imagem]' && (
-            <p className="text-[#111b21] text-sm px-2 pt-1 pb-0 whitespace-pre-wrap break-words">
+            <p className="text-[#111b21] dark:text-[#e9edef] text-sm px-2 pt-1 pb-0 whitespace-pre-wrap break-words">
               {message.content}
             </p>
           )}
@@ -317,14 +307,13 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
     )
   }
 
-  // ── Text / fallback ───────────────────────────────────────────────────────
   const showSender = isGroup && !isOutbound && !!message.sender_jid
 
   return (
     <div className={`flex ${isOutbound ? 'justify-end' : 'justify-start'} mb-1`}>
       <div
         className={`relative rounded-lg shadow-sm overflow-hidden ${
-          isOutbound ? 'bg-[#d9fdd3] rounded-tr-none' : 'bg-white rounded-tl-none'
+          isOutbound ? 'bg-[#d9fdd3] dark:bg-[#005c4b] rounded-tr-none' : 'bg-white dark:bg-[#202c33] rounded-tl-none'
         } max-w-[65%] min-w-[80px] px-3 pt-2 pb-1`}
       >
         {showSender && (
@@ -334,11 +323,11 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
             instanceName={instanceName}
           />
         )}
-        <p className="text-[#111b21] text-sm whitespace-pre-wrap break-words leading-relaxed">
+        <p className="text-[#111b21] dark:text-[#e9edef] text-sm whitespace-pre-wrap break-words leading-relaxed">
           {message.content}
         </p>
         <div className="flex items-center justify-end gap-1 mt-1">
-          <span className="text-[10px] text-[#667781] leading-none">{time}</span>
+          <span className="text-[10px] text-[#667781] dark:text-[#8696a0] leading-none">{time}</span>
           {isOutbound && <StatusIcon status={message.status} />}
         </div>
       </div>

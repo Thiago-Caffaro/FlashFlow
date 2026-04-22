@@ -17,6 +17,7 @@ interface SyncProgress {
 export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayProps) {
   const [sync, setSync] = useState<SyncProgress>({ stage: 'contacts', total: 0, done: 0 })
   const doneRef = useRef(false)
+  const startRef = useRef(Date.now())
 
   useEffect(() => {
     // Start the sync
@@ -34,7 +35,9 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
         if (data.stage === 'done' || data.stage === 'error') {
           doneRef.current = true
           clearInterval(interval)
-          setTimeout(onComplete, 1200)
+          // Minimum 3s display time so the overlay doesn't flash
+          const elapsed = Date.now() - startRef.current
+          setTimeout(onComplete, Math.max(1200, 3000 - elapsed))
         }
       } catch { /* ignore transient errors */ }
     }, 800)
@@ -43,13 +46,12 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instanceName])
 
+  const isWaiting = sync.stage === 'idle' || sync.stage === 'contacts'
   const progress =
     sync.stage === 'done'
       ? 100
       : sync.stage === 'messages' && sync.total > 0
       ? Math.round((sync.done / sync.total) * 100)
-      : sync.stage === 'contacts'
-      ? 2 // show a sliver so the bar isn't empty
       : 0
 
   return (
@@ -73,19 +75,23 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
         <span className="text-[#00a884]">Isso acontecerá apenas uma vez</span> ao conectar.
       </p>
 
-      {/* Progress bar */}
+      {/* Progress bar — indeterminate while waiting for contacts, determinate during messages */}
       <div className="w-72 mb-3">
         <div className="h-1.5 bg-[#2a3942] rounded-full overflow-hidden">
-          <div
-            className="h-full bg-[#00a884] rounded-full transition-all duration-500 ease-out"
-            style={{ width: `${progress}%` }}
-          />
+          {isWaiting ? (
+            <div className="h-full w-1/3 bg-[#00a884] rounded-full" style={{ animation: 'shimmer 1.4s ease-in-out infinite' }} />
+          ) : (
+            <div
+              className="h-full bg-[#00a884] rounded-full transition-all duration-500 ease-out"
+              style={{ width: `${progress}%` }}
+            />
+          )}
         </div>
       </div>
 
       {/* Status text */}
       <div className="text-center min-h-8">
-        {(sync.stage === 'contacts' || sync.stage === 'idle') && (
+        {isWaiting && (
           <p className="text-[#8696a0] text-xs">Buscando conversas...</p>
         )}
         {sync.stage === 'messages' && (
@@ -108,9 +114,11 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
         )}
       </div>
 
-      <p className="text-[#8696a0] text-xs mt-6 tabular-nums font-mono">
-        {progress}%
-      </p>
+      {!isWaiting && (
+        <p className="text-[#8696a0] text-xs mt-6 tabular-nums font-mono">
+          {progress}%
+        </p>
+      )}
     </div>
   )
 }

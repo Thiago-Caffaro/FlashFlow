@@ -49,6 +49,7 @@
 }
 
 :root {
+  --chat-bg: #efeae2;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -84,6 +85,7 @@
 }
 
 .dark {
+  --chat-bg: #0b141a;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -129,6 +131,11 @@
   }
 }
 
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
 @keyframes move-right {
   0% { transform: translateX(-2px); opacity: 0.5; }
   50% { transform: translateX(2px); opacity: 1; }
@@ -137,4 +144,28 @@
 
 .animate-move-right {
   animation: move-right 1s ease-in-out infinite;
+}
+
+/* Custom scrollbars — light mode */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d7db;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #aebac1;
+}
+
+/* Custom scrollbars — dark mode */
+.dark ::-webkit-scrollbar-thumb {
+  background: #2a3942;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #3d4f5a;
 }

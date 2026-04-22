@@ -7,21 +7,21 @@ interface AccountContextValue {
   accounts: Account[]
   activeAccount: Account | null
   setActiveAccount: (account: Account) => void
-  refreshAccounts: () => Promise<void>
+  refreshAccounts: () => Promise<Account[]>
 }
 
 const AccountContext = createContext<AccountContextValue>({
   accounts: [],
   activeAccount: null,
   setActiveAccount: () => {},
-  refreshAccounts: async () => {},
+  refreshAccounts: async () => [],
 })
 
 export function AccountProvider({ children }: { children: React.ReactNode }) {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [activeAccount, setActiveAccountState] = useState<Account | null>(null)
 
-  const refreshAccounts = useCallback(async () => {
+  const refreshAccounts = useCallback(async (): Promise<Account[]> => {
     try {
       const res = await fetch('/api/accounts', { cache: 'no-store' })
       const json = await res.json()
@@ -45,8 +45,11 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
         // Fallback to first open account, then first account
         return fetched.find((a) => a.state === 'open') ?? fetched[0] ?? null
       })
+
+      return fetched
     } catch {
       // network error — keep current state
+      return []
     }
   }, [])
 

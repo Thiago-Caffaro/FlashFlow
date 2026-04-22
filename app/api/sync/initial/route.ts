@@ -241,7 +241,14 @@ async function runSync(instanceName: string) {
   try {
     progress.set(instanceName, { stage: 'contacts', total: 0, done: 0 })
 
-    const conversationIds = await syncContacts(instanceName)
+    // Evolution API may need a few seconds to receive history from the phone after QR scan.
+    // Retry up to 5 times (every 3s) before giving up.
+    let conversationIds: string[] = []
+    for (let attempt = 0; attempt < 5 && conversationIds.length === 0; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 3000))
+      conversationIds = await syncContacts(instanceName)
+    }
+
     const total = conversationIds.length
 
     if (total === 0) {
