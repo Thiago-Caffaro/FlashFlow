@@ -55,6 +55,22 @@ export async function GET() {
       })
     }
 
+    // Reconcilia: instâncias abertas na Evolution que não estão no Supabase são auto-registradas
+    const storedNames = new Set((stored ?? []).map((r) => r.instance_name))
+    const toInsert: { instance_name: string; label: string }[] = []
+    for (const [name, evo] of stateMap.entries()) {
+      if (!storedNames.has(name) && evo.state.toLowerCase() === 'open') {
+        toInsert.push({ instance_name: name, label: name })
+      }
+    }
+    if (toInsert.length > 0) {
+      await supabaseAdmin.from('accounts').upsert(toInsert, { onConflict: 'instance_name', ignoreDuplicates: true })
+      for (const row of toInsert) {
+        ;(stored ?? []).push(row)
+        storedNames.add(row.instance_name)
+      }
+    }
+
     const accounts = (stored ?? []).map((row) => {
       const evo = stateMap.get(row.instance_name)
       const rawState = (evo?.state ?? 'close').toLowerCase()
