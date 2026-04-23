@@ -50,3 +50,49 @@ export interface Trigger {
 }
 
 export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>
+
+// ─── Flows ────────────────────────────────────────────────────────────────────
+
+export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'aiAssistant' | 'end'
+
+export interface FlowNodeData {
+  label?: string
+  message?: string
+  // condition
+  conditionType?: 'contains' | 'exact'
+  conditionValue?: string
+  // aiAssistant
+  systemPrompt?: string
+  historyLimit?: number
+  temperature?: number
+  model?: string
+  [key: string]: unknown
+}
+
+export interface FlowNode {
+  id: string
+  type: FlowNodeType
+  position: { x: number; y: number }
+  data: FlowNodeData
+}
+
+export interface FlowEdge {
+  id: string
+  source: string
+  target: string
+  sourceHandle?: string | null
+  targetHandle?: string | null
+  label?: string
+}
+
+export interface Flow {
+  id: string
+  instance_name: string
+  name: string
+  json: { nodes: FlowNode[]; edges: FlowEdge[] }
+  ativo: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type FlowCreate = Omit<Flow, 'id' | 'created_at' | 'updated_at'>

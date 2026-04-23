@@ -6,6 +6,7 @@ import { Conversation } from '@/types'
 import ConversationList from '@/components/chat/conversation-list'
 import ChatWindow from '@/components/chat/chat-window'
 import TriggersTab from '@/components/sidebar-right/triggers-tab'
+import FlowsTab from '@/components/flows/flows-tab'
 import VerticalTabBar, { View } from '@/components/nav/vertical-tab-bar'
 import { AccountProvider, useAccount } from '@/contexts/account-context'
 import { ThemeProvider } from '@/contexts/theme-context'
@@ -127,17 +128,20 @@ function ChatApp() {
 
         {/* Panel 2: Fluxos */}
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#f0f2f5] dark:bg-[#0b141a]"
+          className="absolute inset-0 bg-white dark:bg-[#111b21]"
           style={{
             transform: `translateY(${(2 - tabIndex) * 100}%)`,
             transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
             willChange: 'transform',
           }}
         >
-          <p className="text-sm font-medium text-[#111b21] dark:text-[#e9edef]">Fluxos</p>
-          <p className="text-xs text-[#aebac1] dark:text-[#667781]">
-            O construtor visual de fluxos estará disponível em breve.
-          </p>
+          {activeAccount?.instanceName ? (
+            <FlowsTab instanceName={activeAccount.instanceName} />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
+            </div>
+          )}
         </div>
       </div>
 

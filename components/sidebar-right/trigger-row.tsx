@@ -1,14 +1,16 @@
 'use client'
 
 import { useState } from 'react'
-import { Pencil, Trash2 } from 'lucide-react'
+import { GitBranch, Pencil, Trash2 } from 'lucide-react'
 import { Trigger, TriggerCreate, TriggerTipo, TriggerAction } from '@/types'
 
 interface TriggerRowProps {
   trigger: Trigger
+  instanceName: string
   onUpdate: (id: string, changes: Partial<TriggerCreate>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onOpenModal: (trigger: Trigger) => void
+  onOpenFlowPicker: (trigger: Trigger) => void
 }
 
 const DELAY_OPTIONS = [
@@ -35,7 +37,7 @@ function resolveDelayOption(delay_ms: number): number {
   return -1
 }
 
-export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }: TriggerRowProps) {
+export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal, onOpenFlowPicker }: TriggerRowProps) {
   const [localAlias, setLocalAlias] = useState(trigger.alias)
   const [localValor, setLocalValor] = useState(trigger.valor)
   const [editingField, setEditingField] = useState<'alias' | 'valor' | null>(null)
@@ -61,6 +63,8 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
     await onUpdate(trigger.id, { action: value })
     if (value === 'send_message') {
       onOpenModal({ ...trigger, action: value })
+    } else if (value === 'flow') {
+      onOpenFlowPicker({ ...trigger, action: value })
     }
   }
 
@@ -184,6 +188,19 @@ export default function TriggerRow({ trigger, onUpdate, onDelete, onOpenModal }:
             title="Editar mensagem"
           >
             <Pencil size={12} />
+          </button>
+        )}
+        {trigger.action === 'flow' && (
+          <button
+            onClick={() => onOpenFlowPicker(trigger)}
+            className={`p-1 rounded transition-colors ${
+              trigger.action_payload?.flow_id
+                ? 'text-[#00a884] bg-[#e7f8f4] dark:bg-[#0d2e27]'
+                : 'text-[#aebac1] dark:text-[#667781] hover:text-[#00a884] hover:bg-[#e7f8f4] dark:hover:bg-[#182229]'
+            }`}
+            title={trigger.action_payload?.flow_id ? 'Trocar fluxo' : 'Selecionar fluxo'}
+          >
+            <GitBranch size={12} />
           </button>
         )}
       </div>
