@@ -1,8 +1,135 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { X, Zap, AlertCircle } from 'lucide-react'
-import { FlowNode, FlowNodeData, Trigger } from '@/types'
+import { X, Zap, AlertCircle, CheckCircle } from 'lucide-react'
+import { FlowNode, FlowNodeData, Trigger, AIProvider } from '@/types'
+
+// ─── Models per provider ──────────────────────────────────────────────────────
+
+const PROVIDER_MODELS: Record<Exclude<AIProvider, 'openrouter'>, string[]> = {
+  gemini: ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'],
+  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+}
+
+const PROVIDER_LABELS: Record<AIProvider, string> = {
+  gemini: 'Google Gemini',
+  openai: 'OpenAI',
+  openrouter: 'OpenRouter',
+}
+
+// ─── AI assistant config sub-component ───────────────────────────────────────
+
+function AiAssistantConfig({
+  node,
+  onChange,
+}: {
+  node: FlowNode
+  onChange: (id: string, data: Partial<FlowNodeData>) => void
+}) {
+  const { data } = node
+  const provider: AIProvider = data.provider ?? 'gemini'
+  const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
+
+  useEffect(() => {
+    fetch('/api/ai-keys')
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.ok) setConfiguredProviders(Object.keys(json.configured))
+      })
+  }, [])
+
+  const isConfigured = configuredProviders.includes(provider)
+
+  return (
+    <>
+      {/* Provider */}
+      <div>
+        <label className={labelClass}>Provedor de IA</label>
+        <select
+          value={provider}
+          onChange={(e) => {
+            const p = e.target.value as AIProvider
+            const defaultModel = p === 'gemini' ? 'gemini-2.0-flash' : p === 'openai' ? 'gpt-4o' : ''
+            onChange(node.id, { provider: p, model: defaultModel, customModel: '' })
+          }}
+          className={inputClass}
+        >
+          {(Object.keys(PROVIDER_LABELS) as AIProvider[]).map((p) => (
+            <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>
+          ))}
+        </select>
+        {/* Configured indicator */}
+        <div className={`flex items-center gap-1 mt-1 text-[10px] font-medium ${isConfigured ? 'text-[#00a884]' : 'text-[#aebac1] dark:text-[#667781]'}`}>
+          <CheckCircle size={10} />
+          {isConfigured ? 'Chave configurada' : 'Chave não configurada — configure em Config. IA'}
+        </div>
+      </div>
+
+      {/* Model */}
+      <div>
+        <label className={labelClass}>Modelo</label>
+        {provider === 'openrouter' ? (
+          <input
+            type="text"
+            value={data.customModel ?? ''}
+            onChange={(e) => onChange(node.id, { customModel: e.target.value })}
+            placeholder="ex: mistral/mistral-7b-instruct"
+            className={inputClass + ' font-mono'}
+          />
+        ) : (
+          <select
+            value={data.model ?? PROVIDER_MODELS[provider][0]}
+            onChange={(e) => onChange(node.id, { model: e.target.value })}
+            className={inputClass}
+          >
+            {PROVIDER_MODELS[provider].map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* System Prompt */}
+      <div>
+        <label className={labelClass}>System Prompt</label>
+        <textarea
+          rows={5}
+          value={data.systemPrompt ?? ''}
+          onChange={(e) => onChange(node.id, { systemPrompt: e.target.value })}
+          placeholder="Você é um atendente da empresa X..."
+          className={inputClass}
+        />
+      </div>
+
+      {/* History + Temperature */}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className={labelClass}>Histórico (msgs)</label>
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={data.historyLimit ?? 10}
+            onChange={(e) => onChange(node.id, { historyLimit: Number(e.target.value) })}
+            className={inputClass}
+          />
+        </div>
+        <div>
+          <label className={labelClass}>Temperatura</label>
+          <input
+            type="number"
+            min={0}
+            max={1}
+            step={0.1}
+            value={data.temperature ?? 0.7}
+            onChange={(e) => onChange(node.id, { temperature: Number(e.target.value) })}
+            className={inputClass}
+          />
+        </div>
+      </div>
+    </>
+  )
+}
 
 interface Props {
   node: FlowNode
@@ -157,53 +284,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
         )}
 
         {type === 'aiAssistant' && (
-          <>
-            <div>
-              <label className={labelClass}>System Prompt</label>
-              <textarea
-                rows={6}
-                value={data.systemPrompt ?? ''}
-                onChange={(e) => onChange(node.id, { systemPrompt: e.target.value })}
-                placeholder="Você é um atendente da empresa X..."
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Histórico (nº de msgs)</label>
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={data.historyLimit ?? 10}
-                onChange={(e) => onChange(node.id, { historyLimit: Number(e.target.value) })}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Temperatura (0–1)</label>
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.1}
-                value={data.temperature ?? 0.7}
-                onChange={(e) => onChange(node.id, { temperature: Number(e.target.value) })}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Modelo</label>
-              <select
-                value={data.model ?? 'gemini-2.0-flash'}
-                onChange={(e) => onChange(node.id, { model: e.target.value })}
-                className={inputClass}
-              >
-                <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-              </select>
-            </div>
-          </>
+          <AiAssistantConfig node={node} onChange={onChange} />
         )}
       </div>
     </div>

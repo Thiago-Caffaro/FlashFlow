@@ -55,6 +55,8 @@ export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>
 
 export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'aiAssistant' | 'end'
 
+export type AIProvider = 'gemini' | 'openai' | 'openrouter'
+
 export interface FlowNodeData {
   label?: string
   message?: string
@@ -66,6 +68,8 @@ export interface FlowNodeData {
   historyLimit?: number
   temperature?: number
   model?: string
+  provider?: AIProvider
+  customModel?: string
   [key: string]: unknown
 }
 

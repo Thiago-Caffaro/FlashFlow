@@ -1,10 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { MessageSquare, Zap, GitBranch, Sun, Moon } from 'lucide-react'
+import { MessageSquare, Zap, GitBranch, Brain, Sun, Moon } from 'lucide-react'
 import { useTheme } from '@/contexts/theme-context'
 
-export type View = 'chat' | 'gatilhos' | 'fluxos'
+export type View = 'chat' | 'gatilhos' | 'fluxos' | 'ia'
 
 interface Props {
   activeTab: View
@@ -15,6 +15,7 @@ const TABS: { id: View; label: string; Icon: React.ElementType }[] = [
   { id: 'chat',     label: 'Chat',     Icon: MessageSquare },
   { id: 'gatilhos', label: 'Gatilhos', Icon: Zap },
   { id: 'fluxos',   label: 'Fluxos',   Icon: GitBranch },
+  { id: 'ia',       label: 'Config. IA', Icon: Brain },
 ]
 
 export default function VerticalTabBar({ activeTab, onTabChange }: Props) {
