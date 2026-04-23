@@ -189,7 +189,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
       start:        {},
       sendMessage:  { message: '' },
       condition:    { conditionType: 'contains', conditionValue: '' },
-      aiAssistant:  { systemPrompt: '', historyLimit: 10, temperature: 0.7, model: 'gemini-2.0-flash' },
+      aiAssistant:  { systemPrompt: '', historyLimit: 10, temperature: 0.7, model: 'gemini-2.5-flash' },
       end:          {},
     }
     setNodes((nds) => [...nds, { id, type, position, data: defaults[type] }])

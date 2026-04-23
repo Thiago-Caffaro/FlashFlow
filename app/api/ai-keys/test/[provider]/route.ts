@@ -38,7 +38,7 @@ export async function POST(
   try {
     if (provider === 'gemini') {
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -53,7 +53,7 @@ export async function POST(
         const msg = body?.error?.message ?? `HTTP ${res.status}`
         return NextResponse.json({ ok: false, error: msg })
       }
-      return NextResponse.json({ ok: true, latency_ms: Date.now() - start, model_used: 'gemini-2.0-flash' })
+      return NextResponse.json({ ok: true, latency_ms: Date.now() - start, model_used: 'gemini-2.5-flash' })
     }
 
     if (provider === 'openai') {

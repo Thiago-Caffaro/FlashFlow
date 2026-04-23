@@ -22,7 +22,7 @@ const PROVIDERS: ProviderInfo[] = [
   {
     id: 'gemini',
     label: 'Google Gemini',
-    description: 'gemini-2.0-flash, gemini-1.5-pro e outros',
+    description: 'gemini-2.5-flash, gemini-2.5-pro e outros',
     Icon: Zap,
     iconColor: '#4285f4',
     keyPlaceholder: 'AIzaSy...',

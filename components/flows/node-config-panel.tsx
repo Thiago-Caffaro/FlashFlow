@@ -7,7 +7,7 @@ import { FlowNode, FlowNodeData, Trigger, AIProvider } from '@/types'
 // ─── Models per provider ──────────────────────────────────────────────────────
 
 const PROVIDER_MODELS: Record<Exclude<AIProvider, 'openrouter'>, string[]> = {
-  gemini: ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'],
+  gemini: ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
 }
 
@@ -49,7 +49,7 @@ function AiAssistantConfig({
           value={provider}
           onChange={(e) => {
             const p = e.target.value as AIProvider
-            const defaultModel = p === 'gemini' ? 'gemini-2.0-flash' : p === 'openai' ? 'gpt-4o' : ''
+            const defaultModel = p === 'gemini' ? 'gemini-2.5-flash' : p === 'openai' ? 'gpt-4o' : ''
             onChange(node.id, { provider: p, model: defaultModel, customModel: '' })
           }}
           className={inputClass}
