@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -13,9 +13,11 @@ import {
   BackgroundVariant,
   Node,
   Edge,
+  NodeMouseHandler,
+  EdgeMouseHandler,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { ArrowLeft, Save, Plus } from 'lucide-react'
+import { ArrowLeft, Save, Plus, Trash2, Copy } from 'lucide-react'
 import { Flow, FlowNode, FlowEdge, FlowNodeData, FlowNodeType } from '@/types'
 import StartNode from './nodes/start-node'
 import SendMessageNode from './nodes/send-message-node'
@@ -33,11 +35,18 @@ const nodeTypes = {
 }
 
 const NODE_PALETTE: { type: FlowNodeType; label: string; color: string }[] = [
-  { type: 'sendMessage', label: 'Enviar Msg', color: '#00a884' },
-  { type: 'condition',   label: 'Condição',   color: '#f59e0b' },
+  { type: 'sendMessage', label: 'Enviar Msg',  color: '#00a884' },
+  { type: 'condition',   label: 'Condição',    color: '#f59e0b' },
   { type: 'aiAssistant', label: 'IA (Gemini)', color: '#8b5cf6' },
   { type: 'end',         label: 'Fim',         color: '#f87171' },
 ]
+
+interface ContextMenu {
+  x: number
+  y: number
+  type: 'node' | 'edge' | 'pane'
+  targetId?: string
+}
 
 interface Props {
   flow: Flow
@@ -68,11 +77,77 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
     [setEdges]
   )
+
+  // Close context menu on outside click
+  useEffect(() => {
+    function handleClick() { setContextMenu(null) }
+    if (contextMenu) {
+      window.addEventListener('click', handleClick, { once: true })
+    }
+    return () => window.removeEventListener('click', handleClick)
+  }, [contextMenu])
+
+  const onNodeContextMenu: NodeMouseHandler = useCallback((e, node) => {
+    e.preventDefault()
+    const rect = wrapperRef.current?.getBoundingClientRect()
+    setContextMenu({
+      x: e.clientX - (rect?.left ?? 0),
+      y: e.clientY - (rect?.top ?? 0),
+      type: 'node',
+      targetId: node.id,
+    })
+  }, [])
+
+  const onEdgeContextMenu: EdgeMouseHandler = useCallback((e, edge) => {
+    e.preventDefault()
+    const rect = wrapperRef.current?.getBoundingClientRect()
+    setContextMenu({
+      x: e.clientX - (rect?.left ?? 0),
+      y: e.clientY - (rect?.top ?? 0),
+      type: 'edge',
+      targetId: edge.id,
+    })
+  }, [])
+
+  const onPaneContextMenu = useCallback((e: MouseEvent | React.MouseEvent) => {
+    e.preventDefault()
+    const rect = wrapperRef.current?.getBoundingClientRect()
+    setContextMenu({
+      x: (e as MouseEvent).clientX - (rect?.left ?? 0),
+      y: (e as MouseEvent).clientY - (rect?.top ?? 0),
+      type: 'pane',
+    })
+  }, [])
+
+  function deleteNode(id: string) {
+    setNodes((nds) => nds.filter((n) => n.id !== id))
+    setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id))
+    if (selectedNodeId === id) setSelectedNodeId(null)
+    setContextMenu(null)
+  }
+
+  function deleteEdge(id: string) {
+    setEdges((eds) => eds.filter((e) => e.id !== id))
+    setContextMenu(null)
+  }
+
+  function duplicateNode(id: string) {
+    const node = nodes.find((n) => n.id === id)
+    if (!node) return
+    const newId = `${node.type}-${Date.now()}`
+    setNodes((nds) => [
+      ...nds,
+      { ...node, id: newId, position: { x: node.position.x + 40, y: node.position.y + 40 } },
+    ])
+    setContextMenu(null)
+  }
 
   const selectedNode = selectedNodeId
     ? (nodes.find((n) => n.id === selectedNodeId) as (Node & { data: FlowNodeData }) | undefined)
@@ -124,45 +199,59 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
 
   return (
     <div className="absolute inset-0 flex flex-col bg-[#f0f2f5] dark:bg-[#0b141a]">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-[#111b21] border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
+      {/* ── Toolbar ── */}
+      <div className="flex items-center gap-4 px-6 py-4 bg-white dark:bg-[#111b21] border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
         <button
           onClick={onBack}
-          className="flex items-center gap-1 text-xs text-[#aebac1] dark:text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors"
+          className="flex items-center gap-2 text-sm text-[#aebac1] dark:text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors shrink-0"
         >
-          <ArrowLeft size={14} />
-          Fluxos
+          <ArrowLeft size={18} />
+          <span className="font-medium">Fluxos</span>
         </button>
-        <div className="w-px h-4 bg-[#f0f2f5] dark:bg-[#2a3942]" />
-        <span className="text-xs font-semibold text-[#111b21] dark:text-[#e9edef] flex-1 truncate">{flow.name}</span>
+
+        <div className="w-px h-6 bg-[#f0f2f5] dark:bg-[#2a3942]" />
+
+        <span className="text-base font-bold text-[#111b21] dark:text-[#e9edef] flex-1 truncate">
+          {flow.name}
+        </span>
 
         {/* Node palette */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-[#aebac1] dark:text-[#667781] uppercase tracking-wide shrink-0">
+            Adicionar nó
+          </span>
+          <div className="w-px h-5 bg-[#f0f2f5] dark:bg-[#2a3942]" />
           {NODE_PALETTE.map((item) => (
             <button
               key={item.type}
               onClick={() => addNode(item.type)}
-              className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-lg border transition-colors hover:opacity-80"
-              style={{ color: item.color, borderColor: item.color + '44', background: item.color + '11' }}
+              className="flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-xl border-2 transition-all hover:scale-[1.03] hover:shadow-sm active:scale-[0.98]"
+              style={{
+                color: item.color,
+                borderColor: item.color + '55',
+                background: item.color + '14',
+              }}
             >
-              <Plus size={10} />
+              <Plus size={15} />
               {item.label}
             </button>
           ))}
         </div>
 
+        <div className="w-px h-6 bg-[#f0f2f5] dark:bg-[#2a3942]" />
+
         <button
           onClick={handleSave}
           disabled={saving}
-          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-[#00a884] text-white hover:bg-[#008f72] transition-colors disabled:opacity-60"
+          className="flex items-center gap-2 text-sm font-semibold px-5 py-2.5 rounded-xl bg-[#00a884] text-white hover:bg-[#008f72] transition-colors disabled:opacity-60 shrink-0 shadow-sm"
         >
-          <Save size={12} />
+          <Save size={16} />
           {saving ? 'Salvando...' : 'Salvar'}
         </button>
       </div>
 
-      {/* Canvas area */}
-      <div className="flex-1 relative">
+      {/* ── Canvas ── */}
+      <div className="flex-1 relative" ref={wrapperRef}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -170,8 +259,17 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           nodeTypes={nodeTypes}
-          onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-          onPaneClick={() => setSelectedNodeId(null)}
+          onNodeClick={(_, node) => {
+            setSelectedNodeId(node.id)
+            setContextMenu(null)
+          }}
+          onPaneClick={() => {
+            setSelectedNodeId(null)
+            setContextMenu(null)
+          }}
+          onNodeContextMenu={onNodeContextMenu}
+          onEdgeContextMenu={onEdgeContextMenu}
+          onPaneContextMenu={onPaneContextMenu}
           fitView
           fitViewOptions={{ padding: 0.3 }}
           deleteKeyCode="Delete"
@@ -191,12 +289,71 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
           />
         </ReactFlow>
 
+        {/* Config panel */}
         {selectedNode && (
           <NodeConfigPanel
             node={selectedNode as FlowNode}
             onChange={handleNodeDataChange}
             onClose={() => setSelectedNodeId(null)}
           />
+        )}
+
+        {/* Context menu */}
+        {contextMenu && (
+          <div
+            className="absolute z-50 min-w-[180px] bg-white dark:bg-[#233138] rounded-xl shadow-xl border border-[#f0f2f5] dark:border-[#2a3942] py-1 overflow-hidden"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {contextMenu.type === 'node' && (
+              <>
+                <button
+                  onClick={() => duplicateNode(contextMenu.targetId!)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#111b21] dark:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors text-left"
+                >
+                  <Copy size={14} className="text-[#667781] dark:text-[#8696a0]" />
+                  Duplicar nó
+                </button>
+                <div className="h-px bg-[#f0f2f5] dark:bg-[#2a3942] my-1" />
+                <button
+                  onClick={() => deleteNode(contextMenu.targetId!)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-left"
+                >
+                  <Trash2 size={14} />
+                  Excluir nó
+                </button>
+              </>
+            )}
+
+            {contextMenu.type === 'edge' && (
+              <button
+                onClick={() => deleteEdge(contextMenu.targetId!)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-left"
+              >
+                <Trash2 size={14} />
+                Excluir conexão
+              </button>
+            )}
+
+            {contextMenu.type === 'pane' && (
+              <>
+                <p className="px-4 py-2 text-[11px] font-semibold text-[#aebac1] dark:text-[#667781] uppercase tracking-wide">
+                  Adicionar nó
+                </p>
+                {NODE_PALETTE.map((item) => (
+                  <button
+                    key={item.type}
+                    onClick={() => { addNode(item.type); setContextMenu(null) }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors text-left"
+                    style={{ color: item.color }}
+                  >
+                    <Plus size={14} />
+                    {item.label}
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>

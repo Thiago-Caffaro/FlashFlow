@@ -129,6 +129,26 @@
   html {
     @apply font-sans;
   }
+  button,
+  [role="button"],
+  select,
+  a[href],
+  label[for],
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="file"] {
+    cursor: pointer;
+  }
+  input,
+  textarea {
+    cursor: text;
+  }
+  input:disabled,
+  button:disabled,
+  select:disabled,
+  textarea:disabled {
+    cursor: not-allowed;
+  }
 }
 
 @keyframes shimmer {
