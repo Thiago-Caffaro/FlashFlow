@@ -59,8 +59,8 @@ function AiAssistantConfig({
           ))}
         </select>
         {/* Configured indicator */}
-        <div className={`flex items-center gap-1 mt-1 text-[10px] font-medium ${isConfigured ? 'text-[#00a884]' : 'text-[#aebac1] dark:text-[#667781]'}`}>
-          <CheckCircle size={10} />
+        <div className={`flex items-center gap-1.5 mt-2 text-xs font-medium ${isConfigured ? 'text-[#00a884]' : 'text-[#aebac1] dark:text-[#667781]'}`}>
+          <CheckCircle size={13} />
           {isConfigured ? 'Chave configurada' : 'Chave não configurada — configure em Config. IA'}
         </div>
       </div>
@@ -93,7 +93,7 @@ function AiAssistantConfig({
       <div>
         <label className={labelClass}>System Prompt</label>
         <textarea
-          rows={5}
+          rows={8}
           value={data.systemPrompt ?? ''}
           onChange={(e) => onChange(node.id, { systemPrompt: e.target.value })}
           placeholder="Você é um atendente da empresa X..."
@@ -140,9 +140,9 @@ interface Props {
 }
 
 const inputClass =
-  'w-full text-xs text-[#111b21] dark:text-[#e9edef] bg-[#f0f2f5] dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded-lg px-2 py-1.5 outline-none focus:border-[#00a884] transition-colors resize-none'
+  'w-full text-sm text-[#111b21] dark:text-[#e9edef] bg-[#f0f2f5] dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded-xl px-4 py-3 outline-none focus:border-[#00a884] transition-colors resize-none'
 
-const labelClass = 'text-[10px] font-semibold text-[#667781] uppercase tracking-wide mb-1 block'
+const labelClass = 'text-xs font-semibold text-[#667781] uppercase tracking-wide mb-2 block'
 
 // ─── Start node panel ─────────────────────────────────────────────────────────
 
@@ -165,32 +165,32 @@ function StartNodePanel({ flowId, instanceName }: { flowId: string; instanceName
   }, [flowId, instanceName])
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-1.5">
-        <Zap size={12} className="text-[#00a884]" />
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Zap size={16} className="text-[#00a884]" />
         <span className={labelClass + ' mb-0'}>Gatilhos vinculados</span>
       </div>
 
       {loading ? (
-        <p className="text-[10px] text-[#aebac1] dark:text-[#667781]">Carregando...</p>
+        <p className="text-sm text-[#aebac1] dark:text-[#667781]">Carregando...</p>
       ) : triggers.length === 0 ? (
-        <div className="flex items-start gap-2 p-2 rounded-lg bg-[#f0f2f5] dark:bg-[#2a3942]">
-          <AlertCircle size={12} className="text-[#aebac1] dark:text-[#667781] shrink-0 mt-0.5" />
-          <p className="text-[10px] text-[#aebac1] dark:text-[#667781] leading-relaxed">
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-[#f0f2f5] dark:bg-[#2a3942]">
+          <AlertCircle size={16} className="text-[#aebac1] dark:text-[#667781] shrink-0 mt-0.5" />
+          <p className="text-sm text-[#aebac1] dark:text-[#667781] leading-relaxed">
             Nenhum gatilho está ativando este fluxo. Vá em <strong>Gatilhos</strong>, selecione um e mude a ação para <em>Executar fluxo</em>.
           </p>
         </div>
       ) : (
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           {triggers.map((t) => (
             <div
               key={t.id}
-              className="flex flex-col gap-0.5 px-2.5 py-2 rounded-lg bg-[#f0f2f5] dark:bg-[#2a3942] border-l-2 border-[#00a884]"
+              className="flex flex-col gap-1 px-4 py-3 rounded-xl bg-[#f0f2f5] dark:bg-[#2a3942] border-l-2 border-[#00a884]"
             >
-              <span className="text-[11px] font-semibold text-[#111b21] dark:text-[#e9edef] truncate">
+              <span className="text-sm font-semibold text-[#111b21] dark:text-[#e9edef] truncate">
                 {t.alias || <em className="font-normal not-italic text-[#aebac1]">Sem nome</em>}
               </span>
-              <span className="text-[10px] text-[#667781] dark:text-[#8696a0]">
+              <span className="text-xs text-[#667781] dark:text-[#8696a0]">
                 {t.tipo === 'contains' ? 'Contém' : 'Igual a'}{' '}
                 {t.valor
                   ? <span className="font-mono text-[#111b21] dark:text-[#e9edef]">&quot;{t.valor}&quot;</span>
@@ -201,7 +201,7 @@ function StartNodePanel({ flowId, instanceName }: { flowId: string; instanceName
         </div>
       )}
 
-      <p className="text-[10px] text-[#aebac1] dark:text-[#667781] leading-relaxed pt-1">
+      <p className="text-xs text-[#aebac1] dark:text-[#667781] leading-relaxed pt-1">
         Este nó é o ponto de entrada do fluxo e <strong>não pode ser excluído</strong>. Só aceita uma conexão de saída.
       </p>
     </div>
@@ -222,30 +222,30 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
   }
 
   return (
-    <div className="absolute right-0 top-0 bottom-0 w-64 bg-white dark:bg-[#111b21] border-l border-[#f0f2f5] dark:border-[#2a3942] flex flex-col z-10 shadow-xl">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
-        <span className="text-xs font-semibold text-[#111b21] dark:text-[#e9edef]">
+    <div className="absolute right-0 top-0 bottom-0 w-[420px] bg-white dark:bg-[#111b21] border-l border-[#f0f2f5] dark:border-[#2a3942] flex flex-col z-10 shadow-xl">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
+        <span className="text-base font-bold text-[#111b21] dark:text-[#e9edef]">
           {titles[type] ?? 'Configurar nó'}
         </span>
-        <button onClick={onClose} className="p-1 rounded text-[#aebac1] hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors">
-          <X size={14} />
+        <button onClick={onClose} className="p-1.5 rounded-lg text-[#aebac1] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors">
+          <X size={20} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-4">
+      <div className="flex-1 overflow-y-auto p-6 space-y-5">
         {type === 'start' && (
           <StartNodePanel flowId={flowId} instanceName={instanceName} />
         )}
 
         {type === 'end' && (
-          <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nó de fim do fluxo. Não requer configuração.</p>
+          <p className="text-sm text-[#aebac1] dark:text-[#667781]">Nó de fim do fluxo. Não requer configuração.</p>
         )}
 
         {type === 'sendMessage' && (
           <div>
             <label className={labelClass}>Mensagem</label>
             <textarea
-              rows={5}
+              rows={8}
               value={data.message ?? ''}
               onChange={(e) => onChange(node.id, { message: e.target.value })}
               placeholder="Digite a mensagem a enviar..."
@@ -277,7 +277,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
                 className={inputClass}
               />
             </div>
-            <p className="text-[10px] text-[#aebac1] dark:text-[#667781]">
+            <p className="text-xs text-[#aebac1] dark:text-[#667781]">
               Saída <span className="text-[#00a884] font-semibold">Sim</span> = verdadeiro &nbsp;·&nbsp; Saída <span className="text-red-400 font-semibold">Não</span> = falso
             </p>
           </>

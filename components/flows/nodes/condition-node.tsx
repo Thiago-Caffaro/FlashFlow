@@ -6,13 +6,13 @@ import { FlowNodeData } from '@/types'
 
 export default function ConditionNode({ data, selected }: NodeProps & { data: FlowNodeData }) {
   return (
-    <div className={`px-3 py-2 rounded-xl border-2 bg-white dark:bg-[#182229] min-w-[180px] shadow-sm transition-colors ${selected ? 'border-[#f59e0b]' : 'border-[#fcd34d] dark:border-[#78450f]'}`}>
+    <div className={`px-3 py-2 rounded-xl border-2 bg-white dark:bg-[#182229] min-w-[180px] max-w-[400px] w-max shadow-sm transition-colors ${selected ? 'border-[#f59e0b]' : 'border-[#fcd34d] dark:border-[#78450f]'}`}>
       <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-[#fcd34d] !border-2 !border-white" />
       <div className="flex items-center gap-2 mb-1.5">
         <GitBranch size={12} className="text-[#f59e0b] shrink-0" />
         <span className="text-[10px] font-semibold text-[#667781] uppercase tracking-wide">Condição</span>
       </div>
-      <p className="text-xs text-[#111b21] dark:text-[#e9edef] font-mono truncate">
+      <p className="text-xs text-[#111b21] dark:text-[#e9edef] font-mono break-words line-clamp-10">
         {data.conditionValue
           ? `${data.conditionType === 'exact' ? '==' : '∋'} "${data.conditionValue}"`
           : <em className="text-[#aebac1] dark:text-[#667781] not-italic font-sans">Definir condição...</em>}

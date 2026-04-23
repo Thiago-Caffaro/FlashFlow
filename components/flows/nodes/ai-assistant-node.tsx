@@ -21,7 +21,7 @@ export default function AiAssistantNode({ data, selected }: NodeProps & { data: 
 
   return (
     <div
-      className="px-3 py-2 rounded-xl border-2 bg-white dark:bg-[#182229] min-w-[190px] shadow-sm transition-colors"
+      className="px-3 py-2 rounded-xl border-2 bg-white dark:bg-[#182229] min-w-[190px] max-w-[400px] w-max shadow-sm transition-colors"
       style={{ borderColor }}
     >
       <Handle type="target" position={Position.Top} className="!w-3 !h-3 !border-2 !border-white" style={{ background: color + '99' }} />
@@ -35,7 +35,7 @@ export default function AiAssistantNode({ data, selected }: NodeProps & { data: 
         {modelName}
       </p>
 
-      <p className="text-xs text-[#111b21] dark:text-[#e9edef] line-clamp-2 min-h-[2em]">
+      <p className="text-xs text-[#111b21] dark:text-[#e9edef] break-words whitespace-pre-wrap line-clamp-10 min-h-[2em]">
         {data.systemPrompt || <em className="text-[#aebac1] dark:text-[#667781] not-italic">Definir prompt...</em>}
       </p>
 
