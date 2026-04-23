@@ -1,10 +1,13 @@
 'use client'
 
-import { X } from 'lucide-react'
-import { FlowNode, FlowNodeData } from '@/types'
+import { useEffect, useState } from 'react'
+import { X, Zap, AlertCircle } from 'lucide-react'
+import { FlowNode, FlowNodeData, Trigger } from '@/types'
 
 interface Props {
   node: FlowNode
+  flowId: string
+  instanceName: string
   onChange: (id: string, data: Partial<FlowNodeData>) => void
   onClose: () => void
 }
@@ -14,13 +17,89 @@ const inputClass =
 
 const labelClass = 'text-[10px] font-semibold text-[#667781] uppercase tracking-wide mb-1 block'
 
-export default function NodeConfigPanel({ node, onChange, onClose }: Props) {
+// ─── Start node panel ─────────────────────────────────────────────────────────
+
+function StartNodePanel({ flowId, instanceName }: { flowId: string; instanceName: string }) {
+  const [triggers, setTriggers] = useState<Trigger[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`/api/triggers?instance=${encodeURIComponent(instanceName)}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.ok) {
+          const linked = (json.triggers as Trigger[]).filter(
+            (t) => t.action === 'flow' && t.action_payload?.flow_id === flowId
+          )
+          setTriggers(linked)
+        }
+      })
+      .finally(() => setLoading(false))
+  }, [flowId, instanceName])
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-1.5">
+        <Zap size={12} className="text-[#00a884]" />
+        <span className={labelClass + ' mb-0'}>Gatilhos vinculados</span>
+      </div>
+
+      {loading ? (
+        <p className="text-[10px] text-[#aebac1] dark:text-[#667781]">Carregando...</p>
+      ) : triggers.length === 0 ? (
+        <div className="flex items-start gap-2 p-2 rounded-lg bg-[#f0f2f5] dark:bg-[#2a3942]">
+          <AlertCircle size={12} className="text-[#aebac1] dark:text-[#667781] shrink-0 mt-0.5" />
+          <p className="text-[10px] text-[#aebac1] dark:text-[#667781] leading-relaxed">
+            Nenhum gatilho está ativando este fluxo. Vá em <strong>Gatilhos</strong>, selecione um e mude a ação para <em>Executar fluxo</em>.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {triggers.map((t) => (
+            <div
+              key={t.id}
+              className="flex flex-col gap-0.5 px-2.5 py-2 rounded-lg bg-[#f0f2f5] dark:bg-[#2a3942] border-l-2 border-[#00a884]"
+            >
+              <span className="text-[11px] font-semibold text-[#111b21] dark:text-[#e9edef] truncate">
+                {t.alias || <em className="font-normal not-italic text-[#aebac1]">Sem nome</em>}
+              </span>
+              <span className="text-[10px] text-[#667781] dark:text-[#8696a0]">
+                {t.tipo === 'contains' ? 'Contém' : 'Igual a'}{' '}
+                {t.valor
+                  ? <span className="font-mono text-[#111b21] dark:text-[#e9edef]">&quot;{t.valor}&quot;</span>
+                  : <em className="font-normal not-italic">qualquer msg</em>}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-[10px] text-[#aebac1] dark:text-[#667781] leading-relaxed pt-1">
+        Este nó é o ponto de entrada do fluxo e <strong>não pode ser excluído</strong>. Só aceita uma conexão de saída.
+      </p>
+    </div>
+  )
+}
+
+// ─── Main panel ───────────────────────────────────────────────────────────────
+
+export default function NodeConfigPanel({ node, flowId, instanceName, onChange, onClose }: Props) {
   const { type, data } = node
+
+  const titles: Record<string, string> = {
+    start:        'Início do Fluxo',
+    end:          'Fim do Fluxo',
+    sendMessage:  'Enviar Mensagem',
+    condition:    'Condição',
+    aiAssistant:  'IA Assistente',
+  }
 
   return (
     <div className="absolute right-0 top-0 bottom-0 w-64 bg-white dark:bg-[#111b21] border-l border-[#f0f2f5] dark:border-[#2a3942] flex flex-col z-10 shadow-xl">
       <div className="flex items-center justify-between px-3 py-2 border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
-        <span className="text-xs font-semibold text-[#111b21] dark:text-[#e9edef]">Configurar nó</span>
+        <span className="text-xs font-semibold text-[#111b21] dark:text-[#e9edef]">
+          {titles[type] ?? 'Configurar nó'}
+        </span>
         <button onClick={onClose} className="p-1 rounded text-[#aebac1] hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors">
           <X size={14} />
         </button>
@@ -28,7 +107,7 @@ export default function NodeConfigPanel({ node, onChange, onClose }: Props) {
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
         {type === 'start' && (
-          <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nó de início do fluxo. Não requer configuração.</p>
+          <StartNodePanel flowId={flowId} instanceName={instanceName} />
         )}
 
         {type === 'end' && (
@@ -72,7 +151,7 @@ export default function NodeConfigPanel({ node, onChange, onClose }: Props) {
               />
             </div>
             <p className="text-[10px] text-[#aebac1] dark:text-[#667781]">
-              Saída <span className="text-[#00a884] font-semibold">Sim</span> = condição verdadeira &nbsp;·&nbsp; Saída <span className="text-red-400 font-semibold">Não</span> = falsa
+              Saída <span className="text-[#00a884] font-semibold">Sim</span> = verdadeiro &nbsp;·&nbsp; Saída <span className="text-red-400 font-semibold">Não</span> = falso
             </p>
           </>
         )}

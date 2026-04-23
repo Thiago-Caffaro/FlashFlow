@@ -17,7 +17,7 @@ import {
   EdgeMouseHandler,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { ArrowLeft, Save, Plus, Trash2, Copy } from 'lucide-react'
+import { ArrowLeft, Save, Plus, Trash2, Copy, Lock } from 'lucide-react'
 import { Flow, FlowNode, FlowEdge, FlowNodeData, FlowNodeType } from '@/types'
 import StartNode from './nodes/start-node'
 import SendMessageNode from './nodes/send-message-node'
@@ -69,8 +69,23 @@ function toXyEdge(e: FlowEdge): Edge {
   }
 }
 
+const START_NODE: Node = {
+  id: 'start',
+  type: 'start',
+  position: { x: 250, y: 60 },
+  data: {},
+  deletable: false,
+}
+
+function ensureStartNode(nodes: Node[]): Node[] {
+  return nodes.some((n) => n.id === 'start') ? nodes : [START_NODE, ...nodes]
+}
+
 export default function FlowCanvas({ flow, onBack, onSave }: Props) {
-  const initialNodes: Node[] = useMemo(() => flow.json.nodes.map(toXyNode), [flow])
+  const initialNodes: Node[] = useMemo(
+    () => ensureStartNode(flow.json.nodes.map(toXyNode)),
+    [flow]
+  )
   const initialEdges: Edge[] = useMemo(() => flow.json.edges.map(toXyEdge), [flow])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
@@ -81,8 +96,15 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
+    (params: Connection) => {
+      // Start node may only have one outgoing connection
+      if (params.source === 'start') {
+        const alreadyConnected = edges.some((e) => e.source === 'start')
+        if (alreadyConnected) return
+      }
+      setEdges((eds) => addEdge(params, eds))
+    },
+    [setEdges, edges]
   )
 
   // Close context menu on outside click
@@ -127,6 +149,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
   }, [])
 
   function deleteNode(id: string) {
+    if (id === 'start') return // permanent node
     setNodes((nds) => nds.filter((n) => n.id !== id))
     setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id))
     if (selectedNodeId === id) setSelectedNodeId(null)
@@ -293,6 +316,8 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
         {selectedNode && (
           <NodeConfigPanel
             node={selectedNode as FlowNode}
+            flowId={flow.id}
+            instanceName={flow.instance_name}
             onChange={handleNodeDataChange}
             onClose={() => setSelectedNodeId(null)}
           />
@@ -305,25 +330,38 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
             style={{ top: contextMenu.y, left: contextMenu.x }}
             onClick={(e) => e.stopPropagation()}
           >
-            {contextMenu.type === 'node' && (
-              <>
-                <button
-                  onClick={() => duplicateNode(contextMenu.targetId!)}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#111b21] dark:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors text-left"
-                >
-                  <Copy size={14} className="text-[#667781] dark:text-[#8696a0]" />
-                  Duplicar nó
-                </button>
-                <div className="h-px bg-[#f0f2f5] dark:bg-[#2a3942] my-1" />
-                <button
-                  onClick={() => deleteNode(contextMenu.targetId!)}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-left"
-                >
-                  <Trash2 size={14} />
-                  Excluir nó
-                </button>
-              </>
-            )}
+            {contextMenu.type === 'node' && (() => {
+              const isStart = contextMenu.targetId === 'start'
+              return (
+                <>
+                  {!isStart && (
+                    <>
+                      <button
+                        onClick={() => duplicateNode(contextMenu.targetId!)}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#111b21] dark:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors text-left"
+                      >
+                        <Copy size={14} className="text-[#667781] dark:text-[#8696a0]" />
+                        Duplicar nó
+                      </button>
+                      <div className="h-px bg-[#f0f2f5] dark:bg-[#2a3942] my-1" />
+                      <button
+                        onClick={() => deleteNode(contextMenu.targetId!)}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-left"
+                      >
+                        <Trash2 size={14} />
+                        Excluir nó
+                      </button>
+                    </>
+                  )}
+                  {isStart && (
+                    <div className="px-4 py-3 text-xs text-[#aebac1] dark:text-[#667781] flex items-center gap-2">
+                      <Lock size={11} />
+                      Nó permanente — não pode ser excluído
+                    </div>
+                  )}
+                </>
+              )
+            })()}
 
             {contextMenu.type === 'edge' && (
               <button
