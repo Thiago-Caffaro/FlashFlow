@@ -70,6 +70,10 @@ export interface FlowNodeData {
   model?: string
   provider?: AIProvider
   customModel?: string
+  continueConversation?: boolean
+  timeoutType?: 'minutes' | 'messages'
+  timeoutValue?: number
+  responseDelayMs?: number
   [key: string]: unknown
 }
 

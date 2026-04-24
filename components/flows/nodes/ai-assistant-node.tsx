@@ -1,7 +1,7 @@
 'use client'
 
 import { Handle, Position, NodeProps } from '@xyflow/react'
-import { Sparkles, Bot, Radio } from 'lucide-react'
+import { Sparkles, Bot, Radio, MessageCircle } from 'lucide-react'
 import { FlowNodeData, AIProvider } from '@/types'
 
 const PROVIDER_CONFIG: Record<AIProvider, { label: string; Icon: React.ElementType; color: string }> = {
@@ -38,6 +38,17 @@ export default function AiAssistantNode({ data, selected }: NodeProps & { data: 
       <p className="text-xs text-[#111b21] dark:text-[#e9edef] break-words whitespace-pre-wrap line-clamp-10 min-h-[2em]">
         {data.systemPrompt || <em className="text-[#aebac1] dark:text-[#667781] not-italic">Definir prompt...</em>}
       </p>
+
+      {data.continueConversation && (
+        <div className="flex items-center gap-1.5 mt-1.5 pt-1.5 border-t border-[#f0f2f5] dark:border-[#2a3942]">
+          <MessageCircle size={9} style={{ color }} className="shrink-0" />
+          <span className="text-[9px] text-[#667781] dark:text-[#aebac1]">
+            Sessão contínua
+            {' · '}{((data.responseDelayMs as number | undefined) ?? 5000) / 1000}s delay
+            {data.timeoutValue ? ` · ${data.timeoutValue}${(data.timeoutType ?? 'minutes') === 'messages' ? ' msgs' : ' min'}` : ''}
+          </span>
+        </div>
+      )}
 
       <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !border-2 !border-white" style={{ background: color + '99' }} />
     </div>

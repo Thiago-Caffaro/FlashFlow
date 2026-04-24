@@ -10,11 +10,25 @@ const supabase = createClient(
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
-interface FlowContext {
+export interface FlowContext {
   instanceName: string
   remoteJid: string
   conversationId: string
   incomingMessage: string
+}
+
+interface AISession {
+  id: string
+  instance_name: string
+  remote_jid: string
+  flow_id: string
+  node_id: string
+  message_count: number
+  max_messages: number | null
+  expires_at: string | null
+  response_delay_ms: number
+  pending_message: string | null
+  last_message_at: string | null
 }
 
 async function sendWhatsApp(ctx: FlowContext, text: string) {
@@ -121,6 +135,99 @@ function nextNodeId(edges: FlowEdge[], fromId: string, handle?: string | null): 
   return edge?.target ?? null
 }
 
+// ─── Session management ───────────────────────────────────────────────────────
+
+export async function checkActiveSession(instanceName: string, remoteJid: string): Promise<AISession | null> {
+  const { data } = await supabase
+    .from('ai_sessions')
+    .select('*')
+    .eq('instance_name', instanceName)
+    .eq('remote_jid', remoteJid)
+    .maybeSingle()
+
+  if (!data) return null
+
+  // Expired by time
+  if (data.expires_at && new Date(data.expires_at) < new Date()) {
+    await supabase.from('ai_sessions').delete().eq('id', data.id)
+    return null
+  }
+
+  // Expired by message count
+  if (data.max_messages !== null && data.message_count >= data.max_messages) {
+    await supabase.from('ai_sessions').delete().eq('id', data.id)
+    return null
+  }
+
+  return data as AISession
+}
+
+export async function handleActiveSession(session: AISession, ctx: FlowContext): Promise<void> {
+  const newCount = session.message_count + 1
+  const delayMs = session.response_delay_ms ?? 5000
+
+  // Update pending message and increment count before scheduling
+  await supabase.from('ai_sessions')
+    .update({
+      message_count: newCount,
+      pending_message: ctx.incomingMessage,
+      last_message_at: new Date().toISOString(),
+    })
+    .eq('id', session.id)
+
+  // Debounced AI call: re-read DB right before sending to pick up any
+  // newer message that arrived within the delay window
+  setTimeout(async () => {
+    try {
+      const { data: latest } = await supabase
+        .from('ai_sessions')
+        .select('*')
+        .eq('id', session.id)
+        .maybeSingle()
+
+      if (!latest) return
+
+      // If a newer message arrived after this one, bail — that timer will handle it
+      const lastMsgTime = latest.last_message_at ? new Date(latest.last_message_at).getTime() : 0
+      if (Date.now() - lastMsgTime < delayMs - 500) return
+
+      const { data: flow } = await supabase
+        .from('flows')
+        .select('json')
+        .eq('id', session.flow_id)
+        .single()
+
+      if (!flow) return
+
+      const nodes: FlowNode[] = flow.json?.nodes ?? []
+      const node = nodes.find((n) => n.id === session.node_id)
+      if (!node) return
+
+      const provider: AIProvider = (node.data.provider as AIProvider) ?? 'gemini'
+      const model = (node.data.model as string) ?? 'gemini-2.5-flash'
+      const customModel = node.data.customModel as string | undefined
+      const systemPrompt = (node.data.systemPrompt as string) ?? ''
+      const temperature = (node.data.temperature as number) ?? 0.7
+
+      const reply = await callAI(provider, model, customModel, systemPrompt, latest.pending_message ?? '', temperature)
+      if (reply.trim()) await sendWhatsApp(ctx, reply)
+
+      // Close session if limit reached after this message
+      const expired =
+        (latest.max_messages !== null && latest.message_count >= latest.max_messages) ||
+        (latest.expires_at !== null && new Date(latest.expires_at) < new Date())
+
+      if (expired) {
+        await supabase.from('ai_sessions').delete().eq('id', session.id)
+      }
+    } catch (err) {
+      console.error('handleActiveSession error:', err)
+    }
+  }, delayMs)
+}
+
+// ─── Flow execution ───────────────────────────────────────────────────────────
+
 export async function executeFlow(flowId: string, ctx: FlowContext) {
   const { data: flow, error } = await supabase
     .from('flows')
@@ -173,23 +280,55 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
 
     if (node.type === 'aiAssistant') {
       const provider: AIProvider = (node.data.provider as AIProvider) ?? 'gemini'
-      const model = node.data.model ?? 'gemini-2.5-flash'
-      const customModel = node.data.customModel
-      const systemPrompt = node.data.systemPrompt ?? ''
-      const temperature = node.data.temperature ?? 0.7
+      const model = (node.data.model as string) ?? 'gemini-2.5-flash'
+      const customModel = node.data.customModel as string | undefined
+      const systemPrompt = (node.data.systemPrompt as string) ?? ''
+      const temperature = (node.data.temperature as number) ?? 0.7
 
+      let reply = ''
       try {
-        const reply = await callAI(provider, model, customModel, systemPrompt, ctx.incomingMessage, temperature)
+        reply = await callAI(provider, model, customModel, systemPrompt, ctx.incomingMessage, temperature)
         if (reply.trim()) await sendWhatsApp(ctx, reply)
       } catch (err) {
         console.error('Erro na execução da IA:', err)
+      }
+
+      // Open a continue-conversation session if configured
+      if (node.data.continueConversation && reply.trim()) {
+        const timeoutType = node.data.timeoutType as 'minutes' | 'messages' | undefined
+        const timeoutValue = node.data.timeoutValue as number | undefined
+        const responseDelayMs = (node.data.responseDelayMs as number | undefined) ?? 5000
+
+        let expires_at: string | null = null
+        let max_messages: number | null = null
+
+        if (timeoutType === 'minutes' && timeoutValue) {
+          expires_at = new Date(Date.now() + timeoutValue * 60 * 1000).toISOString()
+        } else if (timeoutType === 'messages' && timeoutValue) {
+          max_messages = timeoutValue
+        }
+
+        await supabase.from('ai_sessions').upsert(
+          {
+            instance_name: ctx.instanceName,
+            remote_jid: ctx.remoteJid,
+            flow_id: flowId,
+            node_id: node.id,
+            message_count: 1,
+            response_delay_ms: responseDelayMs,
+            expires_at,
+            max_messages,
+            pending_message: ctx.incomingMessage,
+            last_message_at: new Date().toISOString(),
+          },
+          { onConflict: 'instance_name, remote_jid' }
+        )
       }
 
       currentId = nextNodeId(edges, currentId)
       continue
     }
 
-    // Tipo desconhecido — avança para o próximo
     currentId = nextNodeId(edges, currentId)
   }
 }

@@ -127,6 +127,77 @@ function AiAssistantConfig({
           />
         </div>
       </div>
+
+      {/* Continue Conversation */}
+      <div className="border-t border-[#f0f2f5] dark:border-[#2a3942] pt-5">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <div className="relative mt-0.5 shrink-0">
+            <input
+              type="checkbox"
+              checked={data.continueConversation ?? false}
+              onChange={(e) => onChange(node.id, { continueConversation: e.target.checked })}
+              className="sr-only peer"
+            />
+            <div className="w-10 h-6 bg-[#d1d7db] dark:bg-[#3d4f5a] rounded-full peer-checked:bg-[#00a884] transition-colors" />
+            <div className="absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
+          </div>
+          <div>
+            <span className="text-sm font-semibold text-[#111b21] dark:text-[#e9edef]">Continuar conversa</span>
+            <p className="text-xs text-[#aebac1] dark:text-[#667781] mt-0.5 leading-relaxed">
+              A IA responde automaticamente as mensagens seguintes do usuário
+            </p>
+          </div>
+        </label>
+
+        {data.continueConversation && (
+          <div className="mt-4 space-y-4 pl-3 border-l-2 border-[#00a884]/30">
+            {/* Timeout */}
+            <div>
+              <label className={labelClass}>Tempo limite de atendimento</label>
+              <div className="flex gap-2">
+                <select
+                  value={data.timeoutType ?? 'minutes'}
+                  onChange={(e) => onChange(node.id, { timeoutType: e.target.value as 'minutes' | 'messages' })}
+                  className={inputClass + ' flex-1'}
+                >
+                  <option value="minutes">Minutos</option>
+                  <option value="messages">Mensagens</option>
+                </select>
+                <input
+                  type="number"
+                  min={1}
+                  value={data.timeoutValue ?? 30}
+                  onChange={(e) => onChange(node.id, { timeoutValue: Number(e.target.value) })}
+                  className={inputClass + ' w-24 shrink-0'}
+                />
+              </div>
+              <p className="text-xs text-[#aebac1] dark:text-[#667781] mt-1.5">
+                {(data.timeoutType ?? 'minutes') === 'messages'
+                  ? 'Encerra a sessão após esse número de respostas'
+                  : 'Encerra a sessão após esse tempo sem novo trigger'}
+              </p>
+            </div>
+
+            {/* Response Delay */}
+            <div>
+              <label className={labelClass}>Delay da resposta</label>
+              <select
+                value={data.responseDelayMs ?? 5000}
+                onChange={(e) => onChange(node.id, { responseDelayMs: Number(e.target.value) })}
+                className={inputClass}
+              >
+                <option value={2000}>2 segundos (mínimo)</option>
+                <option value={5000}>5 segundos (padrão)</option>
+                <option value={10000}>10 segundos</option>
+                <option value={15000}>15 segundos</option>
+              </select>
+              <p className="text-xs text-[#aebac1] dark:text-[#667781] mt-1.5">
+                Aguarda esse tempo após a última mensagem antes de responder — evita múltiplas respostas para mensagens enviadas em sequência
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
     </>
   )
 }

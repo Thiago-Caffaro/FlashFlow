@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { executeFlow } from '@/lib/flow-engine'
+import { executeFlow, checkActiveSession, handleActiveSession } from '@/lib/flow-engine'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -335,9 +335,23 @@ export async function POST(req: NextRequest) {
     })
 
     if (data.key.fromMe !== true && type === 'text') {
-      executeTriggers(instanceName, remoteJid, conversation.id, content, type).catch((err) => {
-        console.error('executeTriggers error:', err)
-      })
+      void (async () => {
+        try {
+          const session = await checkActiveSession(instanceName, remoteJid)
+          if (session) {
+            await handleActiveSession(session, {
+              instanceName,
+              remoteJid,
+              conversationId: conversation.id,
+              incomingMessage: content,
+            })
+          } else {
+            await executeTriggers(instanceName, remoteJid, conversation.id, content, type)
+          }
+        } catch (err) {
+          console.error('session/trigger error:', err)
+        }
+      })()
     }
 
     return NextResponse.json({ ok: true })
