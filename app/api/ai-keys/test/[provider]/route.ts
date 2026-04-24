@@ -90,8 +90,9 @@ export async function POST(
           max_tokens: 5,
         }),
       })
+      const body = await res.json().catch(() => ({}))
+      console.error('[ai-keys test openrouter] status:', res.status, 'body:', JSON.stringify(body))
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
         const msg = body?.error?.message ?? `HTTP ${res.status}`
         return NextResponse.json({ ok: false, error: msg })
       }
