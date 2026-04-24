@@ -123,8 +123,9 @@ async function callAI(
     const actualModel = model || 'gemini-2.5-flash'
     // gemini-2.5-* are preview and only available on v1beta; 1.x and 2.0 models use the stable v1 endpoint
     const apiVersion = actualModel.startsWith('gemini-2.5') ? 'v1beta' : 'v1'
+    // v1 and v1beta both accept camelCase (proto-JSON standard); snake_case only worked in v1beta
     const requestBody = {
-      ...(systemPrompt ? { system_instruction: { parts: [{ text: systemPrompt }] } } : {}),
+      ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
       contents: [{ role: 'user', parts: [{ text: userMessage }] }],
       generationConfig: { temperature: safeTemp },
     }
@@ -134,7 +135,6 @@ async function callAI(
       apiVersion,
       url: `https://generativelanguage.googleapis.com/${apiVersion}/models/${actualModel}:generateContent?key=[REDACTED]`,
       hasSystemInstruction: !!systemPrompt,
-      requestBody: { ...requestBody, system_instruction: systemPrompt ? '[present]' : undefined },
     })
 
     const res = await fetch(
@@ -221,38 +221,61 @@ async function callAI(
   // ── OpenRouter ──
   if (provider === 'openrouter') {
     const actualModel = customModel || keyRow.custom_model || 'mistral/mistral-7b-instruct'
-    const messages = [
+
+    const openrouterHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': 'https://flashflow.app',
+      'X-Title': 'FlashFlow',
+    }
+
+    async function callOpenRouter(msgs: Array<{ role: string; content: string }>, attempt: number) {
+      log(`callAI openrouter request (attempt ${attempt})`, {
+        model: actualModel,
+        messageCount: msgs.length,
+        hasSystem: msgs[0]?.role === 'system',
+        temperature: safeTemp,
+      })
+
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: openrouterHeaders,
+        body: JSON.stringify({ model: actualModel, messages: msgs, temperature: safeTemp }),
+      })
+
+      log(`callAI openrouter response status (attempt ${attempt})`, { status: res.status, ok: res.ok })
+
+      const data = await res.json().catch((e) => {
+        logError(`callAI openrouter response parse error`, { error: e })
+        return {}
+      })
+
+      log(`callAI openrouter response body (attempt ${attempt})`, JSON.stringify(data))
+      return { res, data }
+    }
+
+    const messagesWithSystem = [
       ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
       { role: 'user', content: userMessage },
     ]
-    const requestBody = { model: actualModel, messages, temperature: safeTemp }
 
-    log(`callAI openrouter request`, {
-      model: actualModel,
-      messageCount: messages.length,
-      hasSystem: !!systemPrompt,
-      temperature: safeTemp,
-    })
+    let { res, data } = await callOpenRouter(messagesWithSystem, 1)
 
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://flashflow.app',
-        'X-Title': 'FlashFlow',
-      },
-      body: JSON.stringify(requestBody),
-    })
+    // Some models (e.g. Gemma) don't support system role — retry by prepending to user message
+    if (!res.ok && systemPrompt) {
+      const raw: string = JSON.stringify(data?.error?.metadata?.raw ?? '')
+      const isSystemNotSupported =
+        raw.includes('instruction is not enabled') ||
+        raw.includes('system_instruction') ||
+        raw.includes('systemInstruction') ||
+        String(data?.error?.message ?? '').toLowerCase().includes('system')
 
-    log(`callAI openrouter response status`, { status: res.status, ok: res.ok })
-
-    const data = await res.json().catch((e) => {
-      logError(`callAI openrouter response parse error`, { error: e })
-      return {}
-    })
-
-    log(`callAI openrouter response body`, JSON.stringify(data))
+      if (isSystemNotSupported) {
+        log(`callAI openrouter: system role rejected, retrying with prompt prepended to user message`)
+        const fallbackMessages = [{ role: 'user', content: `${systemPrompt}\n\n${userMessage}` }];
+        ({ res, data } = await callOpenRouter(fallbackMessages, 2))
+      }
+    }
 
     if (!res.ok) {
       const msg = data?.error?.message ?? `HTTP ${res.status}`
