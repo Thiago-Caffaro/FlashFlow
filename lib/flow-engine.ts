@@ -31,6 +31,20 @@ interface AISession {
   last_message_at: string | null
 }
 
+// ─── Logger ───────────────────────────────────────────────────────────────────
+
+function log(tag: string, ...args: unknown[]) {
+  const ts = new Date().toISOString()
+  console.log(`[FlowEngine][${ts}] ${tag}`, ...args)
+}
+
+function logError(tag: string, ...args: unknown[]) {
+  const ts = new Date().toISOString()
+  console.error(`[FlowEngine][${ts}] ❌ ${tag}`, ...args)
+}
+
+// ─── WhatsApp send ────────────────────────────────────────────────────────────
+
 async function sendWhatsApp(ctx: FlowContext, text: string) {
   const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${ctx.instanceName}`, {
     method: 'POST',
@@ -55,6 +69,8 @@ async function sendWhatsApp(ctx: FlowContext, text: string) {
   }).eq('id', ctx.conversationId)
 }
 
+// ─── AI call with full logging ────────────────────────────────────────────────
+
 async function callAI(
   provider: AIProvider,
   model: string,
@@ -63,70 +79,199 @@ async function callAI(
   userMessage: string,
   temperature: number
 ): Promise<string> {
-  const { data: keyRow } = await supabase
+  const safeTemp = isNaN(temperature) ? 0.7 : temperature
+
+  log(`callAI start`, {
+    provider,
+    model: model || '(default)',
+    customModel: customModel || '(none)',
+    systemPromptLength: systemPrompt.length,
+    userMessageLength: userMessage.length,
+    temperature: safeTemp,
+  })
+
+  // ── Fetch API key ──
+  const { data: keyRow, error: keyError } = await supabase
     .from('ai_provider_keys')
     .select('encrypted_key, iv, auth_tag, custom_model')
     .eq('provider', provider)
     .maybeSingle()
 
-  if (!keyRow) throw new Error(`Nenhuma chave configurada para ${provider}`)
-
-  const apiKey = decrypt(keyRow.encrypted_key, keyRow.iv, keyRow.auth_tag)
-
-  if (provider === 'gemini') {
-    const actualModel = model || 'gemini-2.5-flash'
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=${apiKey}`
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...(systemPrompt ? { system_instruction: { parts: [{ text: systemPrompt }] } } : {}),
-        contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-        generationConfig: { temperature },
-      }),
-    })
-    const data = await res.json()
-    return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+  if (keyError) {
+    logError(`callAI key fetch error`, { provider, error: keyError.message })
+    throw new Error(`Erro ao buscar chave para ${provider}: ${keyError.message}`)
   }
 
+  if (!keyRow) {
+    logError(`callAI no key found`, { provider })
+    throw new Error(`Nenhuma chave configurada para ${provider}`)
+  }
+
+  log(`callAI key found`, { provider, hasCustomModel: !!keyRow.custom_model })
+
+  let apiKey: string
+  try {
+    apiKey = decrypt(keyRow.encrypted_key, keyRow.iv, keyRow.auth_tag)
+    log(`callAI key decrypted`, { provider, keyLength: apiKey.length })
+  } catch (err) {
+    logError(`callAI decrypt error`, { provider, error: err })
+    throw new Error(`Falha ao descriptografar chave de ${provider}`)
+  }
+
+  // ── Gemini ──
+  if (provider === 'gemini') {
+    const actualModel = model || 'gemini-2.5-flash'
+    const requestBody = {
+      ...(systemPrompt ? { system_instruction: { parts: [{ text: systemPrompt }] } } : {}),
+      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+      generationConfig: { temperature: safeTemp },
+    }
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=[REDACTED]`
+
+    log(`callAI gemini request`, {
+      model: actualModel,
+      url: url,
+      hasSystemInstruction: !!systemPrompt,
+      requestBody: { ...requestBody, system_instruction: systemPrompt ? '[present]' : undefined },
+    })
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      }
+    )
+
+    log(`callAI gemini response status`, { status: res.status, ok: res.ok })
+
+    const data = await res.json().catch((e) => {
+      logError(`callAI gemini response parse error`, { error: e })
+      return {}
+    })
+
+    log(`callAI gemini response body`, JSON.stringify(data))
+
+    if (!res.ok) {
+      const msg = data?.error?.message ?? `HTTP ${res.status}`
+      logError(`callAI gemini API error`, { status: res.status, error: msg })
+      throw new Error(`Gemini API error: ${msg}`)
+    }
+
+    const reply: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+    log(`callAI gemini reply`, { replyLength: reply.length, empty: reply.length === 0, preview: reply.slice(0, 100) })
+
+    if (!reply) {
+      log(`callAI gemini empty reply — full response for debug`, JSON.stringify(data))
+    }
+
+    return reply
+  }
+
+  // ── OpenAI ──
   if (provider === 'openai') {
     const actualModel = model || 'gpt-4o'
+    const messages = [
+      ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+      { role: 'user', content: userMessage },
+    ]
+    const requestBody = { model: actualModel, messages, temperature: safeTemp }
+
+    log(`callAI openai request`, {
+      model: actualModel,
+      messageCount: messages.length,
+      hasSystem: !!systemPrompt,
+      temperature: safeTemp,
+    })
+
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: actualModel,
-        messages: [
-          ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-          { role: 'user', content: userMessage },
-        ],
-        temperature,
-      }),
+      body: JSON.stringify(requestBody),
     })
-    const data = await res.json()
-    return data.choices?.[0]?.message?.content ?? ''
+
+    log(`callAI openai response status`, { status: res.status, ok: res.ok })
+
+    const data = await res.json().catch((e) => {
+      logError(`callAI openai response parse error`, { error: e })
+      return {}
+    })
+
+    log(`callAI openai response body`, JSON.stringify(data))
+
+    if (!res.ok) {
+      const msg = data?.error?.message ?? `HTTP ${res.status}`
+      logError(`callAI openai API error`, { status: res.status, error: msg })
+      throw new Error(`OpenAI API error: ${msg}`)
+    }
+
+    const reply: string = data.choices?.[0]?.message?.content ?? ''
+    log(`callAI openai reply`, { replyLength: reply.length, empty: reply.length === 0, preview: reply.slice(0, 100) })
+
+    if (!reply) {
+      log(`callAI openai empty reply — full response for debug`, JSON.stringify(data))
+    }
+
+    return reply
   }
 
+  // ── OpenRouter ──
   if (provider === 'openrouter') {
     const actualModel = customModel || keyRow.custom_model || 'mistral/mistral-7b-instruct'
+    const messages = [
+      ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+      { role: 'user', content: userMessage },
+    ]
+    const requestBody = { model: actualModel, messages, temperature: safeTemp }
+
+    log(`callAI openrouter request`, {
+      model: actualModel,
+      messageCount: messages.length,
+      hasSystem: !!systemPrompt,
+      temperature: safeTemp,
+    })
+
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: actualModel,
-        messages: [
-          ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-          { role: 'user', content: userMessage },
-        ],
-        temperature,
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://flashflow.app',
+        'X-Title': 'FlashFlow',
+      },
+      body: JSON.stringify(requestBody),
     })
-    const data = await res.json()
-    return data.choices?.[0]?.message?.content ?? ''
+
+    log(`callAI openrouter response status`, { status: res.status, ok: res.ok })
+
+    const data = await res.json().catch((e) => {
+      logError(`callAI openrouter response parse error`, { error: e })
+      return {}
+    })
+
+    log(`callAI openrouter response body`, JSON.stringify(data))
+
+    if (!res.ok) {
+      const msg = data?.error?.message ?? `HTTP ${res.status}`
+      logError(`callAI openrouter API error`, { status: res.status, error: msg })
+      throw new Error(`OpenRouter API error: ${msg}`)
+    }
+
+    const reply: string = data.choices?.[0]?.message?.content ?? ''
+    log(`callAI openrouter reply`, { replyLength: reply.length, empty: reply.length === 0, preview: reply.slice(0, 100) })
+
+    if (!reply) {
+      log(`callAI openrouter empty reply — full response for debug`, JSON.stringify(data))
+    }
+
+    return reply
   }
 
   throw new Error(`Provider desconhecido: ${provider}`)
 }
+
+// ─── Next node helper ─────────────────────────────────────────────────────────
 
 function nextNodeId(edges: FlowEdge[], fromId: string, handle?: string | null): string | null {
   const edge = handle
@@ -147,18 +292,19 @@ export async function checkActiveSession(instanceName: string, remoteJid: string
 
   if (!data) return null
 
-  // Expired by time
   if (data.expires_at && new Date(data.expires_at) < new Date()) {
+    log(`session expired by time`, { id: data.id, remoteJid })
     await supabase.from('ai_sessions').delete().eq('id', data.id)
     return null
   }
 
-  // Expired by message count
   if (data.max_messages !== null && data.message_count >= data.max_messages) {
+    log(`session expired by message count`, { id: data.id, remoteJid, count: data.message_count })
     await supabase.from('ai_sessions').delete().eq('id', data.id)
     return null
   }
 
+  log(`session active`, { id: data.id, remoteJid, messageCount: data.message_count })
   return data as AISession
 }
 
@@ -166,7 +312,8 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
   const newCount = session.message_count + 1
   const delayMs = session.response_delay_ms ?? 5000
 
-  // Update pending message and increment count before scheduling
+  log(`handleActiveSession`, { sessionId: session.id, newCount, delayMs, message: ctx.incomingMessage.slice(0, 80) })
+
   await supabase.from('ai_sessions')
     .update({
       message_count: newCount,
@@ -175,8 +322,6 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
     })
     .eq('id', session.id)
 
-  // Debounced AI call: re-read DB right before sending to pick up any
-  // newer message that arrived within the delay window
   setTimeout(async () => {
     try {
       const { data: latest } = await supabase
@@ -185,11 +330,20 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
         .eq('id', session.id)
         .maybeSingle()
 
-      if (!latest) return
+      if (!latest) {
+        log(`handleActiveSession timer: session gone`, { sessionId: session.id })
+        return
+      }
 
-      // If a newer message arrived after this one, bail — that timer will handle it
       const lastMsgTime = latest.last_message_at ? new Date(latest.last_message_at).getTime() : 0
-      if (Date.now() - lastMsgTime < delayMs - 500) return
+      const sinceLastMsg = Date.now() - lastMsgTime
+
+      if (sinceLastMsg < delayMs - 500) {
+        log(`handleActiveSession timer: debounce skip`, { sessionId: session.id, sinceLastMsg, delayMs })
+        return
+      }
+
+      log(`handleActiveSession timer: proceeding`, { sessionId: session.id, sinceLastMsg, pendingMessage: (latest.pending_message ?? '').slice(0, 80) })
 
       const { data: flow } = await supabase
         .from('flows')
@@ -197,11 +351,17 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
         .eq('id', session.flow_id)
         .single()
 
-      if (!flow) return
+      if (!flow) {
+        logError(`handleActiveSession: flow not found`, { flowId: session.flow_id })
+        return
+      }
 
       const nodes: FlowNode[] = flow.json?.nodes ?? []
       const node = nodes.find((n) => n.id === session.node_id)
-      if (!node) return
+      if (!node) {
+        logError(`handleActiveSession: node not found`, { nodeId: session.node_id })
+        return
+      }
 
       const provider: AIProvider = (node.data.provider as AIProvider) ?? 'gemini'
       const model = (node.data.model as string) ?? 'gemini-2.5-flash'
@@ -210,18 +370,24 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
       const temperature = (node.data.temperature as number) ?? 0.7
 
       const reply = await callAI(provider, model, customModel, systemPrompt, latest.pending_message ?? '', temperature)
-      if (reply.trim()) await sendWhatsApp(ctx, reply)
 
-      // Close session if limit reached after this message
+      if (reply.trim()) {
+        await sendWhatsApp(ctx, reply)
+        log(`handleActiveSession: reply sent`, { replyLength: reply.length })
+      } else {
+        log(`handleActiveSession: empty reply, not sending`)
+      }
+
       const expired =
         (latest.max_messages !== null && latest.message_count >= latest.max_messages) ||
         (latest.expires_at !== null && new Date(latest.expires_at) < new Date())
 
       if (expired) {
+        log(`handleActiveSession: closing session`, { sessionId: session.id })
         await supabase.from('ai_sessions').delete().eq('id', session.id)
       }
     } catch (err) {
-      console.error('handleActiveSession error:', err)
+      logError(`handleActiveSession timer error`, { sessionId: session.id, error: err })
     }
   }, delayMs)
 }
@@ -229,14 +395,26 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
 // ─── Flow execution ───────────────────────────────────────────────────────────
 
 export async function executeFlow(flowId: string, ctx: FlowContext) {
+  log(`executeFlow start`, { flowId, from: ctx.remoteJid, message: ctx.incomingMessage.slice(0, 80) })
+
   const { data: flow, error } = await supabase
     .from('flows')
     .select('json, ativo')
     .eq('id', flowId)
     .single()
 
-  if (error || !flow || !flow.ativo) {
-    console.error('Flow não encontrado ou inativo:', flowId, error)
+  if (error) {
+    logError(`executeFlow DB error`, { flowId, error: error.message })
+    return
+  }
+
+  if (!flow) {
+    logError(`executeFlow: flow not found`, { flowId })
+    return
+  }
+
+  if (!flow.ativo) {
+    log(`executeFlow: flow is inactive, skipping`, { flowId })
     return
   }
 
@@ -244,9 +422,11 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
   const edges: FlowEdge[] = flow.json?.edges ?? []
   const nodeMap = new Map(nodes.map((n) => [n.id, n]))
 
+  log(`executeFlow loaded`, { flowId, nodeCount: nodes.length, edgeCount: edges.length })
+
   const startNode = nodes.find((n) => n.type === 'start')
   if (!startNode) {
-    console.error('Nó de início não encontrado no fluxo:', flowId)
+    logError(`executeFlow: no start node`, { flowId })
     return
   }
 
@@ -254,16 +434,28 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
   const visited = new Set<string>()
 
   while (currentId && visited.size < 50) {
-    if (visited.has(currentId)) break
+    if (visited.has(currentId)) {
+      log(`executeFlow: loop detected, stopping`, { nodeId: currentId })
+      break
+    }
     visited.add(currentId)
 
     const node = nodeMap.get(currentId)
-    if (!node) break
+    if (!node) {
+      logError(`executeFlow: node not in map`, { nodeId: currentId })
+      break
+    }
 
-    if (node.type === 'end') break
+    log(`executeFlow node`, { type: node.type, id: node.id })
+
+    if (node.type === 'end') {
+      log(`executeFlow: reached end node`)
+      break
+    }
 
     if (node.type === 'sendMessage') {
       const msg = node.data.message ?? ''
+      log(`executeFlow sendMessage`, { messageLength: msg.length, empty: !msg.trim() })
       if (msg.trim()) await sendWhatsApp(ctx, msg)
       currentId = nextNodeId(edges, currentId)
       continue
@@ -274,6 +466,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
       const condValue = (node.data.conditionValue ?? '').trim().toLowerCase()
       const content = ctx.incomingMessage.toLowerCase()
       const matched = condType === 'exact' ? content === condValue : content.includes(condValue)
+      log(`executeFlow condition`, { condType, condValue, matched, nextHandle: matched ? 'true' : 'false' })
       currentId = nextNodeId(edges, currentId, matched ? 'true' : 'false')
       continue
     }
@@ -284,16 +477,24 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
       const customModel = node.data.customModel as string | undefined
       const systemPrompt = (node.data.systemPrompt as string) ?? ''
       const temperature = (node.data.temperature as number) ?? 0.7
+      const continueConv = node.data.continueConversation
+
+      log(`executeFlow aiAssistant`, { provider, model, customModel, systemPromptLength: systemPrompt.length, temperature, continueConversation: continueConv })
 
       let reply = ''
       try {
         reply = await callAI(provider, model, customModel, systemPrompt, ctx.incomingMessage, temperature)
-        if (reply.trim()) await sendWhatsApp(ctx, reply)
+
+        if (reply.trim()) {
+          log(`executeFlow aiAssistant: sending reply`, { replyLength: reply.length })
+          await sendWhatsApp(ctx, reply)
+        } else {
+          log(`executeFlow aiAssistant: empty reply, not sending`)
+        }
       } catch (err) {
-        console.error('Erro na execução da IA:', err)
+        logError(`executeFlow aiAssistant call failed`, { error: err })
       }
 
-      // Open a continue-conversation session if configured
       if (node.data.continueConversation && reply.trim()) {
         const timeoutType = node.data.timeoutType as 'minutes' | 'messages' | undefined
         const timeoutValue = node.data.timeoutValue as number | undefined
@@ -307,6 +508,8 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
         } else if (timeoutType === 'messages' && timeoutValue) {
           max_messages = timeoutValue
         }
+
+        log(`executeFlow: opening AI session`, { nodeId: node.id, timeoutType, timeoutValue, responseDelayMs })
 
         await supabase.from('ai_sessions').upsert(
           {
@@ -329,6 +532,9 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
       continue
     }
 
+    log(`executeFlow: unknown node type, advancing`, { type: node.type })
     currentId = nextNodeId(edges, currentId)
   }
+
+  log(`executeFlow done`, { flowId, stepsExecuted: visited.size })
 }
