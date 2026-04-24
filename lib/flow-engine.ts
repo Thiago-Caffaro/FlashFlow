@@ -121,22 +121,24 @@ async function callAI(
   // ── Gemini ──
   if (provider === 'gemini') {
     const actualModel = model || 'gemini-2.5-flash'
+    // gemini-2.5-* are preview and only available on v1beta; 1.x and 2.0 models use the stable v1 endpoint
+    const apiVersion = actualModel.startsWith('gemini-2.5') ? 'v1beta' : 'v1'
     const requestBody = {
       ...(systemPrompt ? { system_instruction: { parts: [{ text: systemPrompt }] } } : {}),
       contents: [{ role: 'user', parts: [{ text: userMessage }] }],
       generationConfig: { temperature: safeTemp },
     }
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=[REDACTED]`
 
     log(`callAI gemini request`, {
       model: actualModel,
-      url: url,
+      apiVersion,
+      url: `https://generativelanguage.googleapis.com/${apiVersion}/models/${actualModel}:generateContent?key=[REDACTED]`,
       hasSystemInstruction: !!systemPrompt,
       requestBody: { ...requestBody, system_instruction: systemPrompt ? '[present]' : undefined },
     })
 
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/${apiVersion}/models/${actualModel}:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
