@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { instance_name, name } = body
+    const { instance_name, name, json: flowJson, ativo } = body
     if (!instance_name) return NextResponse.json({ ok: false, error: 'instance_name required' }, { status: 400 })
 
     const { data, error } = await supabaseAdmin
@@ -35,8 +35,8 @@ export async function POST(req: NextRequest) {
       .insert({
         instance_name,
         name: name ?? 'Novo Fluxo',
-        json: { nodes: [], edges: [] },
-        ativo: true,
+        json: flowJson ?? { nodes: [], edges: [] },
+        ativo: ativo ?? true,
       })
       .select()
       .single()

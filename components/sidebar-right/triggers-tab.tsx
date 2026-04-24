@@ -1,9 +1,19 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { Plus, Search, Trash2, MessageSquare, GitBranch, Zap } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Plus, Search, Trash2, MessageSquare, GitBranch, Zap, Download, Upload } from 'lucide-react'
 import { Trigger, TriggerCreate, TriggerTipo, TriggerAction } from '@/types'
 import FlowPickerModal from '@/components/flows/flow-picker-modal'
+
+function downloadJson(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 interface TriggersTabProps {
   instanceName: string
@@ -244,6 +254,8 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const importRef = useRef<HTMLInputElement>(null)
 
   const fetchTriggers = useCallback(async () => {
     setLoading(true)
@@ -299,6 +311,67 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
     }
   }
 
+  function handleExportAll() {
+    const date = new Date().toISOString().slice(0, 10)
+    downloadJson(
+      {
+        flashflow_export: 'triggers',
+        version: 1,
+        triggers: triggers.map(({ alias, tipo, valor, delay_ms, action, action_payload }) => ({
+          alias,
+          tipo,
+          valor,
+          delay_ms,
+          action,
+          // flow_id não é exportado — IDs são específicos de cada instância
+          action_payload: action === 'send_message' ? action_payload : {},
+        })),
+      },
+      `flashflow-triggers-${instanceName}-${date}.json`
+    )
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setImporting(true)
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+
+      if (data.flashflow_export !== 'triggers') {
+        alert('Arquivo inválido. Use um JSON de gatilhos exportado pelo FlashFlow.')
+        return
+      }
+
+      type TriggerPayload = Omit<TriggerCreate, 'instance_name'>
+      const toImport: TriggerPayload[] = data.triggers ?? []
+
+      for (const t of toImport) {
+        await fetch('/api/triggers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instance_name: instanceName,
+            alias: t.alias ?? '',
+            tipo: t.tipo ?? 'contains',
+            valor: t.valor ?? '',
+            delay_ms: t.delay_ms ?? 0,
+            action: t.action ?? 'send_message',
+            action_payload: t.action_payload ?? { message: '' },
+          }),
+        })
+      }
+
+      await fetchTriggers()
+    } catch {
+      alert('Erro ao ler o arquivo. Verifique se é um JSON válido.')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const filtered = searchQuery
     ? triggers.filter((t) => t.alias.toLowerCase().includes(searchQuery.toLowerCase()))
     : triggers
@@ -310,7 +383,7 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
       {/* ── Left: table ── */}
       <div className="flex flex-col w-1/2 border-r border-[#f0f2f5] dark:border-[#2a3942] min-h-0">
         {/* Toolbar */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
           <div className="flex-1 flex items-center gap-2 bg-[#f0f2f5] dark:bg-[#2a3942] rounded-xl px-3 py-2">
             <Search size={14} className="text-[#aebac1] dark:text-[#667781] shrink-0" />
             <input
@@ -321,6 +394,23 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
               className="flex-1 bg-transparent text-sm text-[#111b21] dark:text-[#e9edef] placeholder-[#aebac1] dark:placeholder-[#667781] outline-none"
             />
           </div>
+          <button
+            onClick={handleExportAll}
+            title="Exportar todos os gatilhos"
+            disabled={triggers.length === 0}
+            className="p-2 rounded-xl text-[#aebac1] dark:text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors disabled:opacity-30 shrink-0"
+          >
+            <Download size={16} />
+          </button>
+          <button
+            onClick={() => importRef.current?.click()}
+            title="Importar gatilhos"
+            disabled={importing}
+            className="p-2 rounded-xl text-[#aebac1] dark:text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors disabled:opacity-30 shrink-0"
+          >
+            <Upload size={16} />
+          </button>
+          <input ref={importRef} type="file" accept=".json" onChange={handleImportFile} className="hidden" />
           <button
             onClick={handleAdd}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#00a884] text-white text-sm font-medium hover:bg-[#008f72] transition-colors shrink-0"

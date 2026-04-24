@@ -1,9 +1,19 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { Plus, Search, GitBranch, Power, PowerOff, Pencil, Trash2, ExternalLink, Calendar, Hash } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Plus, Search, GitBranch, Power, PowerOff, Pencil, Trash2, ExternalLink, Calendar, Hash, Download, Upload } from 'lucide-react'
 import { Flow } from '@/types'
 import FlowCanvas from './flow-canvas'
+
+function downloadJson(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 interface Props {
   instanceName: string
@@ -16,10 +26,11 @@ interface PanelProps {
   onUpdate: (id: string, changes: Partial<Flow>) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onEdit: (flow: Flow) => void
+  onExport: (flow: Flow) => void
   onClose: () => void
 }
 
-function FlowPanel({ flow, onUpdate, onDelete, onEdit, onClose }: PanelProps) {
+function FlowPanel({ flow, onUpdate, onDelete, onEdit, onExport, onClose }: PanelProps) {
   const [name, setName] = useState(flow.name)
   const [deleting, setDeleting] = useState(false)
 
@@ -111,15 +122,24 @@ function FlowPanel({ flow, onUpdate, onDelete, onEdit, onClose }: PanelProps) {
           </div>
         </div>
 
-        {/* Open editor */}
-        <button
-          onClick={() => onEdit(flow)}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-[#00a884] text-white text-sm font-semibold hover:bg-[#008f72] transition-colors"
-        >
-          <Pencil size={15} />
-          Abrir no Editor
-          <ExternalLink size={13} className="opacity-70" />
-        </button>
+        {/* Actions */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => onEdit(flow)}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3.5 rounded-xl bg-[#00a884] text-white text-sm font-semibold hover:bg-[#008f72] transition-colors"
+          >
+            <Pencil size={15} />
+            Abrir no Editor
+            <ExternalLink size={13} className="opacity-70" />
+          </button>
+          <button
+            onClick={() => onExport(flow)}
+            title="Exportar fluxo como JSON"
+            className="flex items-center gap-2 px-4 py-3.5 rounded-xl border-2 border-[#d1d7db] dark:border-[#3d4f5a] text-[#667781] dark:text-[#8696a0] text-sm font-medium hover:border-[#00a884] hover:text-[#00a884] transition-colors"
+          >
+            <Download size={15} />
+          </button>
+        </div>
       </div>
 
       {/* Footer */}
@@ -149,6 +169,8 @@ export default function FlowsTab({ instanceName }: Props) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editingFlow, setEditingFlow] = useState<Flow | null>(null)
+  const [importing, setImporting] = useState(false)
+  const importRef = useRef<HTMLInputElement>(null)
 
   const fetchFlows = useCallback(async () => {
     setLoading(true)
@@ -202,6 +224,68 @@ export default function FlowsTab({ instanceName }: Props) {
     await handleUpdate(flow.id, { name: flow.name, json: flow.json })
   }
 
+  function handleExportSingle(flow: Flow) {
+    const slug = flow.name.replace(/\s+/g, '-').toLowerCase()
+    downloadJson(
+      { flashflow_export: 'flow', version: 1, name: flow.name, ativo: flow.ativo, json: flow.json },
+      `${slug}.json`
+    )
+  }
+
+  function handleExportAll() {
+    const date = new Date().toISOString().slice(0, 10)
+    downloadJson(
+      {
+        flashflow_export: 'flows',
+        version: 1,
+        flows: flows.map((f) => ({ name: f.name, ativo: f.ativo, json: f.json })),
+      },
+      `flashflow-flows-${instanceName}-${date}.json`
+    )
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setImporting(true)
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+
+      type FlowPayload = { name?: string; ativo?: boolean; json?: Flow['json'] }
+      let toImport: FlowPayload[] = []
+
+      if (data.flashflow_export === 'flow') {
+        toImport = [{ name: data.name, ativo: data.ativo, json: data.json }]
+      } else if (data.flashflow_export === 'flows') {
+        toImport = data.flows ?? []
+      } else {
+        alert('Arquivo inválido. Use um JSON exportado pelo FlashFlow.')
+        return
+      }
+
+      for (const f of toImport) {
+        await fetch('/api/flows', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instance_name: instanceName,
+            name: f.name ?? 'Fluxo importado',
+            json: f.json,
+            ativo: f.ativo ?? true,
+          }),
+        })
+      }
+
+      await fetchFlows()
+    } catch {
+      alert('Erro ao ler o arquivo. Verifique se é um JSON válido.')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   if (editingFlow) {
     return (
       <FlowCanvas
@@ -223,7 +307,7 @@ export default function FlowsTab({ instanceName }: Props) {
       {/* ── Left: table ── */}
       <div className="flex flex-col w-1/2 border-r border-[#f0f2f5] dark:border-[#2a3942] min-h-0">
         {/* Toolbar */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
           <div className="flex-1 flex items-center gap-2 bg-[#f0f2f5] dark:bg-[#2a3942] rounded-xl px-3 py-2">
             <Search size={14} className="text-[#aebac1] dark:text-[#667781] shrink-0" />
             <input
@@ -234,6 +318,23 @@ export default function FlowsTab({ instanceName }: Props) {
               className="flex-1 bg-transparent text-sm text-[#111b21] dark:text-[#e9edef] placeholder-[#aebac1] dark:placeholder-[#667781] outline-none"
             />
           </div>
+          <button
+            onClick={handleExportAll}
+            title="Exportar todos os fluxos"
+            disabled={flows.length === 0}
+            className="p-2 rounded-xl text-[#aebac1] dark:text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors disabled:opacity-30 shrink-0"
+          >
+            <Download size={16} />
+          </button>
+          <button
+            onClick={() => importRef.current?.click()}
+            title="Importar fluxo(s)"
+            disabled={importing}
+            className="p-2 rounded-xl text-[#aebac1] dark:text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors disabled:opacity-30 shrink-0"
+          >
+            <Upload size={16} />
+          </button>
+          <input ref={importRef} type="file" accept=".json" onChange={handleImportFile} className="hidden" />
           <button
             onClick={handleCreate}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#00a884] text-white text-sm font-medium hover:bg-[#008f72] transition-colors shrink-0"
@@ -315,6 +416,7 @@ export default function FlowsTab({ instanceName }: Props) {
             onUpdate={handleUpdate}
             onDelete={handleDelete}
             onEdit={setEditingFlow}
+            onExport={handleExportSingle}
             onClose={() => setSelectedId(null)}
           />
         ) : (
