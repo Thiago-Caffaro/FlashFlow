@@ -41,7 +41,10 @@ export async function PUT(
     { onConflict: 'provider' }
   )
 
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[ai-keys PUT] Supabase error:', error.message, error.code)
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  }
   return NextResponse.json({ ok: true })
 }
 

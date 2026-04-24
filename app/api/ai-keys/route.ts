@@ -14,7 +14,10 @@ export async function GET() {
     .from('ai_provider_keys')
     .select('provider, custom_model, updated_at')
 
-  if (error) return NextResponse.json({ ok: false, configured: [] }, { status: 500 })
+  if (error) {
+    console.error('[ai-keys GET] Supabase error:', error.message, error.code)
+    return NextResponse.json({ ok: false, configured: [], error: error.message }, { status: 500 })
+  }
 
   const configured: Record<string, { custom_model?: string; updated_at: string }> = {}
   for (const row of data ?? []) {
