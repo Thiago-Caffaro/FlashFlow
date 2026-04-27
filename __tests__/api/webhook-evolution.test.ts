@@ -63,6 +63,9 @@ function mockSupabaseSuccess(conversation = { id: 'conv-123' }) {
             }),
           }),
         }),
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ error: null }),
+        }),
       }
     }
     if (table === 'messages') {
@@ -303,8 +306,8 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    // pushName=null → Contact(0) + Chat(1) → conversations(2) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    // pushName=null → Contact(0) + Chat(1) → conversations(2,upsert) + conversations(3,update) → messages(4)
+    const insertCall = supabaseMock.from.mock.results[4].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('texto direto')
     expect(insertCall.mock.calls[0][0].type).toBe('text')
   })
@@ -322,8 +325,8 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    // pushName=null → Contact(0) + Chat(1) → conversations(2) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    // pushName=null → Contact(0) + Chat(1) → conversations(2,upsert) + conversations(3,update) → messages(4)
+    const insertCall = supabaseMock.from.mock.results[4].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('texto estendido')
     expect(insertCall.mock.calls[0][0].type).toBe('text')
   })
@@ -349,8 +352,8 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    // pushName=null → Contact(0) + Chat(1) → conversations(2) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    // pushName=null → Contact(0) + Chat(1) → conversations(2,upsert) + conversations(3,update) → messages(4)
+    const insertCall = supabaseMock.from.mock.results[4].value.insert
     const insertArg = insertCall.mock.calls[0][0]
 
     expect(insertArg.type).toBe('image')
@@ -383,8 +386,8 @@ describe('POST /api/webhook/evolution', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0][0]).toContain('/chat/getBase64FromMediaMessage/')
 
-    // pushName=null → Contact(0) + Chat(1) → conversations(2) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    // pushName=null → Contact(0) + Chat(1) → conversations(2,upsert) + conversations(3,update) → messages(4)
+    const insertCall = supabaseMock.from.mock.results[4].value.insert
     const insertArg = insertCall.mock.calls[0][0]
 
     expect(insertArg.type).toBe('image')
@@ -411,8 +414,8 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    // pushName=null → Contact(0) + Chat(1) → conversations(2) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    // pushName=null → Contact(0) + Chat(1) → conversations(2,upsert) + conversations(3,update) → messages(4)
+    const insertCall = supabaseMock.from.mock.results[4].value.insert
     const insertArg = insertCall.mock.calls[0][0]
 
     expect(insertArg.type).toBe('image')
@@ -434,8 +437,8 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    // pushName=null → Contact(0) + Chat(1) → conversations(2) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    // pushName=null → Contact(0) + Chat(1) → conversations(2,upsert) + conversations(3,update) → messages(4)
+    const insertCall = supabaseMock.from.mock.results[4].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('[imagem]')
     expect(insertCall.mock.calls[0][0].type).toBe('image')
   })
@@ -454,8 +457,8 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    // pushName=null → Contact(0) + Chat(1) → conversations(2) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    // pushName=null → Contact(0) + Chat(1) → conversations(2,upsert) + conversations(3,update) → messages(4)
+    const insertCall = supabaseMock.from.mock.results[4].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('[áudio]')
     expect(insertCall.mock.calls[0][0].type).toBe('audio')
   })
@@ -474,8 +477,8 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    // pushName preenchido → Contact(0) + Chat(1) pulados → conversations(0) → messages(1)
-    const insertCall = supabaseMock.from.mock.results[1].value.insert
+    // pushName preenchido → conversations(0,upsert) + conversations(1,update) → messages(2)
+    const insertCall = supabaseMock.from.mock.results[2].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('[figurinha]')
     expect(insertCall.mock.calls[0][0].type).toBe('sticker')
   })
@@ -494,7 +497,7 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    const insertCall = supabaseMock.from.mock.results[1].value.insert
+    const insertCall = supabaseMock.from.mock.results[2].value.insert
     expect(insertCall.mock.calls[0][0].content).toBe('meu vídeo')
     expect(insertCall.mock.calls[0][0].type).toBe('video')
   })
@@ -530,7 +533,7 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    const insertCall = supabaseMock.from.mock.results[1].value.insert
+    const insertCall = supabaseMock.from.mock.results[2].value.insert
     const insertArg = insertCall.mock.calls[0][0]
 
     expect(insertArg.direction).toBe('inbound')

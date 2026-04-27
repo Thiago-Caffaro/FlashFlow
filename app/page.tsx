@@ -8,11 +8,12 @@ import ChatWindow from '@/components/chat/chat-window'
 import TriggersTab from '@/components/sidebar-right/triggers-tab'
 import FlowsTab from '@/components/flows/flows-tab'
 import AiSettingsTab from '@/components/settings/ai-settings-tab'
+import MemoryTab from '@/components/memory/memory-tab'
 import VerticalTabBar, { View } from '@/components/nav/vertical-tab-bar'
 import { AccountProvider, useAccount } from '@/contexts/account-context'
 import { ThemeProvider } from '@/contexts/theme-context'
 
-const TAB_INDEX: Record<View, number> = { chat: 0, gatilhos: 1, fluxos: 2, ia: 3 }
+const TAB_INDEX: Record<View, number> = { chat: 0, gatilhos: 1, fluxos: 2, memoria: 3, ia: 4 }
 
 function ChatApp() {
   const { activeAccount } = useAccount()
@@ -145,11 +146,29 @@ function ChatApp() {
           )}
         </div>
 
-        {/* Panel 3: Config. IA */}
+        {/* Panel 3: Memória */}
+        <div
+          className="absolute inset-0 bg-white dark:bg-[#111b21]"
+          style={{
+            transform: `translateY(${(3 - tabIndex) * 100}%)`,
+            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
+            willChange: 'transform',
+          }}
+        >
+          {activeAccount?.instanceName ? (
+            <MemoryTab instanceName={activeAccount.instanceName} />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Panel 4: Config. IA */}
         <div
           className="absolute inset-0"
           style={{
-            transform: `translateY(${(3 - tabIndex) * 100}%)`,
+            transform: `translateY(${(4 - tabIndex) * 100}%)`,
             transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
             willChange: 'transform',
           }}

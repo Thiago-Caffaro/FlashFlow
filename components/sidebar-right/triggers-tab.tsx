@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Plus, Search, Trash2, MessageSquare, GitBranch, Zap, Download, Upload } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, KeyboardEvent } from 'react'
+import { Plus, Search, Trash2, MessageSquare, GitBranch, Zap, Download, Upload, X } from 'lucide-react'
 import { Trigger, TriggerCreate, TriggerTipo, TriggerAction } from '@/types'
 import FlowPickerModal from '@/components/flows/flow-picker-modal'
 
@@ -53,7 +53,10 @@ interface PanelProps {
 
 function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: PanelProps) {
   const [alias, setAlias] = useState(trigger.alias)
-  const [valor, setValor] = useState(trigger.valor)
+  const [valorTags, setValorTags] = useState<string[]>(
+    () => trigger.valor ? trigger.valor.split(',').map(v => v.trim()).filter(Boolean) : []
+  )
+  const [valorInput, setValorInput] = useState('')
   const [message, setMessage] = useState(trigger.action_payload.message ?? '')
   const [customDelaySeconds, setCustomDelaySeconds] = useState(
     resolveDelayOption(trigger.delay_ms) === -1 ? String(trigger.delay_ms / 1000) : '3'
@@ -62,6 +65,30 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
   const [deleting, setDeleting] = useState(false)
 
   const delayOption = resolveDelayOption(trigger.delay_ms)
+
+  function addValorTag(raw: string) {
+    const word = raw.trim()
+    if (!word || valorTags.includes(word)) return
+    const next = [...valorTags, word]
+    setValorTags(next)
+    setValorInput('')
+    onUpdate(trigger.id, { valor: next.join(',') })
+  }
+
+  function removeValorTag(tag: string) {
+    const next = valorTags.filter(t => t !== tag)
+    setValorTags(next)
+    onUpdate(trigger.id, { valor: next.join(',') })
+  }
+
+  function handleValorKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      addValorTag(valorInput)
+    } else if (e.key === 'Backspace' && !valorInput && valorTags.length > 0) {
+      removeValorTag(valorTags[valorTags.length - 1])
+    }
+  }
 
   const inputClass =
     'w-full bg-[#f0f2f5] dark:bg-[#2a3942] border border-transparent focus:border-[#00a884] rounded-xl px-4 py-3 text-sm text-[#111b21] dark:text-[#e9edef] outline-none transition-colors placeholder:text-[#aebac1] dark:placeholder:text-[#667781]'
@@ -99,28 +126,50 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
           />
         </div>
 
-        {/* Tipo + Valor */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass}>Tipo de detecção</label>
-            <select
-              value={trigger.tipo}
-              onChange={(e) => onUpdate(trigger.id, { tipo: e.target.value as TriggerTipo })}
-              className={inputClass + ' cursor-pointer'}
-            >
-              <option value="contains">Contém</option>
-              <option value="exact">Igual a</option>
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Valor de ativação</label>
+        {/* Tipo de detecção */}
+        <div>
+          <label className={labelClass}>Tipo de detecção</label>
+          <select
+            value={trigger.tipo}
+            onChange={(e) => onUpdate(trigger.id, { tipo: e.target.value as TriggerTipo })}
+            className={inputClass + ' cursor-pointer'}
+          >
+            <option value="contains">Contém</option>
+            <option value="exact">Igual a</option>
+          </select>
+        </div>
+
+        {/* Palavras de ativação */}
+        <div>
+          <label className={labelClass}>Palavras de ativação</label>
+          <div
+            className="min-h-[46px] w-full bg-[#f0f2f5] dark:bg-[#2a3942] border border-transparent focus-within:border-[#00a884] rounded-xl px-3 py-2 flex flex-wrap gap-1.5 cursor-text transition-colors"
+            onClick={() => (document.getElementById(`valor-input-${trigger.id}`) as HTMLInputElement | null)?.focus()}
+          >
+            {valorTags.map(tag => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#00a884]/15 text-[#00a884] text-xs font-mono font-medium"
+              >
+                {tag}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); removeValorTag(tag) }}
+                  className="hover:text-red-500 transition-colors"
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
             <input
+              id={`valor-input-${trigger.id}`}
               type="text"
-              value={valor}
-              onChange={(e) => setValor(e.target.value)}
-              onBlur={() => { if (valor !== trigger.valor) onUpdate(trigger.id, { valor }) }}
-              placeholder="Texto que ativa o gatilho"
-              className={inputClass + ' font-mono'}
+              value={valorInput}
+              onChange={(e) => setValorInput(e.target.value)}
+              onKeyDown={handleValorKeyDown}
+              onBlur={() => { if (valorInput.trim()) addValorTag(valorInput) }}
+              placeholder={valorTags.length === 0 ? 'Digite e pressione Enter...' : ''}
+              className="flex-1 min-w-[100px] bg-transparent text-sm text-[#111b21] dark:text-[#e9edef] outline-none placeholder:text-[#aebac1] dark:placeholder:text-[#667781] font-mono"
             />
           </div>
         </div>
@@ -462,7 +511,9 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
                       {t.alias || <em className="not-italic text-[#aebac1] dark:text-[#667781] font-normal">Sem nome</em>}
                     </p>
                     <p className="text-xs text-[#aebac1] dark:text-[#667781] font-mono truncate mt-0.5">
-                      {t.valor || <em className="not-italic font-sans">—</em>}
+                      {t.valor
+                        ? t.valor.split(',').map(v => v.trim()).filter(Boolean).join(', ')
+                        : <em className="not-italic font-sans">—</em>}
                     </p>
                   </div>
                   <span className="text-xs px-2 py-0.5 rounded-full bg-[#f0f2f5] dark:bg-[#2a3942] text-[#667781] dark:text-[#8696a0] shrink-0">

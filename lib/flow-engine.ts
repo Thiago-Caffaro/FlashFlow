@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { FlowNode, FlowEdge, AIProvider } from '@/types'
+import { FlowNode, FlowEdge, AIProvider, AgentMemoryBlock } from '@/types'
 import { decrypt } from './ai-crypto'
 
 const supabase = createClient(
@@ -17,6 +17,8 @@ export interface FlowContext {
   incomingMessage: string
 }
 
+type HistoryTurn = { role: 'user' | 'assistant'; content: string }
+
 interface AISession {
   id: string
   instance_name: string
@@ -28,6 +30,8 @@ interface AISession {
   expires_at: string | null
   response_delay_ms: number
   pending_message: string | null
+  pending_messages: string[]
+  history: HistoryTurn[]
   last_message_at: string | null
 }
 
@@ -69,6 +73,33 @@ async function sendWhatsApp(ctx: FlowContext, text: string) {
   }).eq('id', ctx.conversationId)
 }
 
+// ─── Memory injection ─────────────────────────────────────────────────────────
+
+async function buildMemoryPrompt(blockIds: string[], userMessage: string): Promise<string> {
+  if (!blockIds.length) return ''
+
+  const { data: blocks } = await supabase
+    .from('agent_memory_blocks')
+    .select('*')
+    .in('id', blockIds)
+
+  if (!blocks?.length) return ''
+
+  const msg = userMessage.toLowerCase()
+
+  const selected = (blocks as AgentMemoryBlock[]).filter((block) => {
+    if (block.type === 'always') return true
+    return block.keywords.some((kw) => msg.includes(kw.toLowerCase()))
+  })
+
+  if (!selected.length) return ''
+
+  log(`buildMemoryPrompt`, { total: blocks.length, selected: selected.length })
+
+  return '\n\n[Memória do Agente]\n' +
+    selected.map((b) => `${b.name}:\n${b.content}`).join('\n\n')
+}
+
 // ─── AI call with full logging ────────────────────────────────────────────────
 
 async function callAI(
@@ -77,7 +108,9 @@ async function callAI(
   customModel: string | undefined,
   systemPrompt: string,
   userMessage: string,
-  temperature: number
+  temperature: number,
+  history: HistoryTurn[] = [],
+  maxTokens?: number
 ): Promise<string> {
   const safeTemp = isNaN(temperature) ? 0.7 : temperature
 
@@ -124,10 +157,14 @@ async function callAI(
     // gemini-2.5-* are preview and only available on v1beta; 1.x and 2.0 models use the stable v1 endpoint
     const apiVersion = actualModel.startsWith('gemini-2.5') ? 'v1beta' : 'v1'
     // v1 and v1beta both accept camelCase (proto-JSON standard); snake_case only worked in v1beta
+    const historyContents = history.map((h) => ({
+      role: h.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: h.content }],
+    }))
     const requestBody = {
       ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
-      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-      generationConfig: { temperature: safeTemp },
+      contents: [...historyContents, { role: 'user', parts: [{ text: userMessage }] }],
+      generationConfig: { temperature: safeTemp, ...(maxTokens ? { maxOutputTokens: maxTokens } : {}) },
     }
 
     log(`callAI gemini request`, {
@@ -176,9 +213,10 @@ async function callAI(
     const actualModel = model || 'gpt-4o'
     const messages = [
       ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+      ...history.map((h) => ({ role: h.role, content: h.content })),
       { role: 'user', content: userMessage },
     ]
-    const requestBody = { model: actualModel, messages, temperature: safeTemp }
+    const requestBody = { model: actualModel, messages, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }
 
     log(`callAI openai request`, {
       model: actualModel,
@@ -240,7 +278,7 @@ async function callAI(
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: openrouterHeaders,
-        body: JSON.stringify({ model: actualModel, messages: msgs, temperature: safeTemp }),
+        body: JSON.stringify({ model: actualModel, messages: msgs, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }),
       })
 
       log(`callAI openrouter response status (attempt ${attempt})`, { status: res.status, ok: res.ok })
@@ -256,6 +294,7 @@ async function callAI(
 
     const messagesWithSystem = [
       ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+      ...history.map((h) => ({ role: h.role, content: h.content })),
       { role: 'user', content: userMessage },
     ]
 
@@ -272,7 +311,10 @@ async function callAI(
 
       if (isSystemNotSupported) {
         log(`callAI openrouter: system role rejected, retrying with prompt prepended to user message`)
-        const fallbackMessages = [{ role: 'user', content: `${systemPrompt}\n\n${userMessage}` }];
+        const fallbackMessages = [
+          ...history.map((h) => ({ role: h.role, content: h.content })),
+          { role: 'user', content: `${systemPrompt}\n\n${userMessage}` },
+        ];
         ({ res, data } = await callOpenRouter(fallbackMessages, 2))
       }
     }
@@ -339,9 +381,22 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
 
   log(`handleActiveSession`, { sessionId: session.id, newCount, delayMs, message: ctx.incomingMessage.slice(0, 80) })
 
+  // Fetch current accumulated messages to append (prevents overwrite race on rapid messages)
+  const { data: currentSession } = await supabase
+    .from('ai_sessions')
+    .select('pending_messages')
+    .eq('id', session.id)
+    .maybeSingle()
+
+  const accumulatedMessages = [
+    ...((currentSession?.pending_messages as string[] | null) ?? []),
+    ctx.incomingMessage,
+  ]
+
   await supabase.from('ai_sessions')
     .update({
       message_count: newCount,
+      pending_messages: accumulatedMessages,
       pending_message: ctx.incomingMessage,
       last_message_at: new Date().toISOString(),
     })
@@ -368,7 +423,12 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
         return
       }
 
-      log(`handleActiveSession timer: proceeding`, { sessionId: session.id, sinceLastMsg, pendingMessage: (latest.pending_message ?? '').slice(0, 80) })
+      const pendingMsgs = (latest.pending_messages as string[] | undefined) ?? []
+      const userMessage = pendingMsgs.length > 0
+        ? pendingMsgs.join('\n')
+        : (latest.pending_message ?? '')
+
+      log(`handleActiveSession timer: proceeding`, { sessionId: session.id, sinceLastMsg, messageCount: pendingMsgs.length, userMessagePreview: userMessage.slice(0, 80) })
 
       const { data: flow } = await supabase
         .from('flows')
@@ -391,14 +451,32 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
       const provider: AIProvider = (node.data.provider as AIProvider) ?? 'gemini'
       const model = (node.data.model as string) ?? 'gemini-2.5-flash'
       const customModel = node.data.customModel as string | undefined
-      const systemPrompt = (node.data.systemPrompt as string) ?? ''
+      const baseSystemPrompt = (node.data.systemPrompt as string) ?? ''
       const temperature = (node.data.temperature as number) ?? 0.7
+      const memoryBlockIds = (node.data.memoryBlockIds as string[] | undefined) ?? []
+      const historyLimit = (node.data.historyLimit as number | undefined) ?? 10
+      const maxTokens = (node.data.maxTokens as number | undefined) || undefined
 
-      const reply = await callAI(provider, model, customModel, systemPrompt, latest.pending_message ?? '', temperature)
+      // Trim history to the last N exchanges (each exchange = 1 user + 1 assistant turn)
+      const rawHistory = (latest.history as HistoryTurn[] | undefined) ?? []
+      const history = rawHistory.slice(-(historyLimit * 2))
+
+      const memoryChunk = await buildMemoryPrompt(memoryBlockIds, userMessage)
+      const systemPrompt = memoryChunk ? baseSystemPrompt + memoryChunk : baseSystemPrompt
+
+      const reply = await callAI(provider, model, customModel, systemPrompt, userMessage, temperature, history, maxTokens)
 
       if (reply.trim()) {
+        const updatedHistory: HistoryTurn[] = [
+          ...history,
+          { role: 'user', content: userMessage },
+          { role: 'assistant', content: reply },
+        ]
+        await supabase.from('ai_sessions')
+          .update({ pending_messages: [], history: updatedHistory })
+          .eq('id', session.id)
         await sendWhatsApp(ctx, reply)
-        log(`handleActiveSession: reply sent`, { replyLength: reply.length })
+        log(`handleActiveSession: reply sent`, { replyLength: reply.length, historyTurns: updatedHistory.length })
       } else {
         log(`handleActiveSession: empty reply, not sending`)
       }
@@ -409,6 +487,15 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
 
       if (expired) {
         log(`handleActiveSession: closing session`, { sessionId: session.id })
+        const { data: flowForEnd } = await supabase.from('flows').select('json').eq('id', session.flow_id).single()
+        if (flowForEnd) {
+          const startNode = (flowForEnd.json?.nodes as FlowNode[] ?? []).find((n: FlowNode) => n.type === 'start')
+          const endMsg = startNode?.data.sessionEndMessage as { enabled: boolean; text: string } | undefined
+          if (endMsg?.enabled && endMsg.text?.trim()) {
+            await sendWhatsApp(ctx, endMsg.text.trim())
+            log(`handleActiveSession: session end message sent`)
+          }
+        }
         await supabase.from('ai_sessions').delete().eq('id', session.id)
       }
     } catch (err) {
@@ -457,6 +544,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
 
   let currentId: string | null = nextNodeId(edges, startNode.id)
   const visited = new Set<string>()
+  let anyMessageSent = false
 
   while (currentId && visited.size < 50) {
     if (visited.has(currentId)) {
@@ -481,7 +569,10 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
     if (node.type === 'sendMessage') {
       const msg = node.data.message ?? ''
       log(`executeFlow sendMessage`, { messageLength: msg.length, empty: !msg.trim() })
-      if (msg.trim()) await sendWhatsApp(ctx, msg)
+      if (msg.trim()) {
+        await sendWhatsApp(ctx, msg)
+        anyMessageSent = true
+      }
       currentId = nextNodeId(edges, currentId)
       continue
     }
@@ -500,19 +591,65 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
       const provider: AIProvider = (node.data.provider as AIProvider) ?? 'gemini'
       const model = (node.data.model as string) ?? 'gemini-2.5-flash'
       const customModel = node.data.customModel as string | undefined
-      const systemPrompt = (node.data.systemPrompt as string) ?? ''
+      const baseSystemPrompt = (node.data.systemPrompt as string) ?? ''
       const temperature = (node.data.temperature as number) ?? 0.7
       const continueConv = node.data.continueConversation
+      const memoryBlockIds = (node.data.memoryBlockIds as string[] | undefined) ?? []
+      const timeoutType = node.data.timeoutType as 'minutes' | 'messages' | undefined
+      const timeoutValue = node.data.timeoutValue as number | undefined
+      const responseDelayMs = (node.data.responseDelayMs as number | undefined) ?? 5000
 
-      log(`executeFlow aiAssistant`, { provider, model, customModel, systemPromptLength: systemPrompt.length, temperature, continueConversation: continueConv })
+      const sessionBase = () => {
+        let expires_at: string | null = null
+        let max_messages: number | null = null
+        if (timeoutType === 'minutes' && timeoutValue)
+          expires_at = new Date(Date.now() + timeoutValue * 60 * 1000).toISOString()
+        else if (timeoutType === 'messages' && timeoutValue)
+          max_messages = timeoutValue
+        return { expires_at, max_messages }
+      }
+
+      // If a message was already sent to the user earlier in this flow execution,
+      // skip the immediate AI response and open a waiting session instead.
+      if (anyMessageSent && continueConv) {
+        log(`executeFlow aiAssistant: deferring — message already sent, opening waiting session`, { nodeId: node.id })
+        const { expires_at, max_messages } = sessionBase()
+        await supabase.from('ai_sessions').upsert(
+          {
+            instance_name: ctx.instanceName,
+            remote_jid: ctx.remoteJid,
+            flow_id: flowId,
+            node_id: node.id,
+            message_count: 0,
+            response_delay_ms: responseDelayMs,
+            expires_at,
+            max_messages,
+            pending_messages: [],
+            pending_message: null,
+            history: [],
+            last_message_at: new Date().toISOString(),
+          },
+          { onConflict: 'instance_name, remote_jid' }
+        )
+        currentId = nextNodeId(edges, currentId)
+        continue
+      }
+
+      const maxTokens = (node.data.maxTokens as number | undefined) || undefined
+
+      const memoryChunk = await buildMemoryPrompt(memoryBlockIds, ctx.incomingMessage)
+      const systemPrompt = memoryChunk ? baseSystemPrompt + memoryChunk : baseSystemPrompt
+
+      log(`executeFlow aiAssistant`, { provider, model, systemPromptLength: systemPrompt.length, memoryBlocks: memoryBlockIds.length, temperature, maxTokens, continueConversation: continueConv })
 
       let reply = ''
       try {
-        reply = await callAI(provider, model, customModel, systemPrompt, ctx.incomingMessage, temperature)
+        reply = await callAI(provider, model, customModel, systemPrompt, ctx.incomingMessage, temperature, [], maxTokens)
 
         if (reply.trim()) {
           log(`executeFlow aiAssistant: sending reply`, { replyLength: reply.length })
           await sendWhatsApp(ctx, reply)
+          anyMessageSent = true
         } else {
           log(`executeFlow aiAssistant: empty reply, not sending`)
         }
@@ -520,22 +657,9 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
         logError(`executeFlow aiAssistant call failed`, { error: err })
       }
 
-      if (node.data.continueConversation && reply.trim()) {
-        const timeoutType = node.data.timeoutType as 'minutes' | 'messages' | undefined
-        const timeoutValue = node.data.timeoutValue as number | undefined
-        const responseDelayMs = (node.data.responseDelayMs as number | undefined) ?? 5000
-
-        let expires_at: string | null = null
-        let max_messages: number | null = null
-
-        if (timeoutType === 'minutes' && timeoutValue) {
-          expires_at = new Date(Date.now() + timeoutValue * 60 * 1000).toISOString()
-        } else if (timeoutType === 'messages' && timeoutValue) {
-          max_messages = timeoutValue
-        }
-
+      if (continueConv && reply.trim()) {
+        const { expires_at, max_messages } = sessionBase()
         log(`executeFlow: opening AI session`, { nodeId: node.id, timeoutType, timeoutValue, responseDelayMs })
-
         await supabase.from('ai_sessions').upsert(
           {
             instance_name: ctx.instanceName,
@@ -546,7 +670,12 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
             response_delay_ms: responseDelayMs,
             expires_at,
             max_messages,
+            pending_messages: [],
             pending_message: ctx.incomingMessage,
+            history: [
+              { role: 'user', content: ctx.incomingMessage },
+              { role: 'assistant', content: reply },
+            ],
             last_message_at: new Date().toISOString(),
           },
           { onConflict: 'instance_name, remote_jid' }

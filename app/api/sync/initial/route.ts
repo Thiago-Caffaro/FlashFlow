@@ -19,6 +19,8 @@ export interface SyncProgress {
   total: number
   done: number
   error?: string
+  cancelled?: boolean
+  createdConversationIds?: string[]
 }
 
 const progress = new Map<string, SyncProgress>()
@@ -256,7 +258,7 @@ async function runSync(instanceName: string) {
       return
     }
 
-    progress.set(instanceName, { stage: 'messages', total, done: 0 })
+    progress.set(instanceName, { stage: 'messages', total, done: 0, createdConversationIds: conversationIds })
 
     const instanceId = await getInstanceId(instanceName)
 
@@ -268,6 +270,8 @@ async function runSync(instanceName: string) {
     const convMap = new Map((convRows ?? []).map((r) => [r.id, r.wa_id as string]))
 
     for (let i = 0; i < conversationIds.length; i++) {
+      if (progress.get(instanceName)?.cancelled) break
+
       const convId = conversationIds[i]
       const waId = convMap.get(convId)
 
@@ -275,13 +279,29 @@ async function runSync(instanceName: string) {
         await syncConversationMessages(convId, instanceId, waId)
       }
 
-      progress.set(instanceName, { stage: 'messages', total, done: i + 1 })
+      progress.set(instanceName, { stage: 'messages', total, done: i + 1, createdConversationIds: conversationIds })
     }
 
     progress.set(instanceName, { stage: 'done', total, done: total })
   } catch (err) {
     progress.set(instanceName, { stage: 'error', total: 0, done: 0, error: String(err) })
   }
+}
+
+// ─── cancel + cleanup ─────────────────────────────────────────────────────────
+
+async function cancelAndCleanup(instanceName: string) {
+  const p = progress.get(instanceName)
+  if (!p) return
+  progress.set(instanceName, { ...p, cancelled: true })
+  // give the loop one tick to notice the flag
+  await new Promise((r) => setTimeout(r, 600))
+  const ids = p.createdConversationIds ?? []
+  if (ids.length > 0) {
+    await supabase.from('messages').delete().in('conversation_id', ids)
+    await supabase.from('conversations').delete().in('id', ids)
+  }
+  progress.delete(instanceName)
 }
 
 // ─── routes ───────────────────────────────────────────────────────────────────
@@ -306,4 +326,11 @@ export async function GET(req: NextRequest) {
   const instanceName = req.nextUrl.searchParams.get('instance') ?? 'flashflow-main'
   const p = progress.get(instanceName) ?? { stage: 'idle', total: 0, done: 0 }
   return NextResponse.json(p)
+}
+
+/** DELETE — cancels an in-progress sync and rolls back created data */
+export async function DELETE(req: NextRequest) {
+  const instanceName = req.nextUrl.searchParams.get('instance') ?? 'flashflow-main'
+  await cancelAndCleanup(instanceName)
+  return NextResponse.json({ ok: true })
 }

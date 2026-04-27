@@ -98,12 +98,16 @@ async function executeTriggers(
   if (error || !triggers || triggers.length === 0) return
 
   for (const trigger of triggers) {
-    const valor = (trigger.valor ?? '').trim().toLowerCase()
-    if (!valor) continue
+    const valors = (trigger.valor ?? '')
+      .split(',')
+      .map((v: string) => v.trim().toLowerCase())
+      .filter(Boolean)
+    if (valors.length === 0) continue
 
     const content = messageContent.toLowerCase()
-    const matched =
-      trigger.tipo === 'exact' ? content === valor : content.includes(valor)
+    const matched = valors.some((v: string) =>
+      trigger.tipo === 'exact' ? content === v : content.includes(v)
+    )
     if (!matched) continue
 
     const delayMs: number = trigger.delay_ms ?? 0
@@ -311,7 +315,6 @@ export async function POST(req: NextRequest) {
             type === 'sticker' ? '[figurinha]' :
             content,
           last_message_at: new Date().toISOString(),
-          unread_count: 1,
         },
         { onConflict: 'wa_id, instance_name' }
       )
@@ -322,6 +325,16 @@ export async function POST(req: NextRequest) {
       console.error('Erro ao upsert conversa:', convError)
       return NextResponse.json({ ok: false }, { status: 500 })
     }
+
+    // Incrementa unread_count apenas para mensagens recebidas; zera para as próprias
+    await supabase
+      .from('conversations')
+      .update({
+        unread_count: data.key.fromMe === true
+          ? 0
+          : (conversation.unread_count ?? 0) + 1,
+      })
+      .eq('id', conversation.id)
 
     await supabase.from('messages').insert({
       conversation_id: conversation.id,

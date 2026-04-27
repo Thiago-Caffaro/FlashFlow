@@ -1,10 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { MessageSquare, Zap, GitBranch, Brain, Sun, Moon } from 'lucide-react'
+import { MessageSquare, Zap, GitBranch, Brain, BookOpen, Sun, Moon } from 'lucide-react'
 import { useTheme } from '@/contexts/theme-context'
 
-export type View = 'chat' | 'gatilhos' | 'fluxos' | 'ia'
+export type View = 'chat' | 'gatilhos' | 'fluxos' | 'memoria' | 'ia'
 
 interface Props {
   activeTab: View
@@ -12,9 +12,10 @@ interface Props {
 }
 
 const TABS: { id: View; label: string; Icon: React.ElementType }[] = [
-  { id: 'chat',     label: 'Chat',     Icon: MessageSquare },
-  { id: 'gatilhos', label: 'Gatilhos', Icon: Zap },
-  { id: 'fluxos',   label: 'Fluxos',   Icon: GitBranch },
+  { id: 'chat',     label: 'Chat',       Icon: MessageSquare },
+  { id: 'gatilhos', label: 'Gatilhos',   Icon: Zap },
+  { id: 'fluxos',   label: 'Fluxos',     Icon: GitBranch },
+  { id: 'memoria',  label: 'Memória',    Icon: BookOpen },
   { id: 'ia',       label: 'Config. IA', Icon: Brain },
 ]
 
