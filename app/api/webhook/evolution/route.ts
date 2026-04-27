@@ -104,8 +104,9 @@ async function executeTriggers(
       .filter(Boolean)
     if (valors.length === 0) continue
 
+    const isWildcard = valors.includes('*')
     const content = messageContent.toLowerCase()
-    const matched = valors.some((v: string) =>
+    const matched = isWildcard || valors.some((v: string) =>
       trigger.tipo === 'exact' ? content === v : content.includes(v)
     )
     if (!matched) continue
@@ -152,9 +153,13 @@ async function executeTriggers(
       const flowId: string = trigger.action_payload?.flow_id ?? ''
       if (!flowId) continue
 
-      const runFlow = () =>
-        executeFlow(flowId, { instanceName, remoteJid, conversationId, incomingMessage: messageContent })
+      const runFlow = async () => {
+        // Re-check session right before executing — handles race conditions and delayed triggers
+        const activeSession = await checkActiveSession(instanceName, remoteJid)
+        if (activeSession) return
+        await executeFlow(flowId, { instanceName, remoteJid, conversationId, incomingMessage: messageContent })
           .catch((err) => console.error('executeFlow error:', err))
+      }
 
       if (delayMs > 0) setTimeout(runFlow, delayMs)
       else await runFlow()

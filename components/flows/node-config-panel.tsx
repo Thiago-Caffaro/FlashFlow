@@ -312,6 +312,21 @@ function AiAssistantConfig({
                 Aguarda esse tempo após a última mensagem antes de responder — evita múltiplas respostas para mensagens enviadas em sequência
               </p>
             </div>
+
+            {/* Inactivity timeout */}
+            <div className="pt-1 border-t border-[#f0f2f5] dark:border-[#2a3942]">
+              <p className="text-xs text-[#aebac1] dark:text-[#667781] mb-3">
+                Sessões sem novas mensagens são encerradas automaticamente após <strong className="text-[#667781] dark:text-[#8696a0]">1 hora</strong> de inatividade.
+              </p>
+              <label className={labelClass}>Mensagem de encerramento por inatividade</label>
+              <input
+                type="text"
+                value={(data.inactivityMessage as string | undefined) ?? ''}
+                onChange={(e) => onChange(node.id, { inactivityMessage: e.target.value })}
+                placeholder="Sessão finalizada"
+                className={inputClass}
+              />
+            </div>
           </div>
         )}
       </div>

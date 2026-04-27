@@ -57,7 +57,6 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
     () => trigger.valor ? trigger.valor.split(',').map(v => v.trim()).filter(Boolean) : []
   )
   const [valorInput, setValorInput] = useState('')
-  const [message, setMessage] = useState(trigger.action_payload.message ?? '')
   const [customDelaySeconds, setCustomDelaySeconds] = useState(
     resolveDelayOption(trigger.delay_ms) === -1 ? String(trigger.delay_ms / 1000) : '3'
   )
@@ -142,6 +141,11 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
         {/* Palavras de ativação */}
         <div>
           <label className={labelClass}>Palavras de ativação</label>
+          {valorTags.includes('*') && (
+            <p className="text-xs text-amber-500 dark:text-amber-400 mb-1.5">
+              Qualquer mensagem ativa este gatilho
+            </p>
+          )}
           <div
             className="min-h-[46px] w-full bg-[#f0f2f5] dark:bg-[#2a3942] border border-transparent focus-within:border-[#00a884] rounded-xl px-3 py-2 flex flex-wrap gap-1.5 cursor-text transition-colors"
             onClick={() => (document.getElementById(`valor-input-${trigger.id}`) as HTMLInputElement | null)?.focus()}
@@ -149,7 +153,11 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
             {valorTags.map(tag => (
               <span
                 key={tag}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#00a884]/15 text-[#00a884] text-xs font-mono font-medium"
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-medium ${
+                  tag === '*'
+                    ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                    : 'bg-[#00a884]/15 text-[#00a884]'
+                }`}
               >
                 {tag}
                 <button
@@ -208,61 +216,25 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
           </div>
         </div>
 
-        {/* Ação */}
-        <div>
-          <label className={labelClass}>Ação ao ativar</label>
-          <select
-            value={trigger.action}
-            onChange={(e) => {
-              const action = e.target.value as TriggerAction
-              onUpdate(trigger.id, { action, action_payload: action === 'send_message' ? { message: trigger.action_payload.message ?? '' } : {} })
-            }}
-            className={inputClass + ' cursor-pointer'}
-          >
-            <option value="send_message">Enviar mensagem</option>
-            <option value="flow">Executar fluxo</option>
-          </select>
-        </div>
-
-        {/* Message content */}
-        {trigger.action === 'send_message' && (
-          <div>
-            <label className={labelClass}>Mensagem automática</label>
-            <textarea
-              rows={5}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onBlur={() => {
-                if (message !== (trigger.action_payload.message ?? ''))
-                  onUpdate(trigger.id, { action_payload: { message } })
-              }}
-              placeholder="Digite a mensagem que será enviada automaticamente..."
-              className={inputClass + ' resize-none'}
-            />
-          </div>
-        )}
-
         {/* Flow picker */}
-        {trigger.action === 'flow' && (
-          <div>
-            <label className={labelClass}>Fluxo vinculado</label>
-            <button
-              onClick={() => setFlowPickerOpen(true)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-colors text-left ${
-                trigger.action_payload.flow_id
-                  ? 'border-[#00a884] bg-[#e7f8f4] dark:bg-[#0d2e27]'
-                  : 'border-dashed border-[#d1d7db] dark:border-[#3d4f5a] hover:border-[#00a884]'
-              }`}
-            >
-              <GitBranch size={16} className={trigger.action_payload.flow_id ? 'text-[#00a884]' : 'text-[#aebac1] dark:text-[#667781]'} />
-              <span className={`text-sm ${trigger.action_payload.flow_id ? 'text-[#00a884] font-medium' : 'text-[#aebac1] dark:text-[#667781]'}`}>
-                {trigger.action_payload.message
-                  ? trigger.action_payload.message
-                  : 'Clique para selecionar um fluxo'}
-              </span>
-            </button>
-          </div>
-        )}
+        <div>
+          <label className={labelClass}>Fluxo vinculado</label>
+          <button
+            onClick={() => setFlowPickerOpen(true)}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-colors text-left ${
+              trigger.action_payload.flow_id
+                ? 'border-[#00a884] bg-[#e7f8f4] dark:bg-[#0d2e27]'
+                : 'border-dashed border-[#d1d7db] dark:border-[#3d4f5a] hover:border-[#00a884]'
+            }`}
+          >
+            <GitBranch size={16} className={trigger.action_payload.flow_id ? 'text-[#00a884]' : 'text-[#aebac1] dark:text-[#667781]'} />
+            <span className={`text-sm ${trigger.action_payload.flow_id ? 'text-[#00a884] font-medium' : 'text-[#aebac1] dark:text-[#667781]'}`}>
+              {trigger.action_payload.message
+                ? trigger.action_payload.message
+                : 'Clique para selecionar um fluxo'}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Footer actions */}
@@ -326,8 +298,8 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
       tipo: 'contains',
       valor: '',
       delay_ms: 0,
-      action: 'send_message',
-      action_payload: { message: '' },
+      action: 'flow',
+      action_payload: {},
     }
     const res = await fetch('/api/triggers', {
       method: 'POST',

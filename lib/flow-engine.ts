@@ -278,7 +278,17 @@ async function callAI(
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: openrouterHeaders,
-        body: JSON.stringify({ model: actualModel, messages: msgs, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }),
+        body: JSON.stringify({
+          model: actualModel,
+          messages: msgs,
+          temperature: safeTemp,
+          ...(maxTokens ? {
+            max_tokens: maxTokens,
+            // Give reasoning models a separate token budget so they don't eat into output tokens.
+            // Ignored by non-reasoning models.
+            reasoning: { max_tokens: Math.max(maxTokens * 4, 2048) },
+          } : {}),
+        }),
       })
 
       log(`callAI openrouter response status (attempt ${attempt})`, { status: res.status, ok: res.ok })
@@ -368,6 +378,35 @@ export async function checkActiveSession(instanceName: string, remoteJid: string
   if (data.max_messages !== null && data.message_count >= data.max_messages) {
     log(`session expired by message count`, { id: data.id, remoteJid, count: data.message_count })
     await supabase.from('ai_sessions').delete().eq('id', data.id)
+    return null
+  }
+
+  const INACTIVITY_MS = 60 * 60 * 1000 // 1 hour
+  const lastMsgAt = data.last_message_at ? new Date(data.last_message_at).getTime() : 0
+  if (lastMsgAt > 0 && Date.now() - lastMsgAt > INACTIVITY_MS) {
+    log(`session expired by inactivity`, { id: data.id, remoteJid, idleMs: Date.now() - lastMsgAt })
+    await supabase.from('ai_sessions').delete().eq('id', data.id)
+
+    // Load node config to get the inactivity message
+    const { data: flow } = await supabase.from('flows').select('json').eq('id', data.flow_id).single()
+    const node = (flow?.json?.nodes as FlowNode[] | undefined)?.find((n) => n.id === data.node_id)
+    const inactivityMsg = ((node?.data?.inactivityMessage as string | undefined) ?? '').trim() || 'Sessão finalizada'
+
+    // Look up conversation_id
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('instance_name', instanceName)
+      .eq('wa_id', remoteJid)
+      .maybeSingle()
+
+    if (conv?.id) {
+      await sendWhatsApp(
+        { instanceName, remoteJid, conversationId: conv.id, incomingMessage: '' },
+        inactivityMsg
+      )
+    }
+
     return null
   }
 
@@ -472,9 +511,10 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
           { role: 'user', content: userMessage },
           { role: 'assistant', content: reply },
         ]
-        await supabase.from('ai_sessions')
+        const { error: saveErr } = await supabase.from('ai_sessions')
           .update({ pending_messages: [], history: updatedHistory })
           .eq('id', session.id)
+        if (saveErr) logError(`handleActiveSession: failed to save history`, { sessionId: session.id, error: saveErr.message })
         await sendWhatsApp(ctx, reply)
         log(`handleActiveSession: reply sent`, { replyLength: reply.length, historyTurns: updatedHistory.length })
       } else {
@@ -629,7 +669,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
             history: [],
             last_message_at: new Date().toISOString(),
           },
-          { onConflict: 'instance_name, remote_jid' }
+          { onConflict: 'instance_name, remote_jid', ignoreDuplicates: true }
         )
         currentId = nextNodeId(edges, currentId)
         continue
@@ -678,7 +718,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
             ],
             last_message_at: new Date().toISOString(),
           },
-          { onConflict: 'instance_name, remote_jid' }
+          { onConflict: 'instance_name, remote_jid', ignoreDuplicates: true }
         )
       }
 

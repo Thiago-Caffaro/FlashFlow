@@ -89,6 +89,7 @@ export interface FlowNodeData {
   responseDelayMs?: number
   memoryBlockIds?: string[]
   maxTokens?: number
+  inactivityMessage?: string
   // start node
   sessionEndMessage?: { enabled: boolean; text: string }
   [key: string]: unknown
