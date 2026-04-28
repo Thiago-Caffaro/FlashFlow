@@ -16,6 +16,7 @@ interface SyncProgress {
 
 export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayProps) {
   const [sync, setSync] = useState<SyncProgress>({ stage: 'contacts', total: 0, done: 0 })
+  const [cancelling, setCancelling] = useState(false)
   const doneRef = useRef(false)
   const startRef = useRef(Date.now())
 
@@ -32,7 +33,7 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
         const data: SyncProgress = await res.json()
         setSync(data)
 
-        if (data.stage === 'done' || data.stage === 'error') {
+        if (data.stage === 'done' || data.stage === 'error' || data.stage === 'idle') {
           doneRef.current = true
           clearInterval(interval)
           // Minimum 3s display time so the overlay doesn't flash
@@ -46,6 +47,15 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instanceName])
 
+  async function handleCancel() {
+    if (cancelling) return
+    setCancelling(true)
+    try {
+      await fetch(`/api/sync/initial?instance=${encodeURIComponent(instanceName)}`, { method: 'DELETE' })
+    } catch { /* ignore */ }
+    // polling will detect stage: idle and call onComplete
+  }
+
   const isWaiting = sync.stage === 'idle' || sync.stage === 'contacts'
   const progress =
     sync.stage === 'done'
@@ -55,7 +65,7 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
       : 0
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#111b21]">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#111b21] pointer-events-auto">
       {/* Icon */}
       <div className="mb-8 w-20 h-20 rounded-full bg-[#00a884] flex items-center justify-center">
         <svg viewBox="0 0 56 56" width="44" height="44" fill="none">
@@ -118,6 +128,17 @@ export default function SyncOverlay({ instanceName, onComplete }: SyncOverlayPro
         <p className="text-[#8696a0] text-xs mt-6 tabular-nums font-mono">
           {progress}%
         </p>
+      )}
+
+      {/* Cancel button */}
+      {sync.stage !== 'done' && sync.stage !== 'error' && (
+        <button
+          onClick={handleCancel}
+          disabled={cancelling}
+          className="mt-8 text-xs text-[#8696a0] hover:text-[#f15c6d] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {cancelling ? 'Cancelando...' : 'Cancelar sincronização'}
+        </button>
       )}
     </div>
   )

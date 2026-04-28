@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { X, Zap, AlertCircle, CheckCircle } from 'lucide-react'
-import { FlowNode, FlowNodeData, Trigger, AIProvider } from '@/types'
+import { X, Zap, AlertCircle, CheckCircle, BookOpen, Plus, Tag } from 'lucide-react'
+import { FlowNode, FlowNodeData, Trigger, AIProvider, AgentMemoryBlock } from '@/types'
 
 // ─── Models per provider ──────────────────────────────────────────────────────
 
@@ -22,13 +22,19 @@ const PROVIDER_LABELS: Record<AIProvider, string> = {
 function AiAssistantConfig({
   node,
   onChange,
+  instanceName,
 }: {
   node: FlowNode
   onChange: (id: string, data: Partial<FlowNodeData>) => void
+  instanceName: string
 }) {
   const { data } = node
   const provider: AIProvider = data.provider ?? 'gemini'
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
+  const [availableBlocks, setAvailableBlocks] = useState<AgentMemoryBlock[]>([])
+  const [showBlockPicker, setShowBlockPicker] = useState(false)
+
+  const attachedIds: string[] = (data.memoryBlockIds as string[] | undefined) ?? []
 
   useEffect(() => {
     fetch('/api/ai-keys')
@@ -36,7 +42,10 @@ function AiAssistantConfig({
       .then((json) => {
         if (json.ok) setConfiguredProviders(Object.keys(json.configured))
       })
-  }, [])
+    fetch(`/api/memory-blocks?instance=${encodeURIComponent(instanceName)}`)
+      .then((r) => r.json())
+      .then((json) => { if (json.ok) setAvailableBlocks(json.blocks) })
+  }, [instanceName])
 
   const isConfigured = configuredProviders.includes(provider)
 
@@ -128,6 +137,114 @@ function AiAssistantConfig({
         </div>
       </div>
 
+      {/* Max tokens */}
+      <div>
+        <label className={labelClass}>Tamanho máximo da resposta</label>
+        <select
+          value={data.maxTokens ?? 0}
+          onChange={(e) => onChange(node.id, { maxTokens: Number(e.target.value) || undefined })}
+          className={inputClass}
+        >
+          <option value={0}>Sem limite</option>
+          <option value={80}>Curta — até 80 tokens (~60 palavras)</option>
+          <option value={200}>Média — até 200 tokens (~150 palavras)</option>
+          <option value={500}>Longa — até 500 tokens (~375 palavras)</option>
+          <option value={1000}>Muito longa — até 1000 tokens (~750 palavras)</option>
+        </select>
+        <p className="text-xs text-[#aebac1] dark:text-[#667781] mt-1.5">
+          Para WhatsApp, respostas curtas ou médias tendem a ter melhor engajamento
+        </p>
+      </div>
+
+      {/* Memory Blocks */}
+      <div className="border-t border-[#f0f2f5] dark:border-[#2a3942] pt-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <BookOpen size={14} className="text-[#667781]" />
+            <label className={labelClass + ' mb-0'}>Memória do Agente</label>
+          </div>
+          <button
+            onClick={() => setShowBlockPicker((v) => !v)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#f0f2f5] dark:bg-[#2a3942] text-[#667781] hover:bg-[#00a884] hover:text-white text-xs font-medium transition-colors"
+          >
+            <Plus size={11} />
+            Adicionar
+          </button>
+        </div>
+
+        {showBlockPicker && (
+          <div className="mb-3 border border-[#d1d7db] dark:border-[#3d4f5a] rounded-xl overflow-hidden">
+            {availableBlocks.length === 0 ? (
+              <p className="text-xs text-[#aebac1] p-3">Nenhum bloco criado. Crie em <strong>Memória</strong>.</p>
+            ) : (
+              availableBlocks
+                .filter((b) => !attachedIds.includes(b.id))
+                .map((block) => (
+                  <button
+                    key={block.id}
+                    onClick={() => {
+                      onChange(node.id, { memoryBlockIds: [...attachedIds, block.id] })
+                      setShowBlockPicker(false)
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] border-b border-[#f0f2f5] dark:border-[#2a3942] last:border-0 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm text-[#111b21] dark:text-[#e9edef] font-medium truncate block">{block.name}</span>
+                      {block.type === 'contextual' && block.keywords.length > 0 && (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <Tag size={9} className="text-amber-500" />
+                          <span className="text-[9px] text-[#aebac1]">{block.keywords.slice(0, 3).join(', ')}</span>
+                        </div>
+                      )}
+                    </div>
+                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wide ${block.type === 'always' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'}`}>
+                      {block.type === 'always' ? 'Core' : 'Contextual'}
+                    </span>
+                  </button>
+                ))
+            )}
+          </div>
+        )}
+
+        {attachedIds.length === 0 ? (
+          <p className="text-xs text-[#aebac1] dark:text-[#667781] leading-relaxed">
+            Nenhum bloco anexado. Adicione blocos para dar contexto ao agente.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {attachedIds.map((id) => {
+              const block = availableBlocks.find((b) => b.id === id)
+              return (
+                <div key={id} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#f0f2f5] dark:bg-[#2a3942]">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-medium text-[#111b21] dark:text-[#e9edef] truncate block">
+                      {block?.name ?? id}
+                    </span>
+                    {block?.type === 'contextual' && block.keywords.length > 0 && (
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <Tag size={9} className="text-amber-500" />
+                        <span className="text-[9px] text-[#aebac1]">{block.keywords.slice(0, 3).join(', ')}</span>
+                      </div>
+                    )}
+                  </div>
+                  {block && (
+                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wide shrink-0 ${block.type === 'always' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'}`}>
+                      {block.type === 'always' ? 'Core' : 'Contextual'}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => onChange(node.id, { memoryBlockIds: attachedIds.filter((i) => i !== id) })}
+                    className="text-[#aebac1] hover:text-red-500 transition-colors shrink-0"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
       {/* Continue Conversation */}
       <div className="border-t border-[#f0f2f5] dark:border-[#2a3942] pt-5">
         <label className="flex items-start gap-3 cursor-pointer">
@@ -195,6 +312,21 @@ function AiAssistantConfig({
                 Aguarda esse tempo após a última mensagem antes de responder — evita múltiplas respostas para mensagens enviadas em sequência
               </p>
             </div>
+
+            {/* Inactivity timeout */}
+            <div className="pt-1 border-t border-[#f0f2f5] dark:border-[#2a3942]">
+              <p className="text-xs text-[#aebac1] dark:text-[#667781] mb-3">
+                Sessões sem novas mensagens são encerradas automaticamente após <strong className="text-[#667781] dark:text-[#8696a0]">1 hora</strong> de inatividade.
+              </p>
+              <label className={labelClass}>Mensagem de encerramento por inatividade</label>
+              <input
+                type="text"
+                value={(data.inactivityMessage as string | undefined) ?? ''}
+                onChange={(e) => onChange(node.id, { inactivityMessage: e.target.value })}
+                placeholder="Sessão finalizada"
+                className={inputClass}
+              />
+            </div>
           </div>
         )}
       </div>
@@ -217,7 +349,18 @@ const labelClass = 'text-xs font-semibold text-[#667781] uppercase tracking-wide
 
 // ─── Start node panel ─────────────────────────────────────────────────────────
 
-function StartNodePanel({ flowId, instanceName }: { flowId: string; instanceName: string }) {
+function StartNodePanel({
+  flowId,
+  instanceName,
+  node,
+  onChange,
+}: {
+  flowId: string
+  instanceName: string
+  node: FlowNode
+  onChange: (id: string, data: Partial<FlowNodeData>) => void
+}) {
+  const sessionEndMsg = (node.data.sessionEndMessage as { enabled: boolean; text: string } | undefined) ?? { enabled: false, text: '' }
   const [triggers, setTriggers] = useState<Trigger[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -272,6 +415,41 @@ function StartNodePanel({ flowId, instanceName }: { flowId: string; instanceName
         </div>
       )}
 
+      {/* Session End Message */}
+      <div className="border-t border-[#f0f2f5] dark:border-[#2a3942] pt-4">
+        <label className="flex items-start gap-3 cursor-pointer mb-3">
+          <div className="relative mt-0.5 shrink-0">
+            <input
+              type="checkbox"
+              checked={sessionEndMsg.enabled}
+              onChange={(e) =>
+                onChange(node.id, { sessionEndMessage: { ...sessionEndMsg, enabled: e.target.checked } })
+              }
+              className="sr-only peer"
+            />
+            <div className="w-10 h-6 bg-[#d1d7db] dark:bg-[#3d4f5a] rounded-full peer-checked:bg-[#00a884] transition-colors" />
+            <div className="absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
+          </div>
+          <div>
+            <span className="text-sm font-semibold text-[#111b21] dark:text-[#e9edef]">Mensagem de encerramento</span>
+            <p className="text-xs text-[#aebac1] dark:text-[#667781] mt-0.5 leading-relaxed">
+              Enviada automaticamente quando o atendimento de IA terminar
+            </p>
+          </div>
+        </label>
+        {sessionEndMsg.enabled && (
+          <textarea
+            rows={3}
+            value={sessionEndMsg.text}
+            onChange={(e) =>
+              onChange(node.id, { sessionEndMessage: { ...sessionEndMsg, text: e.target.value } })
+            }
+            placeholder="ex: Atendimento encerrado. Se precisar de ajuda novamente, é só falar!"
+            className={inputClass}
+          />
+        )}
+      </div>
+
       <p className="text-xs text-[#aebac1] dark:text-[#667781] leading-relaxed pt-1">
         Este nó é o ponto de entrada do fluxo e <strong>não pode ser excluído</strong>. Só aceita uma conexão de saída.
       </p>
@@ -305,7 +483,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
 
       <div className="flex-1 overflow-y-auto p-6 space-y-5">
         {type === 'start' && (
-          <StartNodePanel flowId={flowId} instanceName={instanceName} />
+          <StartNodePanel flowId={flowId} instanceName={instanceName} node={node} onChange={onChange} />
         )}
 
         {type === 'end' && (
@@ -355,7 +533,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
         )}
 
         {type === 'aiAssistant' && (
-          <AiAssistantConfig node={node} onChange={onChange} />
+          <AiAssistantConfig node={node} onChange={onChange} instanceName={instanceName} />
         )}
       </div>
     </div>

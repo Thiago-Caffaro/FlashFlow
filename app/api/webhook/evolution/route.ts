@@ -98,12 +98,17 @@ async function executeTriggers(
   if (error || !triggers || triggers.length === 0) return
 
   for (const trigger of triggers) {
-    const valor = (trigger.valor ?? '').trim().toLowerCase()
-    if (!valor) continue
+    const valors = (trigger.valor ?? '')
+      .split(',')
+      .map((v: string) => v.trim().toLowerCase())
+      .filter(Boolean)
+    if (valors.length === 0) continue
 
+    const isWildcard = valors.includes('*')
     const content = messageContent.toLowerCase()
-    const matched =
-      trigger.tipo === 'exact' ? content === valor : content.includes(valor)
+    const matched = isWildcard || valors.some((v: string) =>
+      trigger.tipo === 'exact' ? content === v : content.includes(v)
+    )
     if (!matched) continue
 
     const delayMs: number = trigger.delay_ms ?? 0
@@ -148,9 +153,13 @@ async function executeTriggers(
       const flowId: string = trigger.action_payload?.flow_id ?? ''
       if (!flowId) continue
 
-      const runFlow = () =>
-        executeFlow(flowId, { instanceName, remoteJid, conversationId, incomingMessage: messageContent })
+      const runFlow = async () => {
+        // Re-check session right before executing — handles race conditions and delayed triggers
+        const activeSession = await checkActiveSession(instanceName, remoteJid)
+        if (activeSession) return
+        await executeFlow(flowId, { instanceName, remoteJid, conversationId, incomingMessage: messageContent })
           .catch((err) => console.error('executeFlow error:', err))
+      }
 
       if (delayMs > 0) setTimeout(runFlow, delayMs)
       else await runFlow()
@@ -311,7 +320,6 @@ export async function POST(req: NextRequest) {
             type === 'sticker' ? '[figurinha]' :
             content,
           last_message_at: new Date().toISOString(),
-          unread_count: 1,
         },
         { onConflict: 'wa_id, instance_name' }
       )
@@ -322,6 +330,16 @@ export async function POST(req: NextRequest) {
       console.error('Erro ao upsert conversa:', convError)
       return NextResponse.json({ ok: false }, { status: 500 })
     }
+
+    // Incrementa unread_count apenas para mensagens recebidas; zera para as próprias
+    await supabase
+      .from('conversations')
+      .update({
+        unread_count: data.key.fromMe === true
+          ? 0
+          : (conversation.unread_count ?? 0) + 1,
+      })
+      .eq('id', conversation.id)
 
     await supabase.from('messages').insert({
       conversation_id: conversation.id,

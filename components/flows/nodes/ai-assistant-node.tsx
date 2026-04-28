@@ -1,7 +1,7 @@
 'use client'
 
 import { Handle, Position, NodeProps } from '@xyflow/react'
-import { Sparkles, Bot, Radio, MessageCircle } from 'lucide-react'
+import { Sparkles, Bot, Radio, MessageCircle, BookOpen } from 'lucide-react'
 import { FlowNodeData, AIProvider } from '@/types'
 
 const PROVIDER_CONFIG: Record<AIProvider, { label: string; Icon: React.ElementType; color: string }> = {
@@ -38,6 +38,15 @@ export default function AiAssistantNode({ data, selected }: NodeProps & { data: 
       <p className="text-xs text-[#111b21] dark:text-[#e9edef] break-words whitespace-pre-wrap line-clamp-10 min-h-[2em]">
         {data.systemPrompt || <em className="text-[#aebac1] dark:text-[#667781] not-italic">Definir prompt...</em>}
       </p>
+
+      {((data.memoryBlockIds as string[] | undefined)?.length ?? 0) > 0 && (
+        <div className="flex items-center gap-1.5 mt-1.5 pt-1.5 border-t border-[#f0f2f5] dark:border-[#2a3942]">
+          <BookOpen size={9} style={{ color }} className="shrink-0" />
+          <span className="text-[9px] text-[#667781] dark:text-[#aebac1]">
+            {(data.memoryBlockIds as string[]).length} {(data.memoryBlockIds as string[]).length === 1 ? 'bloco' : 'blocos'} de memória
+          </span>
+        </div>
+      )}
 
       {data.continueConversation && (
         <div className="flex items-center gap-1.5 mt-1.5 pt-1.5 border-t border-[#f0f2f5] dark:border-[#2a3942]">

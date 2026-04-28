@@ -57,6 +57,19 @@ export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'aiAssistant'
 
 export type AIProvider = 'gemini' | 'openai' | 'openrouter'
 
+export type MemoryBlockType = 'always' | 'contextual'
+
+export interface AgentMemoryBlock {
+  id: string
+  instance_name: string
+  name: string
+  content: string
+  type: MemoryBlockType
+  keywords: string[]
+  created_at: string
+  updated_at: string
+}
+
 export interface FlowNodeData {
   label?: string
   message?: string
@@ -74,6 +87,11 @@ export interface FlowNodeData {
   timeoutType?: 'minutes' | 'messages'
   timeoutValue?: number
   responseDelayMs?: number
+  memoryBlockIds?: string[]
+  maxTokens?: number
+  inactivityMessage?: string
+  // start node
+  sessionEndMessage?: { enabled: boolean; text: string }
   [key: string]: unknown
 }
 
