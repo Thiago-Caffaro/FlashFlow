@@ -55,6 +55,22 @@ export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>
 
 export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'aiAssistant' | 'end'
 
+export interface FlowImage {
+  id: string
+  url: string
+  filename: string
+}
+
+export interface FlowMedia {
+  id: string
+  instance_name: string
+  filename: string
+  storage_path: string
+  url: string
+  size_bytes: number
+  created_at: string
+}
+
 export type AIProvider = 'gemini' | 'openai' | 'openrouter'
 
 export type MemoryBlockType = 'always' | 'contextual'
@@ -73,6 +89,7 @@ export interface AgentMemoryBlock {
 export interface FlowNodeData {
   label?: string
   message?: string
+  images?: FlowImage[]
   // condition
   conditionType?: 'contains' | 'exact'
   conditionValue?: string

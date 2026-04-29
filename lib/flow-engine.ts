@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { FlowNode, FlowEdge, AIProvider, AgentMemoryBlock } from '@/types'
+import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock } from '@/types'
 import { decrypt } from './ai-crypto'
 
 const supabase = createClient(
@@ -69,6 +69,30 @@ async function sendWhatsApp(ctx: FlowContext, text: string) {
 
   await supabase.from('conversations').update({
     last_message: text,
+    last_message_at: new Date().toISOString(),
+  }).eq('id', ctx.conversationId)
+}
+
+async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
+  const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${ctx.instanceName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+    body: JSON.stringify({ number: ctx.remoteJid, mediatype: 'image', media: imageUrl }),
+  })
+  const evoData = await res.json().catch(() => ({}))
+  const waMessageId: string | null = evoData?.key?.id ?? null
+
+  await supabase.from('messages').insert({
+    conversation_id: ctx.conversationId,
+    wa_message_id: waMessageId,
+    content: imageUrl,
+    type: 'image',
+    direction: 'outbound',
+    status: 'sent',
+  })
+
+  await supabase.from('conversations').update({
+    last_message: '📷 Imagem',
     last_message_at: new Date().toISOString(),
   }).eq('id', ctx.conversationId)
 }
@@ -607,12 +631,16 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
     }
 
     if (node.type === 'sendMessage') {
-      const msg = node.data.message ?? ''
-      log(`executeFlow sendMessage`, { messageLength: msg.length, empty: !msg.trim() })
+      const msg = (node.data.message as string) ?? ''
+      const images = (node.data.images as FlowImage[] | undefined) ?? []
+      log(`executeFlow sendMessage`, { messageLength: msg.length, imageCount: images.length })
+      for (const img of images) {
+        await sendWhatsAppImage(ctx, img.url)
+      }
       if (msg.trim()) {
         await sendWhatsApp(ctx, msg)
-        anyMessageSent = true
       }
+      if (msg.trim() || images.length > 0) anyMessageSent = true
       currentId = nextNodeId(edges, currentId)
       continue
     }

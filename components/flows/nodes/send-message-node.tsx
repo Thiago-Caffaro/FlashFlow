@@ -1,8 +1,8 @@
 'use client'
 
 import { Handle, Position, NodeProps } from '@xyflow/react'
-import { MessageSquare } from 'lucide-react'
-import { FlowNodeData } from '@/types'
+import { MessageSquare, Paperclip } from 'lucide-react'
+import { FlowImage, FlowNodeData } from '@/types'
 
 export default function SendMessageNode({ data, selected }: NodeProps & { data: FlowNodeData }) {
   return (
@@ -15,6 +15,14 @@ export default function SendMessageNode({ data, selected }: NodeProps & { data: 
       <p className="text-xs text-[#111b21] dark:text-[#e9edef] break-words whitespace-pre-wrap line-clamp-10 min-h-[2em]">
         {data.message || <em className="text-[#aebac1] dark:text-[#667781] not-italic">Clique para editar...</em>}
       </p>
+      {(data.images as FlowImage[] | undefined)?.length ? (
+        <div className="flex items-center gap-1 text-[10px] text-[#667781] mt-1.5">
+          <Paperclip size={10} />
+          <span>
+            {(data.images as FlowImage[]).length} imagem{(data.images as FlowImage[]).length > 1 ? 'ns' : ''}
+          </span>
+        </div>
+      ) : null}
       <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-[#d1d7db] dark:!bg-[#3d4f5a] !border-2 !border-white" />
     </div>
   )
