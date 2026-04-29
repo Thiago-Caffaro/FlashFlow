@@ -9,11 +9,13 @@ import TriggersTab from '@/components/sidebar-right/triggers-tab'
 import FlowsTab from '@/components/flows/flows-tab'
 import AiSettingsTab from '@/components/settings/ai-settings-tab'
 import MemoryTab from '@/components/memory/memory-tab'
+import GalleryTab from '@/components/gallery/gallery-tab'
 import VerticalTabBar, { View } from '@/components/nav/vertical-tab-bar'
 import { AccountProvider, useAccount } from '@/contexts/account-context'
 import { ThemeProvider } from '@/contexts/theme-context'
+import { FEATURES } from '@/lib/features'
 
-const TAB_INDEX: Record<View, number> = { chat: 0, gatilhos: 1, fluxos: 2, memoria: 3, ia: 4 }
+const TAB_INDEX: Record<View, number> = { chat: 0, gatilhos: 1, fluxos: 2, memoria: 3, galeria: 4, ia: 5 }
 
 function ChatApp() {
   const { activeAccount } = useAccount()
@@ -164,11 +166,29 @@ function ChatApp() {
           )}
         </div>
 
-        {/* Panel 4: Config. IA */}
+        {/* Panel 4: Galeria */}
+        {FEATURES.gallery && <div
+          className="absolute inset-0 bg-white dark:bg-[#111b21]"
+          style={{
+            transform: `translateY(${(4 - tabIndex) * 100}%)`,
+            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
+            willChange: 'transform',
+          }}
+        >
+          {activeAccount?.instanceName ? (
+            <GalleryTab instanceName={activeAccount.instanceName} />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
+            </div>
+          )}
+        </div>}
+
+        {/* Panel 5: Config. IA */}
         <div
           className="absolute inset-0"
           style={{
-            transform: `translateY(${(4 - tabIndex) * 100}%)`,
+            transform: `translateY(${(5 - tabIndex) * 100}%)`,
             transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
             willChange: 'transform',
           }}
