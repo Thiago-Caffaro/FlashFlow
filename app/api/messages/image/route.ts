@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { uploadFileToStorage } from '@/lib/storage'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
-
-async function ensureMediaBucket() {
-  await supabase.storage.createBucket('media', { public: true }).catch(() => {})
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,25 +19,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
     }
 
-    await ensureMediaBucket()
+    const buffer = await file.arrayBuffer()
+    const { url: publicUrl } = await uploadFileToStorage(buffer, file.name, file.type)
 
-    const bytes = await file.arrayBuffer()
-    const buffer = Buffer.from(bytes)
-    const ext = file.name.split('.').pop() ?? 'jpg'
-    const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-
-    const { error: uploadError } = await supabase.storage
-      .from('media')
-      .upload(path, buffer, { contentType: file.type })
-
-    if (uploadError) {
-      console.error('Erro ao fazer upload:', uploadError)
-      return NextResponse.json({ error: 'Falha ao fazer upload da imagem' }, { status: 500 })
-    }
-
-    const { data: { publicUrl } } = supabase.storage.from('media').getPublicUrl(path)
-
-    // Busca instance_name da conversa
     const { data: conv } = await supabase
       .from('conversations')
       .select('instance_name')
