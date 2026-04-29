@@ -25,6 +25,7 @@ import ConditionNode from './nodes/condition-node'
 import AiAssistantNode from './nodes/ai-assistant-node'
 import EndNode from './nodes/end-node'
 import NodeConfigPanel from './node-config-panel'
+import MessageEditorModal from './message-editor-modal'
 
 const nodeTypes = {
   start: StartNode,
@@ -312,14 +313,24 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
           />
         </ReactFlow>
 
-        {/* Config panel */}
-        {selectedNode && (
+        {/* Config panel — not shown for sendMessage (uses modal instead) */}
+        {selectedNode && selectedNode.type !== 'sendMessage' && (
           <NodeConfigPanel
             node={selectedNode as FlowNode}
             flowId={flow.id}
             instanceName={flow.instance_name}
             onChange={handleNodeDataChange}
             onClose={() => setSelectedNodeId(null)}
+          />
+        )}
+
+        {/* Message editor modal */}
+        {selectedNode?.type === 'sendMessage' && (
+          <MessageEditorModal
+            node={selectedNode as FlowNode}
+            onChange={handleNodeDataChange}
+            onClose={() => setSelectedNodeId(null)}
+            instanceName={flow.instance_name}
           />
         )}
 
