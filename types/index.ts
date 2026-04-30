@@ -139,3 +139,29 @@ export interface Flow {
 }
 
 export type FlowCreate = Omit<Flow, 'id' | 'created_at' | 'updated_at'>
+
+// ─── AI Sessions ──────────────────────────────────────────────────────────────
+
+export type HistoryTurn = { role: 'user' | 'assistant'; content: string }
+
+export interface AISession {
+  id: string
+  instance_name: string
+  remote_jid: string
+  flow_id: string
+  node_id: string
+  message_count: number
+  max_messages: number | null
+  expires_at: string | null
+  response_delay_ms: number
+  pending_message: string | null
+  pending_messages: string[]
+  history: HistoryTurn[]
+  last_message_at: string | null
+}
+
+export interface AISessionWithContext {
+  session: AISession
+  conversation: Conversation
+  flow_name: string | null
+}
