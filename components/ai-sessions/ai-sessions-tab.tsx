@@ -23,28 +23,29 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
     const res = await fetch(`/api/ai-sessions?instance=${encodeURIComponent(instanceName)}`)
     const json = await res.json()
     if (json.ok) {
-      setSessions(json.sessions as AISessionWithContext[])
-      // Clear selection if selected session no longer exists
-      if (selectedId) {
-        const stillExists = (json.sessions as AISessionWithContext[]).some((s) => s.session.id === selectedId)
-        if (!stillExists) setSelectedId(null)
-      }
+      const next = json.sessions as AISessionWithContext[]
+      setSessions(next)
+      setSelectedId((prev) => (prev && next.some((s) => s.session.id === prev) ? prev : null))
     }
     setLoading(false)
-  }, [instanceName, selectedId])
+  }, [instanceName])
 
   useEffect(() => {
     setLoading(true)
     loadSessions()
   }, [instanceName]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Realtime: sem filtro server-side para evitar falha em UPDATE com replica identity DEFAULT.
+  // Filtramos instance_name no client, igual ao padrão de page.tsx para conversations.
   useEffect(() => {
     const channel = supabase
       .channel(`ai_sessions_tab:${instanceName}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'ai_sessions', filter: `instance_name=eq.${instanceName}` },
-        () => {
+        { event: '*', schema: 'public', table: 'ai_sessions' },
+        (payload) => {
+          const record = (payload.new ?? payload.old ?? {}) as Record<string, unknown>
+          if (record.instance_name && record.instance_name !== instanceName) return
           if (timerRef.current) clearTimeout(timerRef.current)
           timerRef.current = setTimeout(() => loadSessions(), 300)
         }
@@ -56,6 +57,12 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
   }, [instanceName, loadSessions])
+
+  // Polling a cada 15s como fallback caso o realtime não esteja habilitado para ai_sessions
+  useEffect(() => {
+    const interval = setInterval(() => loadSessions(), 15000)
+    return () => clearInterval(interval)
+  }, [loadSessions])
 
   async function handleTerminate(id: string, message: string, useFlowMessage: boolean) {
     await fetch(`/api/ai-sessions/${id}/terminate`, {

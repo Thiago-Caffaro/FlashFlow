@@ -28,6 +28,7 @@ export interface Message {
   type: string
   direction: 'inbound' | 'outbound'
   status: string
+  sender_type: 'human' | 'ai' | 'flow' | null
   created_at: string
   sender_jid?: string | null
   sender_name?: string | null
