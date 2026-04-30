@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock } from '@/types'
+import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession } from '@/types'
 import { decrypt } from './ai-crypto'
 
 const supabase = createClient(
@@ -17,23 +17,6 @@ export interface FlowContext {
   incomingMessage: string
 }
 
-type HistoryTurn = { role: 'user' | 'assistant'; content: string }
-
-interface AISession {
-  id: string
-  instance_name: string
-  remote_jid: string
-  flow_id: string
-  node_id: string
-  message_count: number
-  max_messages: number | null
-  expires_at: string | null
-  response_delay_ms: number
-  pending_message: string | null
-  pending_messages: string[]
-  history: HistoryTurn[]
-  last_message_at: string | null
-}
 
 // ─── Logger ───────────────────────────────────────────────────────────────────
 
@@ -65,6 +48,7 @@ async function sendWhatsApp(ctx: FlowContext, text: string) {
     type: 'text',
     direction: 'outbound',
     status: 'sent',
+    sender_type: 'ai',
   })
 
   await supabase.from('conversations').update({
@@ -89,6 +73,7 @@ async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
     type: 'image',
     direction: 'outbound',
     status: 'sent',
+    sender_type: 'ai',
   })
 
   await supabase.from('conversations').update({
@@ -679,9 +664,11 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
 
       // If a message was already sent to the user earlier in this flow execution,
       // skip the immediate AI response and open a waiting session instead.
-      if (anyMessageSent && continueConv) {
-        log(`executeFlow aiAssistant: deferring — message already sent, opening waiting session`, { nodeId: node.id })
+      // continueConv=true  → session persists for multiple turns (uses configured timeout)
+      // continueConv=false → session responds exactly once (max_messages: 1) then terminates
+      if (anyMessageSent) {
         const { expires_at, max_messages } = sessionBase()
+        log(`executeFlow aiAssistant: deferring — message already sent, opening waiting session`, { nodeId: node.id, continueConv })
         await supabase.from('ai_sessions').upsert(
           {
             instance_name: ctx.instanceName,
@@ -691,7 +678,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
             message_count: 0,
             response_delay_ms: responseDelayMs,
             expires_at,
-            max_messages,
+            max_messages: continueConv ? max_messages : 1,
             pending_messages: [],
             pending_message: null,
             history: [],

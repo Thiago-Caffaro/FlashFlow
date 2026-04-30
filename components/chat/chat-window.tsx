@@ -140,6 +140,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       type: 'text',
       direction: 'outbound',
       status: 'sending',
+      sender_type: 'human',
       created_at: new Date().toISOString()
     }
 
@@ -179,6 +180,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       type: 'image',
       direction: 'outbound',
       status: 'sending',
+      sender_type: 'human',
       created_at: new Date().toISOString()
     }
 
