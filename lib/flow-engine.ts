@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession } from '@/types'
+import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession, SwitchCase } from '@/types'
 import { decrypt } from './ai-crypto'
 
 const supabase = createClient(
@@ -390,30 +390,33 @@ export async function checkActiveSession(instanceName: string, remoteJid: string
     return null
   }
 
-  const INACTIVITY_MS = 60 * 60 * 1000 // 1 hour
+  const INACTIVITY_MS = 24 * 60 * 60 * 1000 // 24 hours
   const lastMsgAt = data.last_message_at ? new Date(data.last_message_at).getTime() : 0
   if (lastMsgAt > 0 && Date.now() - lastMsgAt > INACTIVITY_MS) {
     log(`session expired by inactivity`, { id: data.id, remoteJid, idleMs: Date.now() - lastMsgAt })
     await supabase.from('ai_sessions').delete().eq('id', data.id)
 
-    // Load node config to get the inactivity message
-    const { data: flow } = await supabase.from('flows').select('json').eq('id', data.flow_id).single()
-    const node = (flow?.json?.nodes as FlowNode[] | undefined)?.find((n) => n.id === data.node_id)
-    const inactivityMsg = ((node?.data?.inactivityMessage as string | undefined) ?? '').trim() || 'Sessão finalizada'
-
-    // Look up conversation_id
-    const { data: conv } = await supabase
-      .from('conversations')
-      .select('id')
+    // Send inactivity message from global config if set
+    const { data: aiCfg } = await supabase
+      .from('instance_ai_config')
+      .select('inactivity_message')
       .eq('instance_name', instanceName)
-      .eq('wa_id', remoteJid)
       .maybeSingle()
+    const inactivityMsg = ((aiCfg?.inactivity_message as string | null) ?? '').trim()
 
-    if (conv?.id) {
-      await sendWhatsApp(
-        { instanceName, remoteJid, conversationId: conv.id, incomingMessage: '' },
-        inactivityMsg
-      )
+    if (inactivityMsg) {
+      const { data: conv } = await supabase
+        .from('conversations')
+        .select('id')
+        .eq('instance_name', instanceName)
+        .eq('wa_id', remoteJid)
+        .maybeSingle()
+      if (conv?.id) {
+        await sendWhatsApp(
+          { instanceName, remoteJid, conversationId: conv.id, incomingMessage: '' },
+          inactivityMsg
+        )
+      }
     }
 
     return null
@@ -502,8 +505,15 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
       const baseSystemPrompt = (node.data.systemPrompt as string) ?? ''
       const temperature = (node.data.temperature as number) ?? 0.7
       const memoryBlockIds = (node.data.memoryBlockIds as string[] | undefined) ?? []
-      const historyLimit = (node.data.historyLimit as number | undefined) ?? 10
       const maxTokens = (node.data.maxTokens as number | undefined) || undefined
+
+      // Read historyLimit from global config
+      const { data: aiCfgRow } = await supabase
+        .from('instance_ai_config')
+        .select('history_limit')
+        .eq('instance_name', ctx.instanceName)
+        .maybeSingle()
+      const historyLimit = (aiCfgRow?.history_limit as number | null) ?? 20
 
       // Trim history to the last N exchanges (each exchange = 1 user + 1 assistant turn)
       const rawHistory = (latest.history as HistoryTurn[] | undefined) ?? []
@@ -583,6 +593,21 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
   const edges: FlowEdge[] = flow.json?.edges ?? []
   const nodeMap = new Map(nodes.map((n) => [n.id, n]))
 
+  // Load global AI config for this instance (falls back to defaults if not set)
+  const { data: aiCfgRow } = await supabase
+    .from('instance_ai_config')
+    .select('history_limit, timeout_minutes_enabled, timeout_minutes, timeout_messages_enabled, timeout_messages, response_delay_ms')
+    .eq('instance_name', ctx.instanceName)
+    .maybeSingle()
+  const globalAiCfg = {
+    historyLimit:            (aiCfgRow?.history_limit             as number | null)  ?? 20,
+    timeoutMinutesEnabled:   (aiCfgRow?.timeout_minutes_enabled   as boolean | null) ?? true,
+    timeoutMinutes:          (aiCfgRow?.timeout_minutes           as number | null)  ?? 360,
+    timeoutMessagesEnabled:  (aiCfgRow?.timeout_messages_enabled  as boolean | null) ?? false,
+    timeoutMessages:         (aiCfgRow?.timeout_messages          as number | null)  ?? 50,
+    responseDelayMs:         (aiCfgRow?.response_delay_ms         as number | null)  ?? 5000,
+  }
+
   log(`executeFlow loaded`, { flowId, nodeCount: nodes.length, edgeCount: edges.length })
 
   const startNode = nodes.find((n) => n.type === 'start')
@@ -640,6 +665,21 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
       continue
     }
 
+    if (node.type === 'switchCase') {
+      const cases = (node.data.cases ?? []) as SwitchCase[]
+      const content = ctx.incomingMessage.toLowerCase()
+      let handle = 'default'
+      for (let i = 0; i < cases.length; i++) {
+        const val = (cases[i].value ?? '').trim().toLowerCase()
+        const matched =
+          cases[i].conditionType === 'exact' ? content === val : content.includes(val)
+        if (matched) { handle = `case-${i}`; break }
+      }
+      log(`executeFlow switchCase`, { handle, casesCount: cases.length })
+      currentId = nextNodeId(edges, currentId, handle)
+      continue
+    }
+
     if (node.type === 'aiAssistant') {
       const provider: AIProvider = (node.data.provider as AIProvider) ?? 'gemini'
       const model = (node.data.model as string) ?? 'gemini-2.5-flash'
@@ -648,17 +688,14 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
       const temperature = (node.data.temperature as number) ?? 0.7
       const continueConv = node.data.continueConversation
       const memoryBlockIds = (node.data.memoryBlockIds as string[] | undefined) ?? []
-      const timeoutType = node.data.timeoutType as 'minutes' | 'messages' | undefined
-      const timeoutValue = node.data.timeoutValue as number | undefined
-      const responseDelayMs = (node.data.responseDelayMs as number | undefined) ?? 5000
+      // Use global AI config for timeout and delay
+      const { timeoutMinutesEnabled, timeoutMinutes, timeoutMessagesEnabled, timeoutMessages, responseDelayMs } = globalAiCfg
 
       const sessionBase = () => {
-        let expires_at: string | null = null
-        let max_messages: number | null = null
-        if (timeoutType === 'minutes' && timeoutValue)
-          expires_at = new Date(Date.now() + timeoutValue * 60 * 1000).toISOString()
-        else if (timeoutType === 'messages' && timeoutValue)
-          max_messages = timeoutValue
+        const expires_at = timeoutMinutesEnabled && timeoutMinutes
+          ? new Date(Date.now() + timeoutMinutes * 60 * 1000).toISOString()
+          : null
+        const max_messages = timeoutMessagesEnabled && timeoutMessages ? timeoutMessages : null
         return { expires_at, max_messages }
       }
 
@@ -714,7 +751,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
 
       if (continueConv && reply.trim()) {
         const { expires_at, max_messages } = sessionBase()
-        log(`executeFlow: opening AI session`, { nodeId: node.id, timeoutType, timeoutValue, responseDelayMs })
+        log(`executeFlow: opening AI session`, { nodeId: node.id, timeoutMinutes, timeoutMessages, responseDelayMs })
         await supabase.from('ai_sessions').upsert(
           {
             instance_name: ctx.instanceName,
