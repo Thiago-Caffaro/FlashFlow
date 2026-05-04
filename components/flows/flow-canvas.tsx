@@ -18,10 +18,12 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { ArrowLeft, Save, Plus, Trash2, Copy, Lock } from 'lucide-react'
-import { Flow, FlowNode, FlowEdge, FlowNodeData, FlowNodeType } from '@/types'
+import { Flow, FlowNode, FlowEdge, FlowNodeData, FlowNodeType, SwitchCase } from '@/types'
+import { FEATURES } from '@/lib/features'
 import StartNode from './nodes/start-node'
 import SendMessageNode from './nodes/send-message-node'
 import ConditionNode from './nodes/condition-node'
+import SwitchCaseNode from './nodes/switch-case-node'
 import AiAssistantNode from './nodes/ai-assistant-node'
 import EndNode from './nodes/end-node'
 import NodeConfigPanel from './node-config-panel'
@@ -31,16 +33,20 @@ const nodeTypes = {
   start: StartNode,
   sendMessage: SendMessageNode,
   condition: ConditionNode,
+  switchCase: SwitchCaseNode,
   aiAssistant: AiAssistantNode,
   end: EndNode,
 }
 
-const NODE_PALETTE: { type: FlowNodeType; label: string; color: string }[] = [
-  { type: 'sendMessage', label: 'Enviar Msg',  color: '#00a884' },
-  { type: 'condition',   label: 'Condição',    color: '#f59e0b' },
-  { type: 'aiAssistant', label: 'IA (Gemini)', color: '#8b5cf6' },
-  { type: 'end',         label: 'Fim',         color: '#f87171' },
+const BASE_PALETTE: { type: FlowNodeType; label: string; color: string }[] = [
+  { type: 'sendMessage', label: 'Enviar Msg',   color: '#00a884' },
+  { type: 'condition',   label: 'Condição',     color: '#f59e0b' },
+  { type: 'aiAssistant', label: 'IA (Gemini)',  color: '#8b5cf6' },
+  { type: 'end',         label: 'Fim',          color: '#f87171' },
 ]
+
+const SWITCH_CASE_ITEM: { type: FlowNodeType; label: string; color: string } =
+  { type: 'switchCase', label: 'Switch Case', color: '#3b82f6' }
 
 interface ContextMenu {
   x: number
@@ -98,10 +104,17 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
 
   const onConnect = useCallback(
     (params: Connection) => {
-      // Start node may only have one outgoing connection
+      // Start node: only one outgoing connection
       if (params.source === 'start') {
         const alreadyConnected = edges.some((e) => e.source === 'start')
         if (alreadyConnected) return
+      }
+      // Per-handle restriction: each sourceHandle can only connect once
+      if (params.sourceHandle) {
+        const taken = edges.some(
+          (e) => e.source === params.source && e.sourceHandle === params.sourceHandle
+        )
+        if (taken) return
       }
       setEdges((eds) => addEdge(params, eds))
     },
@@ -181,6 +194,16 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
     setNodes((nds) =>
       nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...data } } : n))
     )
+    // When cases change on a switchCase node, remove edges referencing deleted handles
+    if (data.cases !== undefined) {
+      const validHandles = new Set([
+        ...(data.cases as SwitchCase[]).map((_, i) => `case-${i}`),
+        'default',
+      ])
+      setEdges((eds) =>
+        eds.filter((e) => e.source !== id || !e.sourceHandle || validHandles.has(e.sourceHandle))
+      )
+    }
   }
 
   function addNode(type: FlowNodeType) {
@@ -190,6 +213,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
       start:        {},
       sendMessage:  { message: '' },
       condition:    { conditionType: 'contains', conditionValue: '' },
+      switchCase:   { cases: [] },
       aiAssistant:  { systemPrompt: '', historyLimit: 10, temperature: 0.7, model: 'gemini-2.5-flash' },
       end:          {},
     }
@@ -245,7 +269,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
             Adicionar nó
           </span>
           <div className="w-px h-5 bg-[#f0f2f5] dark:bg-[#2a3942]" />
-          {NODE_PALETTE.map((item) => (
+          {[...BASE_PALETTE, ...(FEATURES.switchCase ? [SWITCH_CASE_ITEM] : [])].map((item) => (
             <button
               key={item.type}
               onClick={() => addNode(item.type)}
@@ -389,7 +413,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
                 <p className="px-4 py-2 text-[11px] font-semibold text-[#aebac1] dark:text-[#667781] uppercase tracking-wide">
                   Adicionar nó
                 </p>
-                {NODE_PALETTE.map((item) => (
+                {[...BASE_PALETTE, ...(FEATURES.switchCase ? [SWITCH_CASE_ITEM] : [])].map((item) => (
                   <button
                     key={item.type}
                     onClick={() => { addNode(item.type); setContextMenu(null) }}

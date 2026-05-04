@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { X, Zap, AlertCircle, CheckCircle, BookOpen, Plus, Tag } from 'lucide-react'
-import { FlowNode, FlowNodeData, Trigger, AIProvider, AgentMemoryBlock } from '@/types'
+import { X, Zap, AlertCircle, CheckCircle, BookOpen, Plus, Tag, Info, Trash2, Shuffle } from 'lucide-react'
+import { FlowNode, FlowNodeData, Trigger, AIProvider, AgentMemoryBlock, SwitchCase } from '@/types'
 
 // ─── Models per provider ──────────────────────────────────────────────────────
 
@@ -110,31 +110,18 @@ function AiAssistantConfig({
         />
       </div>
 
-      {/* History + Temperature */}
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className={labelClass}>Histórico (msgs)</label>
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={data.historyLimit ?? 10}
-            onChange={(e) => onChange(node.id, { historyLimit: Number(e.target.value) })}
-            className={inputClass}
-          />
-        </div>
-        <div>
-          <label className={labelClass}>Temperatura</label>
-          <input
-            type="number"
-            min={0}
-            max={1}
-            step={0.1}
-            value={data.temperature ?? 0.7}
-            onChange={(e) => onChange(node.id, { temperature: Number(e.target.value) })}
-            className={inputClass}
-          />
-        </div>
+      {/* Temperature */}
+      <div>
+        <label className={labelClass}>Temperatura</label>
+        <input
+          type="number"
+          min={0}
+          max={1}
+          step={0.1}
+          value={data.temperature ?? 0.7}
+          onChange={(e) => onChange(node.id, { temperature: Number(e.target.value) })}
+          className={inputClass}
+        />
       </div>
 
       {/* Max tokens */}
@@ -267,67 +254,9 @@ function AiAssistantConfig({
         </label>
 
         {data.continueConversation && (
-          <div className="mt-4 space-y-4 pl-3 border-l-2 border-[#00a884]/30">
-            {/* Timeout */}
-            <div>
-              <label className={labelClass}>Tempo limite de atendimento</label>
-              <div className="flex gap-2">
-                <select
-                  value={data.timeoutType ?? 'minutes'}
-                  onChange={(e) => onChange(node.id, { timeoutType: e.target.value as 'minutes' | 'messages' })}
-                  className={inputClass + ' flex-1'}
-                >
-                  <option value="minutes">Minutos</option>
-                  <option value="messages">Mensagens</option>
-                </select>
-                <input
-                  type="number"
-                  min={1}
-                  value={data.timeoutValue ?? 30}
-                  onChange={(e) => onChange(node.id, { timeoutValue: Number(e.target.value) })}
-                  className={inputClass + ' w-24 shrink-0'}
-                />
-              </div>
-              <p className="text-xs text-[#aebac1] dark:text-[#667781] mt-1.5">
-                {(data.timeoutType ?? 'minutes') === 'messages'
-                  ? 'Encerra a sessão após esse número de respostas'
-                  : 'Encerra a sessão após esse tempo sem novo trigger'}
-              </p>
-            </div>
-
-            {/* Response Delay */}
-            <div>
-              <label className={labelClass}>Delay da resposta</label>
-              <select
-                value={data.responseDelayMs ?? 5000}
-                onChange={(e) => onChange(node.id, { responseDelayMs: Number(e.target.value) })}
-                className={inputClass}
-              >
-                <option value={2000}>2 segundos (mínimo)</option>
-                <option value={5000}>5 segundos (padrão)</option>
-                <option value={10000}>10 segundos</option>
-                <option value={15000}>15 segundos</option>
-              </select>
-              <p className="text-xs text-[#aebac1] dark:text-[#667781] mt-1.5">
-                Aguarda esse tempo após a última mensagem antes de responder — evita múltiplas respostas para mensagens enviadas em sequência
-              </p>
-            </div>
-
-            {/* Inactivity timeout */}
-            <div className="pt-1 border-t border-[#f0f2f5] dark:border-[#2a3942]">
-              <p className="text-xs text-[#aebac1] dark:text-[#667781] mb-3">
-                Sessões sem novas mensagens são encerradas automaticamente após <strong className="text-[#667781] dark:text-[#8696a0]">1 hora</strong> de inatividade.
-              </p>
-              <label className={labelClass}>Mensagem de encerramento por inatividade</label>
-              <input
-                type="text"
-                value={(data.inactivityMessage as string | undefined) ?? ''}
-                onChange={(e) => onChange(node.id, { inactivityMessage: e.target.value })}
-                placeholder="Sessão finalizada"
-                className={inputClass}
-              />
-            </div>
-          </div>
+          <p className="text-xs text-[#aebac1] dark:text-[#667781] mt-3 pl-3 border-l-2 border-[#00a884]/30">
+            Tempo limite, delay e mensagem de encerramento configurados em <strong className="text-[#667781] dark:text-[#8696a0]">Conf. Gerais</strong>.
+          </p>
         )}
       </div>
     </>
@@ -457,6 +386,99 @@ function StartNodePanel({
   )
 }
 
+// ─── Switch Case config sub-component ────────────────────────────────────────
+
+function SwitchCaseConfig({
+  node,
+  onChange,
+}: {
+  node: FlowNode
+  onChange: (id: string, data: Partial<FlowNodeData>) => void
+}) {
+  const cases = ((node.data.cases ?? []) as SwitchCase[])
+
+  function updateCases(next: SwitchCase[]) {
+    onChange(node.id, { cases: next })
+  }
+
+  function addCase() {
+    updateCases([
+      ...cases,
+      { id: crypto.randomUUID(), conditionType: 'contains', value: '' },
+    ])
+  }
+
+  function removeCase(id: string) {
+    updateCases(cases.filter((c) => c.id !== id))
+  }
+
+  function updateCase(id: string, patch: Partial<SwitchCase>) {
+    updateCases(cases.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+  }
+
+  return (
+    <>
+      <div className="flex items-start gap-2 p-3 rounded-xl bg-[#f0f2f5] dark:bg-[#2a3942]">
+        <Info size={13} className="text-[#667781] mt-0.5 shrink-0" />
+        <p className="text-xs text-[#667781] leading-relaxed">
+          Compara a <strong className="text-[#111b21] dark:text-[#e9edef]">mensagem inicial</strong> do cliente com cada Case em ordem. O primeiro que bater é seguido.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {cases.length === 0 && (
+          <p className="text-xs text-[#aebac1] dark:text-[#667781] italic">Nenhum case adicionado.</p>
+        )}
+        {cases.map((c, i) => (
+          <div key={c.id} className="rounded-xl border border-[#d1d7db] dark:border-[#3d4f5a] overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 bg-[#f0f2f5] dark:bg-[#2a3942]">
+              <div className="flex items-center gap-1.5">
+                <Shuffle size={11} className="text-[#3b82f6]" />
+                <span className="text-[11px] font-semibold text-[#3b82f6]">Case {i + 1}</span>
+              </div>
+              <button
+                onClick={() => removeCase(c.id)}
+                className="p-1 rounded text-[#aebac1] hover:text-red-400 transition-colors"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+            <div className="p-3 space-y-2">
+              <select
+                value={c.conditionType}
+                onChange={(e) => updateCase(c.id, { conditionType: e.target.value as 'contains' | 'exact' })}
+                className={inputClass}
+              >
+                <option value="contains">Contém</option>
+                <option value="exact">Igual a (texto exato)</option>
+              </select>
+              <input
+                type="text"
+                value={c.value}
+                onChange={(e) => updateCase(c.id, { value: e.target.value })}
+                placeholder="Valor a comparar..."
+                className={inputClass}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={addCase}
+        className="flex items-center gap-2 w-full justify-center py-2.5 rounded-xl border-2 border-dashed border-[#3b82f6]/40 text-[#3b82f6] text-sm font-semibold hover:border-[#3b82f6]/80 hover:bg-[#3b82f6]/5 transition-colors"
+      >
+        <Plus size={15} />
+        Adicionar Case
+      </button>
+
+      <p className="text-xs text-[#aebac1] dark:text-[#667781] leading-relaxed">
+        O caminho <strong className="text-[#9ca3af]">Default</strong> é seguido quando nenhum Case corresponde.
+      </p>
+    </>
+  )
+}
+
 // ─── Main panel ───────────────────────────────────────────────────────────────
 
 export default function NodeConfigPanel({ node, flowId, instanceName, onChange, onClose }: Props) {
@@ -467,6 +489,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
     end:          'Fim do Fluxo',
     sendMessage:  'Enviar Mensagem',
     condition:    'Condição',
+    switchCase:   'Switch Case',
     aiAssistant:  'IA Assistente',
   }
 
@@ -505,6 +528,12 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
 
         {type === 'condition' && (
           <>
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-[#f0f2f5] dark:bg-[#2a3942]">
+              <Info size={13} className="text-[#667781] mt-0.5 shrink-0" />
+              <p className="text-xs text-[#667781] leading-relaxed">
+                Este nó compara a <strong className="text-[#111b21] dark:text-[#e9edef]">mensagem inicial</strong> enviada pelo cliente com o valor abaixo.
+              </p>
+            </div>
             <div>
               <label className={labelClass}>Tipo de comparação</label>
               <select
@@ -513,7 +542,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
                 className={inputClass}
               >
                 <option value="contains">Contém</option>
-                <option value="exact">Igual a</option>
+                <option value="exact">Igual a (texto exato)</option>
               </select>
             </div>
             <div>
@@ -527,9 +556,13 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
               />
             </div>
             <p className="text-xs text-[#aebac1] dark:text-[#667781]">
-              Saída <span className="text-[#00a884] font-semibold">Sim</span> = verdadeiro &nbsp;·&nbsp; Saída <span className="text-red-400 font-semibold">Não</span> = falso
+              Saída <span className="text-[#00a884] font-semibold">Sim</span> = condição verdadeira &nbsp;·&nbsp; Saída <span className="text-red-400 font-semibold">Não</span> = falsa
             </p>
           </>
+        )}
+
+        {type === 'switchCase' && (
+          <SwitchCaseConfig node={node} onChange={onChange} />
         )}
 
         {type === 'aiAssistant' && (

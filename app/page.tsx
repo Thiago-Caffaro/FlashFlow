@@ -8,6 +8,7 @@ import ChatWindow from '@/components/chat/chat-window'
 import TriggersTab from '@/components/sidebar-right/triggers-tab'
 import FlowsTab from '@/components/flows/flows-tab'
 import AiSettingsTab from '@/components/settings/ai-settings-tab'
+import GeneralSettingsTab from '@/components/settings/general-settings-tab'
 import MemoryTab from '@/components/memory/memory-tab'
 import GalleryTab from '@/components/gallery/gallery-tab'
 import AiSessionsTab from '@/components/ai-sessions/ai-sessions-tab'
@@ -16,7 +17,7 @@ import { AccountProvider, useAccount } from '@/contexts/account-context'
 import { ThemeProvider } from '@/contexts/theme-context'
 import { FEATURES } from '@/lib/features'
 
-const TAB_INDEX: Record<View, number> = { chat: 0, gatilhos: 1, fluxos: 2, memoria: 3, galeria: 4, 'sessoes-ia': 5, ia: 6 }
+const TAB_INDEX: Record<View, number> = { chat: 0, gatilhos: 1, fluxos: 2, memoria: 3, galeria: 4, 'sessoes-ia': 5, ia: 6, 'conf-gerais': 7 }
 
 function ChatApp() {
   const { activeAccount } = useAccount()
@@ -215,6 +216,24 @@ function ChatApp() {
           }}
         >
           <AiSettingsTab />
+        </div>
+
+        {/* Panel 7: Conf. Gerais */}
+        <div
+          className="absolute inset-0"
+          style={{
+            transform: `translateY(${(7 - tabIndex) * 100}%)`,
+            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
+            willChange: 'transform',
+          }}
+        >
+          {activeAccount?.instanceName ? (
+            <GeneralSettingsTab instanceName={activeAccount.instanceName} />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
+            </div>
+          )}
         </div>
       </div>
 

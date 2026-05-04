@@ -54,7 +54,13 @@ export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>
 
 // ─── Flows ────────────────────────────────────────────────────────────────────
 
-export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'aiAssistant' | 'end'
+export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'switchCase' | 'aiAssistant' | 'end'
+
+export interface SwitchCase {
+  id: string
+  conditionType: 'contains' | 'exact'
+  value: string
+}
 
 export interface FlowImage {
   id: string
@@ -94,6 +100,8 @@ export interface FlowNodeData {
   // condition
   conditionType?: 'contains' | 'exact'
   conditionValue?: string
+  // switchCase
+  cases?: SwitchCase[]
   // aiAssistant
   systemPrompt?: string
   historyLimit?: number
