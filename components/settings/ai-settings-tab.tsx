@@ -1,10 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Eye, EyeOff, CheckCircle, XCircle, Loader2, Trash2, Save, Zap, Bot, Radio } from 'lucide-react'
+import { Eye, EyeOff, CheckCircle, XCircle, Loader2, Trash2, Save, Zap, Bot, Radio, Wrench } from 'lucide-react'
 
 type Provider = 'gemini' | 'openai' | 'openrouter'
 type TestState = 'idle' | 'testing' | 'ok' | 'error'
+type ModelCheckState = 'idle' | 'checking'
+
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro']
+const OPENAI_MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo']
 
 interface ProviderInfo {
   id: Provider
@@ -15,7 +19,8 @@ interface ProviderInfo {
   keyPlaceholder: string
   keyPrefix: string
   docsUrl: string
-  hasCustomModel: boolean
+  modelOptions?: string[]
+  defaultModel: string
 }
 
 const PROVIDERS: ProviderInfo[] = [
@@ -28,7 +33,8 @@ const PROVIDERS: ProviderInfo[] = [
     keyPlaceholder: 'AIzaSy...',
     keyPrefix: 'AIzaSy',
     docsUrl: 'https://aistudio.google.com/app/apikey',
-    hasCustomModel: false,
+    modelOptions: GEMINI_MODELS,
+    defaultModel: 'gemini-2.5-flash',
   },
   {
     id: 'openai',
@@ -39,7 +45,8 @@ const PROVIDERS: ProviderInfo[] = [
     keyPlaceholder: 'sk-proj-...',
     keyPrefix: 'sk-',
     docsUrl: 'https://platform.openai.com/api-keys',
-    hasCustomModel: false,
+    modelOptions: OPENAI_MODELS,
+    defaultModel: 'gpt-4o',
   },
   {
     id: 'openrouter',
@@ -50,12 +57,45 @@ const PROVIDERS: ProviderInfo[] = [
     keyPlaceholder: 'sk-or-v1-...',
     keyPrefix: 'sk-or-',
     docsUrl: 'https://openrouter.ai/keys',
-    hasCustomModel: true,
+    modelOptions: undefined,
+    defaultModel: 'openai/gpt-4o-mini',
   },
 ]
 
 interface ConfiguredState {
-  [provider: string]: { custom_model?: string; updated_at: string } | undefined
+  [provider: string]: { custom_model?: string; tools_supported?: boolean | null; updated_at: string } | undefined
+}
+
+function ToolsSupportedBadge({ value, checking }: { value?: boolean | null; checking: boolean }) {
+  if (checking) {
+    return (
+      <span className="flex items-center gap-1 text-[11px] font-medium text-[#667781] dark:text-[#8696a0]">
+        <Loader2 size={10} className="animate-spin" />
+        Verificando tools...
+      </span>
+    )
+  }
+  if (value === true) {
+    return (
+      <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full">
+        <Wrench size={10} />
+        Function Calling ✓
+      </span>
+    )
+  }
+  if (value === false) {
+    return (
+      <span className="flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-full">
+        <Wrench size={10} />
+        Sinal de texto (model sem suporte a tools)
+      </span>
+    )
+  }
+  return (
+    <span className="text-[11px] text-[#aebac1] dark:text-[#667781]">
+      Tools: não verificado
+    </span>
+  )
 }
 
 // ─── Individual provider card ─────────────────────────────────────────────────
@@ -65,19 +105,27 @@ function ProviderCard({
   configured,
   onSaved,
   onRemoved,
+  onToolsSupported,
 }: {
   info: ProviderInfo
-  configured?: { custom_model?: string; updated_at: string }
-  onSaved: () => void
+  configured?: { custom_model?: string; tools_supported?: boolean | null; updated_at: string }
+  onSaved: (toolsSupported: boolean | null) => void
   onRemoved: () => void
+  onToolsSupported: (v: boolean | null) => void
 }) {
   const [key, setKey] = useState('')
-  const [customModel, setCustomModel] = useState(configured?.custom_model ?? '')
+  const [customModel, setCustomModel] = useState(
+    configured?.custom_model ?? info.defaultModel
+  )
   const [showKey, setShowKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [testState, setTestState] = useState<TestState>('idle')
   const [testMsg, setTestMsg] = useState('')
+  const [modelCheckState, setModelCheckState] = useState<ModelCheckState>('idle')
+  const [localToolsSupported, setLocalToolsSupported] = useState<boolean | null | undefined>(
+    configured?.tools_supported
+  )
 
   const isSaved = !!configured
 
@@ -93,7 +141,13 @@ function ProviderCard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: key.trim(), customModel: customModel.trim() || undefined }),
       })
-      if (res.ok) { setKey(''); onSaved() }
+      const json = await res.json()
+      if (res.ok) {
+        setKey('')
+        const ts = json.tools_supported ?? null
+        setLocalToolsSupported(ts)
+        onSaved(ts)
+      }
     } finally {
       setSaving(false)
     }
@@ -103,7 +157,7 @@ function ProviderCard({
     setRemoving(true)
     try {
       const res = await fetch(`/api/ai-keys/${info.id}`, { method: 'DELETE' })
-      if (res.ok) { setKey(''); setCustomModel(''); onRemoved() }
+      if (res.ok) { setKey(''); setCustomModel(info.defaultModel); setLocalToolsSupported(undefined); onRemoved() }
     } finally {
       setRemoving(false)
     }
@@ -118,6 +172,9 @@ function ProviderCard({
       if (json.ok) {
         setTestState('ok')
         setTestMsg(`Conexão OK · ${json.latency_ms}ms · ${json.model_used}`)
+        const ts = json.tools_supported ?? null
+        setLocalToolsSupported(ts)
+        onToolsSupported(ts)
       } else {
         setTestState('error')
         setTestMsg(json.error ?? 'Erro desconhecido')
@@ -127,6 +184,27 @@ function ProviderCard({
       setTestMsg('Erro de rede')
     }
     setTimeout(() => setTestState('idle'), 8000)
+  }
+
+  async function handleModelChange(model: string) {
+    setCustomModel(model)
+    if (!isSaved) return
+    setModelCheckState('checking')
+    try {
+      const res = await fetch(`/api/ai-keys/${info.id}/model`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      })
+      const json = await res.json()
+      if (json.ok) {
+        const ts = json.tools_supported ?? null
+        setLocalToolsSupported(ts)
+        onToolsSupported(ts)
+      }
+    } finally {
+      setModelCheckState('idle')
+    }
   }
 
   return (
@@ -181,24 +259,39 @@ function ProviderCard({
           </div>
         </div>
 
-        {/* Custom model (OpenRouter) */}
-        {info.hasCustomModel && (
-          <div>
-            <label className="text-[11px] font-semibold text-[#667781] dark:text-[#8696a0] uppercase tracking-wide mb-1.5 block">
-              Modelo padrão
-            </label>
+        {/* Default model selector */}
+        <div>
+          <label className="text-[11px] font-semibold text-[#667781] dark:text-[#8696a0] uppercase tracking-wide mb-1.5 block">
+            Modelo padrão
+          </label>
+          {info.modelOptions ? (
+            <select
+              value={customModel}
+              onChange={(e) => handleModelChange(e.target.value)}
+              className={inputClass + ' w-full cursor-pointer font-sans'}
+              disabled={!isSaved && !key.trim()}
+            >
+              {info.modelOptions.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          ) : (
             <input
               type="text"
               value={customModel}
               onChange={(e) => setCustomModel(e.target.value)}
-              placeholder="ex: mistral/mistral-7b-instruct"
+              onBlur={(e) => { if (e.target.value.trim() !== (configured?.custom_model ?? '')) handleModelChange(e.target.value.trim()) }}
+              placeholder={`ex: ${info.defaultModel}`}
               className={inputClass + ' w-full font-mono'}
             />
-            <p className="text-[10px] text-[#aebac1] dark:text-[#667781] mt-1">
-              Usado para testar a conexão e como padrão nos nós sem modelo definido.
-            </p>
+          )}
+          <div className="mt-1.5">
+            <ToolsSupportedBadge
+              value={localToolsSupported}
+              checking={modelCheckState === 'checking'}
+            />
           </div>
-        )}
+        </div>
 
         {/* Test result banner */}
         {testState === 'ok' && (
@@ -274,6 +367,13 @@ export default function AiSettingsTab() {
 
   useEffect(() => { fetchConfigured() }, [])
 
+  function updateToolsSupported(provider: string, ts: boolean | null) {
+    setConfigured((prev) => ({
+      ...prev,
+      [provider]: prev[provider] ? { ...prev[provider]!, tools_supported: ts } : undefined,
+    }))
+  }
+
   return (
     <div className="flex flex-col h-full overflow-y-auto bg-[#f8f9fa] dark:bg-[#0b141a]">
       {/* Header */}
@@ -296,8 +396,12 @@ export default function AiSettingsTab() {
               key={info.id}
               info={info}
               configured={configured[info.id]}
-              onSaved={fetchConfigured}
+              onSaved={(ts) => {
+                fetchConfigured()
+                updateToolsSupported(info.id, ts)
+              }}
               onRemoved={fetchConfigured}
+              onToolsSupported={(ts) => updateToolsSupported(info.id, ts)}
             />
           ))
         )}

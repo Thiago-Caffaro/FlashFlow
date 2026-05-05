@@ -12,16 +12,16 @@ const supabaseAdmin = createClient(
 export async function GET() {
   const { data, error } = await supabaseAdmin
     .from('ai_provider_keys')
-    .select('provider, custom_model, updated_at')
+    .select('provider, custom_model, tools_supported, updated_at')
 
   if (error) {
     console.error('[ai-keys GET] Supabase error:', error.message, error.code)
     return NextResponse.json({ ok: false, configured: [], error: error.message }, { status: 500 })
   }
 
-  const configured: Record<string, { custom_model?: string; updated_at: string }> = {}
+  const configured: Record<string, { custom_model?: string; tools_supported?: boolean | null; updated_at: string }> = {}
   for (const row of data ?? []) {
-    configured[row.provider] = { custom_model: row.custom_model, updated_at: row.updated_at }
+    configured[row.provider] = { custom_model: row.custom_model, tools_supported: row.tools_supported, updated_at: row.updated_at }
   }
 
   return NextResponse.json({ ok: true, configured })
