@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession, SwitchCase } from '@/types'
+import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession, SwitchCase, FlowNodeData } from '@/types'
 import { decrypt } from './ai-crypto'
 
 const supabase = createClient(
@@ -111,6 +111,13 @@ async function buildMemoryPrompt(blockIds: string[], userMessage: string): Promi
 
 // ─── AI call with full logging ────────────────────────────────────────────────
 
+const ESCALATION_TOOL_NAME = 'solicitar_atendimento_humano'
+
+const DEFAULT_ESCALATION_PROMPT = `\n\n[Instrução interna do sistema — NUNCA mencione ao cliente]: Quando você não souber responder, não tiver informações suficientes, ou o cliente solicitar falar com um humano/atendente, utilize a ferramenta '${ESCALATION_TOOL_NAME}'. Um operador será notificado.`
+
+// Signal used as text fallback for OpenRouter models that don't support function calling
+const ESCALATION_SIGNAL = '[[ATENDIMENTO_HUMANO]]'
+
 async function callAI(
   provider: AIProvider,
   model: string,
@@ -119,8 +126,9 @@ async function callAI(
   userMessage: string,
   temperature: number,
   history: HistoryTurn[] = [],
-  maxTokens?: number
-): Promise<string> {
+  maxTokens?: number,
+  withEscalation = false
+): Promise<{ reply: string; requiresHuman: boolean }> {
   const safeTemp = isNaN(temperature) ? 0.7 : temperature
 
   log(`callAI start`, {
@@ -130,6 +138,7 @@ async function callAI(
     systemPromptLength: systemPrompt.length,
     userMessageLength: userMessage.length,
     temperature: safeTemp,
+    withEscalation,
   })
 
   // ── Fetch API key ──
@@ -170,10 +179,26 @@ async function callAI(
       role: h.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: h.content }],
     }))
-    const requestBody = {
+    const requestBody: Record<string, unknown> = {
       ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
       contents: [...historyContents, { role: 'user', parts: [{ text: userMessage }] }],
       generationConfig: { temperature: safeTemp, ...(maxTokens ? { maxOutputTokens: maxTokens } : {}) },
+    }
+
+    if (withEscalation) {
+      requestBody.tools = [{
+        functionDeclarations: [{
+          name: ESCALATION_TOOL_NAME,
+          description: 'Call this function when you cannot answer the user\'s question, lack sufficient information, or the client explicitly requests to speak with a human agent.',
+          parameters: {
+            type: 'OBJECT',
+            properties: {
+              motivo: { type: 'STRING', description: 'Brief reason for escalation' },
+            },
+          },
+        }],
+      }]
+      requestBody.tool_config = { function_calling_config: { mode: 'AUTO' } }
     }
 
     log(`callAI gemini request`, {
@@ -181,6 +206,7 @@ async function callAI(
       apiVersion,
       url: `https://generativelanguage.googleapis.com/${apiVersion}/models/${actualModel}:generateContent?key=[REDACTED]`,
       hasSystemInstruction: !!systemPrompt,
+      withEscalation,
     })
 
     const res = await fetch(
@@ -207,14 +233,18 @@ async function callAI(
       throw new Error(`Gemini API error: ${msg}`)
     }
 
-    const reply: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-    log(`callAI gemini reply`, { replyLength: reply.length, empty: reply.length === 0, preview: reply.slice(0, 100) })
+    type GeminiPart = { text?: string; functionCall?: { name?: string } }
+    const parts: GeminiPart[] = data.candidates?.[0]?.content?.parts ?? []
+    const funcCallPart = parts.find((p) => p.functionCall)
+    const requiresHuman = funcCallPart?.functionCall?.name === ESCALATION_TOOL_NAME
+    const reply: string = parts.find((p) => p.text)?.text ?? ''
 
-    if (!reply) {
+    log(`callAI gemini reply`, { replyLength: reply.length, requiresHuman, preview: reply.slice(0, 100) })
+    if (!reply && !requiresHuman) {
       log(`callAI gemini empty reply — full response for debug`, JSON.stringify(data))
     }
 
-    return reply
+    return { reply, requiresHuman }
   }
 
   // ── OpenAI ──
@@ -225,13 +255,36 @@ async function callAI(
       ...history.map((h) => ({ role: h.role, content: h.content })),
       { role: 'user', content: userMessage },
     ]
-    const requestBody = { model: actualModel, messages, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }
+    const requestBody: Record<string, unknown> = {
+      model: actualModel,
+      messages,
+      temperature: safeTemp,
+      ...(maxTokens ? { max_tokens: maxTokens } : {}),
+    }
+
+    if (withEscalation) {
+      requestBody.tools = [{
+        type: 'function',
+        function: {
+          name: ESCALATION_TOOL_NAME,
+          description: 'Call this function when you cannot answer the user\'s question, lack sufficient information, or the client explicitly requests to speak with a human agent.',
+          parameters: {
+            type: 'object',
+            properties: {
+              motivo: { type: 'string', description: 'Brief reason for escalation' },
+            },
+          },
+        },
+      }]
+      requestBody.tool_choice = 'auto'
+    }
 
     log(`callAI openai request`, {
       model: actualModel,
       messageCount: messages.length,
       hasSystem: !!systemPrompt,
       temperature: safeTemp,
+      withEscalation,
     })
 
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -255,14 +308,17 @@ async function callAI(
       throw new Error(`OpenAI API error: ${msg}`)
     }
 
+    type ToolCall = { function?: { name?: string } }
+    const toolCalls: ToolCall[] = data.choices?.[0]?.message?.tool_calls ?? []
+    const requiresHuman = toolCalls.some((tc) => tc.function?.name === ESCALATION_TOOL_NAME)
     const reply: string = data.choices?.[0]?.message?.content ?? ''
-    log(`callAI openai reply`, { replyLength: reply.length, empty: reply.length === 0, preview: reply.slice(0, 100) })
 
-    if (!reply) {
+    log(`callAI openai reply`, { replyLength: reply.length, requiresHuman, preview: reply.slice(0, 100) })
+    if (!reply && !requiresHuman) {
       log(`callAI openai empty reply — full response for debug`, JSON.stringify(data))
     }
 
-    return reply
+    return { reply, requiresHuman }
   }
 
   // ── OpenRouter ──
@@ -282,22 +338,42 @@ async function callAI(
         messageCount: msgs.length,
         hasSystem: msgs[0]?.role === 'system',
         temperature: safeTemp,
+        withEscalation,
       })
+
+      const body: Record<string, unknown> = {
+        model: actualModel,
+        messages: msgs,
+        temperature: safeTemp,
+        ...(maxTokens ? {
+          max_tokens: maxTokens,
+          // Give reasoning models a separate token budget so they don't eat into output tokens.
+          // Ignored by non-reasoning models.
+          reasoning: { max_tokens: Math.max(maxTokens * 4, 2048) },
+        } : {}),
+      }
+
+      if (withEscalation) {
+        body.tools = [{
+          type: 'function',
+          function: {
+            name: ESCALATION_TOOL_NAME,
+            description: 'Call this function when you cannot answer the user\'s question, lack sufficient information, or the client explicitly requests to speak with a human agent.',
+            parameters: {
+              type: 'object',
+              properties: {
+                motivo: { type: 'string', description: 'Brief reason for escalation' },
+              },
+            },
+          },
+        }]
+        body.tool_choice = 'auto'
+      }
 
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: openrouterHeaders,
-        body: JSON.stringify({
-          model: actualModel,
-          messages: msgs,
-          temperature: safeTemp,
-          ...(maxTokens ? {
-            max_tokens: maxTokens,
-            // Give reasoning models a separate token budget so they don't eat into output tokens.
-            // Ignored by non-reasoning models.
-            reasoning: { max_tokens: Math.max(maxTokens * 4, 2048) },
-          } : {}),
-        }),
+        body: JSON.stringify(body),
       })
 
       log(`callAI openrouter response status (attempt ${attempt})`, { status: res.status, ok: res.ok })
@@ -344,14 +420,20 @@ async function callAI(
       throw new Error(`OpenRouter API error: ${msg}`)
     }
 
-    const reply: string = data.choices?.[0]?.message?.content ?? ''
-    log(`callAI openrouter reply`, { replyLength: reply.length, empty: reply.length === 0, preview: reply.slice(0, 100) })
+    type ToolCall = { function?: { name?: string } }
+    const toolCalls: ToolCall[] = data.choices?.[0]?.message?.tool_calls ?? []
+    const toolEscalation = toolCalls.some((tc) => tc.function?.name === ESCALATION_TOOL_NAME)
+    const rawReply: string = data.choices?.[0]?.message?.content ?? ''
+    const signalEscalation = rawReply.includes(ESCALATION_SIGNAL)
+    const requiresHuman = toolEscalation || signalEscalation
+    const reply = rawReply.replace(ESCALATION_SIGNAL, '').trim()
 
-    if (!reply) {
+    log(`callAI openrouter reply`, { replyLength: reply.length, requiresHuman, toolEscalation, signalEscalation, preview: reply.slice(0, 100) })
+    if (!reply && !requiresHuman) {
       log(`callAI openrouter empty reply — full response for debug`, JSON.stringify(data))
     }
 
-    return reply
+    return { reply, requiresHuman }
   }
 
   throw new Error(`Provider desconhecido: ${provider}`)
@@ -364,6 +446,45 @@ function nextNodeId(edges: FlowEdge[], fromId: string, handle?: string | null): 
     ? edges.find((e) => e.source === fromId && e.sourceHandle === handle)
     : edges.find((e) => e.source === fromId)
   return edge?.target ?? null
+}
+
+// ─── Model resolution ─────────────────────────────────────────────────────────
+
+const PROVIDER_DEFAULT_FALLBACK: Record<AIProvider, string> = {
+  gemini: 'gemini-2.5-flash',
+  openai: 'gpt-4o',
+  openrouter: 'openai/gpt-4o-mini',
+}
+
+async function resolveNodeModel(
+  provider: AIProvider,
+  nodeData: FlowNodeData
+): Promise<{ model: string; customModel: string | undefined; toolsSupported: boolean | null }> {
+  const { data: keyRow } = await supabase
+    .from('ai_provider_keys')
+    .select('custom_model, tools_supported')
+    .eq('provider', provider)
+    .maybeSingle()
+
+  const toolsSupported = (keyRow?.tools_supported as boolean | null) ?? null
+  const useDefaultModel = (nodeData.useDefaultModel as boolean | undefined) !== false
+
+  const stored = (keyRow?.custom_model as string | null) ?? null
+
+  if (useDefaultModel) {
+    const resolved = stored || PROVIDER_DEFAULT_FALLBACK[provider]
+    return {
+      model: provider === 'openrouter' ? '' : resolved,
+      customModel: provider === 'openrouter' ? resolved : undefined,
+      toolsSupported,
+    }
+  }
+
+  return {
+    model: (nodeData.model as string) || (provider !== 'openrouter' ? PROVIDER_DEFAULT_FALLBACK[provider] : ''),
+    customModel: nodeData.customModel as string | undefined,
+    toolsSupported,
+  }
 }
 
 // ─── Session management ───────────────────────────────────────────────────────
@@ -500,29 +621,65 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
       }
 
       const provider: AIProvider = (node.data.provider as AIProvider) ?? 'gemini'
-      const model = (node.data.model as string) ?? 'gemini-2.5-flash'
-      const customModel = node.data.customModel as string | undefined
       const baseSystemPrompt = (node.data.systemPrompt as string) ?? ''
       const temperature = (node.data.temperature as number) ?? 0.7
       const memoryBlockIds = (node.data.memoryBlockIds as string[] | undefined) ?? []
       const maxTokens = (node.data.maxTokens as number | undefined) || undefined
 
-      // Read historyLimit from global config
+      // Resolve model and tool support from provider config
+      const { model, customModel, toolsSupported } = await resolveNodeModel(provider, node.data)
+
+      // Read historyLimit and escalation config from global config
       const { data: aiCfgRow } = await supabase
         .from('instance_ai_config')
-        .select('history_limit')
+        .select('history_limit, escalation_enabled, escalation_stop_on_obstacle, escalation_base_prompt')
         .eq('instance_name', ctx.instanceName)
         .maybeSingle()
       const historyLimit = (aiCfgRow?.history_limit as number | null) ?? 20
+      const escalationEnabled = (aiCfgRow?.escalation_enabled as boolean | null) ?? true
+      const stopOnObstacle = (aiCfgRow?.escalation_stop_on_obstacle as boolean | null) ?? true
+      const escalationBasePrompt = ((aiCfgRow?.escalation_base_prompt as string | null) ?? '').trim() || DEFAULT_ESCALATION_PROMPT
+
+      // If session is already escalated and stop_on_obstacle is active, skip AI call
+      if (latest.requires_human && stopOnObstacle) {
+        log(`handleActiveSession: session requires human and stop_on_obstacle=true, skipping AI call`, { sessionId: session.id })
+        return
+      }
+
+      // Determine escalation mode based on verified tool support
+      const withEscalation = escalationEnabled && toolsSupported === true
+      const useTextSignal = escalationEnabled && toolsSupported !== true
 
       // Trim history to the last N exchanges (each exchange = 1 user + 1 assistant turn)
       const rawHistory = (latest.history as HistoryTurn[] | undefined) ?? []
       const history = rawHistory.slice(-(historyLimit * 2))
 
       const memoryChunk = await buildMemoryPrompt(memoryBlockIds, userMessage)
-      const systemPrompt = memoryChunk ? baseSystemPrompt + memoryChunk : baseSystemPrompt
+      let systemPrompt = memoryChunk ? baseSystemPrompt + memoryChunk : baseSystemPrompt
 
-      const reply = await callAI(provider, model, customModel, systemPrompt, userMessage, temperature, history, maxTokens)
+      // Inject escalation instruction for all providers when using text signal mode
+      if (useTextSignal) {
+        systemPrompt += escalationBasePrompt
+      }
+
+      log(`handleActiveSession: escalation mode`, { provider, withEscalation, useTextSignal, toolsSupported })
+
+      const { reply: rawReply, requiresHuman: toolRequiresHuman } = await callAI(provider, model, customModel, systemPrompt, userMessage, temperature, history, maxTokens, withEscalation)
+
+      // In text signal mode, detect and strip the signal manually (callAI only strips it for OpenRouter)
+      let requiresHuman = toolRequiresHuman
+      let reply = rawReply
+      if (useTextSignal && rawReply.includes(ESCALATION_SIGNAL)) {
+        requiresHuman = true
+        reply = rawReply.replace(ESCALATION_SIGNAL, '').trim()
+      }
+
+      if (requiresHuman) {
+        log(`handleActiveSession: escalation triggered`, { sessionId: session.id, provider, withEscalation })
+        await supabase.from('ai_sessions')
+          .update({ requires_human: true })
+          .eq('id', session.id)
+      }
 
       if (reply.trim()) {
         const updatedHistory: HistoryTurn[] = [
@@ -682,8 +839,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
 
     if (node.type === 'aiAssistant') {
       const provider: AIProvider = (node.data.provider as AIProvider) ?? 'gemini'
-      const model = (node.data.model as string) ?? 'gemini-2.5-flash'
-      const customModel = node.data.customModel as string | undefined
+      const { model, customModel } = await resolveNodeModel(provider, node.data as FlowNodeData)
       const baseSystemPrompt = (node.data.systemPrompt as string) ?? ''
       const temperature = (node.data.temperature as number) ?? 0.7
       const continueConv = node.data.continueConversation
@@ -736,7 +892,8 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
 
       let reply = ''
       try {
-        reply = await callAI(provider, model, customModel, systemPrompt, ctx.incomingMessage, temperature, [], maxTokens)
+        const result = await callAI(provider, model, customModel, systemPrompt, ctx.incomingMessage, temperature, [], maxTokens)
+        reply = result.reply
 
         if (reply.trim()) {
           log(`executeFlow aiAssistant: sending reply`, { replyLength: reply.length })

@@ -109,6 +109,7 @@ export interface FlowNodeData {
   model?: string
   provider?: AIProvider
   customModel?: string
+  useDefaultModel?: boolean
   continueConversation?: boolean
   timeoutType?: 'minutes' | 'messages'
   timeoutValue?: number
@@ -167,6 +168,7 @@ export interface AISession {
   pending_messages: string[]
   history: HistoryTurn[]
   last_message_at: string | null
+  requires_human?: boolean
 }
 
 export interface AISessionWithContext {

@@ -6,7 +6,7 @@ import { AISessionWithContext } from '@/types'
 import SessionList from './session-list'
 import SessionChatView from './session-chat-view'
 import TerminateSessionDialog from './terminate-session-dialog'
-import { Bot } from 'lucide-react'
+import { Bot, BellOff } from 'lucide-react'
 
 interface AiSessionsTabProps {
   instanceName: string
@@ -64,6 +64,15 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
     return () => clearInterval(interval)
   }, [loadSessions])
 
+  async function handleClearEscalations() {
+    await fetch('/api/ai-sessions/clear-escalations', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instance: instanceName }),
+    })
+    await loadSessions()
+  }
+
   async function handleTerminate(id: string, message: string, useFlowMessage: boolean) {
     await fetch(`/api/ai-sessions/${id}/terminate`, {
       method: 'POST',
@@ -76,10 +85,21 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
 
   const selectedSession = sessions.find((s) => s.session.id === selectedId) ?? null
 
+  const sortedSessions = [...sessions].sort((a, b) => {
+    if (a.session.requires_human === b.session.requires_human) {
+      const aTime = a.session.last_message_at ? new Date(a.session.last_message_at).getTime() : 0
+      const bTime = b.session.last_message_at ? new Date(b.session.last_message_at).getTime() : 0
+      return bTime - aTime
+    }
+    return a.session.requires_human ? -1 : 1
+  })
+
+  const hasEscalations = sessions.some((s) => s.session.requires_human)
+
   return (
-    <div className="flex h-full w-full bg-white dark:bg-[#111b21]">
+    <div className="relative flex h-full w-full bg-white dark:bg-[#111b21]">
       <SessionList
-        sessions={sessions}
+        sessions={sortedSessions}
         loading={loading}
         selectedId={selectedId}
         onSelect={setSelectedId}
@@ -119,6 +139,16 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
           onClose={() => setTerminatingSession(null)}
           onConfirm={handleTerminate}
         />
+      )}
+
+      {hasEscalations && (
+        <button
+          onClick={handleClearEscalations}
+          className="absolute bottom-4 right-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium shadow-lg transition-colors z-10"
+        >
+          <BellOff size={13} />
+          Limpar notificações
+        </button>
       )}
     </div>
   )
