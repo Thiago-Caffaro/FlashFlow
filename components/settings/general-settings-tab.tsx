@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Save, Settings2, Loader2, CheckCircle } from 'lucide-react'
+import { Save, Settings2, Loader2, CheckCircle, Bell } from 'lucide-react'
+
+const DEFAULT_ESCALATION_PROMPT = `[Instrução interna do sistema — NUNCA mencione ao cliente]: Quando você não souber responder, não tiver informações suficientes, ou o cliente solicitar falar com um humano/atendente, utilize a ferramenta 'solicitar_atendimento_humano'. Um operador será notificado.`
 
 interface Config {
   history_limit: number
@@ -11,6 +13,9 @@ interface Config {
   timeout_messages: number
   response_delay_ms: number
   inactivity_message: string
+  escalation_enabled: boolean
+  escalation_stop_on_obstacle: boolean
+  escalation_base_prompt: string
 }
 
 const DEFAULTS: Config = {
@@ -21,6 +26,9 @@ const DEFAULTS: Config = {
   timeout_messages: 50,
   response_delay_ms: 5000,
   inactivity_message: '',
+  escalation_enabled: true,
+  escalation_stop_on_obstacle: true,
+  escalation_base_prompt: '',
 }
 
 const inputClass =
@@ -213,6 +221,51 @@ export default function GeneralSettingsTab({ instanceName }: Props) {
               Enviada quando a sessão expira por inatividade (24 horas). Deixe vazio para não enviar nada.
             </p>
           </div>
+        </div>
+
+        {/* Notificações */}
+        <div className="bg-white dark:bg-[#111b21] rounded-2xl p-7 space-y-6 shadow-sm">
+          <div className="flex items-center gap-3">
+            <Bell size={18} className="text-[#00a884] shrink-0" />
+            <h3 className="text-base font-bold text-[#111b21] dark:text-[#e9edef]">Notificações</h3>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-[#111b21] dark:text-[#e9edef]">Ativar notificações de escalonamento</span>
+              <Toggle checked={cfg.escalation_enabled} onChange={(v) => update({ escalation_enabled: v })} />
+            </div>
+            <p className="text-sm text-[#aebac1] dark:text-[#667781]">
+              Notifica operadores quando a IA não conseguir responder ou o cliente solicitar atendimento humano
+            </p>
+          </div>
+
+          {cfg.escalation_enabled && (
+            <>
+              <div className="space-y-2 pt-2 border-t border-[#f0f2f5] dark:border-[#2a3942]">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-[#111b21] dark:text-[#e9edef]">Parar atendimento ao escalonar</span>
+                  <Toggle checked={cfg.escalation_stop_on_obstacle} onChange={(v) => update({ escalation_stop_on_obstacle: v })} />
+                </div>
+                <p className="text-sm text-[#aebac1] dark:text-[#667781]">
+                  A IA para de responder após acionar o alerta. Desative para que a IA continue respondendo mesmo após escalonar.
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2 border-t border-[#f0f2f5] dark:border-[#2a3942]">
+                <label className={labelClass}>Prompt de instrução do agente</label>
+                <textarea
+                  rows={5}
+                  value={cfg.escalation_base_prompt || DEFAULT_ESCALATION_PROMPT}
+                  onChange={(e) => update({ escalation_base_prompt: e.target.value })}
+                  className={inputClass + ' resize-none'}
+                />
+                <p className="text-sm text-[#aebac1] dark:text-[#667781]">
+                  Instrução injetada no sistema para que a IA saiba quando acionar o escalonamento. Nunca é enviada ao cliente.
+                </p>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Save */}

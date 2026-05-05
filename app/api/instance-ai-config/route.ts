@@ -16,6 +16,9 @@ const DEFAULTS = {
   timeout_messages: 50,
   response_delay_ms: 5000,
   inactivity_message: '',
+  escalation_enabled: true,
+  escalation_stop_on_obstacle: true,
+  escalation_base_prompt: '',
 }
 
 // GET /api/instance-ai-config?instance=xxx
@@ -25,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from('instance_ai_config')
-    .select('history_limit, timeout_minutes_enabled, timeout_minutes, timeout_messages_enabled, timeout_messages, response_delay_ms, inactivity_message')
+    .select('history_limit, timeout_minutes_enabled, timeout_minutes, timeout_messages_enabled, timeout_messages, response_delay_ms, inactivity_message, escalation_enabled, escalation_stop_on_obstacle, escalation_base_prompt')
     .eq('instance_name', instance)
     .maybeSingle()
 
@@ -46,6 +49,9 @@ export async function PUT(req: NextRequest) {
     timeout_messages,
     response_delay_ms,
     inactivity_message,
+    escalation_enabled,
+    escalation_stop_on_obstacle,
+    escalation_base_prompt,
   } = body
 
   if (!instance) return NextResponse.json({ ok: false, error: 'instance required' }, { status: 400 })
@@ -62,6 +68,9 @@ export async function PUT(req: NextRequest) {
         timeout_messages,
         response_delay_ms,
         inactivity_message,
+        escalation_enabled,
+        escalation_stop_on_obstacle,
+        escalation_base_prompt,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'instance_name' }

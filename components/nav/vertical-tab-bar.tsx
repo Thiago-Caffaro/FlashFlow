@@ -10,6 +10,7 @@ export type View = 'chat' | 'gatilhos' | 'fluxos' | 'memoria' | 'galeria' | 'ses
 interface Props {
   activeTab: View
   onTabChange: (v: View) => void
+  badges?: Partial<Record<View, number>>
 }
 
 const TABS: { id: View; label: string; Icon: React.ElementType }[] = [
@@ -23,7 +24,7 @@ const TABS: { id: View; label: string; Icon: React.ElementType }[] = [
   { id: 'conf-gerais' as View, label: 'Conf. Gerais', Icon: Settings2 },
 ]
 
-export default function VerticalTabBar({ activeTab, onTabChange }: Props) {
+export default function VerticalTabBar({ activeTab, onTabChange, badges = {} }: Props) {
   const [expanded, setExpanded] = useState(false)
   const { theme, toggleTheme } = useTheme()
 
@@ -38,6 +39,7 @@ export default function VerticalTabBar({ activeTab, onTabChange }: Props) {
       <div className="flex flex-col gap-0.5 flex-1">
         {TABS.map(({ id, label, Icon }) => {
           const isActive = activeTab === id
+          const badgeCount = badges[id] ?? 0
           return (
             <button
               key={id}
@@ -52,7 +54,14 @@ export default function VerticalTabBar({ activeTab, onTabChange }: Props) {
               {isActive && (
                 <span className="absolute left-0 top-3 bottom-3 w-0.5 bg-[#00a884] rounded-full" />
               )}
-              <Icon size={19} className="shrink-0" />
+              <div className="relative shrink-0">
+                <Icon size={19} />
+                {badgeCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[14px] h-[14px] bg-amber-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5 leading-none">
+                    {badgeCount > 99 ? '99+' : badgeCount}
+                  </span>
+                )}
+              </div>
               {expanded && (
                 <span className="flex-1 text-right pr-3 text-sm whitespace-nowrap font-medium">
                   {label}

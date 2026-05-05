@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Bot, X } from 'lucide-react'
+import { AlertTriangle, Bot, X } from 'lucide-react'
 import { AISessionWithContext } from '@/types'
 
 interface SessionListProps {
@@ -78,9 +78,16 @@ function SessionItem({ item, isActive, onSelect, onTerminate }: SessionItemProps
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-1">
-          <p className="text-sm font-medium text-[#111b21] dark:text-[#e9edef] truncate">
-            {displayName}
-          </p>
+          <div className="flex items-center gap-1.5 min-w-0">
+            {session.requires_human && (
+              <span title="Requer atendimento humano" className="shrink-0 flex">
+                <AlertTriangle size={12} className="text-amber-500" />
+              </span>
+            )}
+            <p className="text-sm font-medium text-[#111b21] dark:text-[#e9edef] truncate">
+              {displayName}
+            </p>
+          </div>
           <span className="text-[10px] text-[#667781] dark:text-[#8696a0] shrink-0">
             {formatRelativeTime(session.last_message_at)}
           </span>
