@@ -201,8 +201,11 @@ export async function POST(req: NextRequest) {
       if (instanceName && chats.length > 0) {
         console.log(`[webhook] chats.upsert: ${chats.length} chat(s) para "${instanceName}"`)
         for (const chat of chats) {
-          const remoteJid: string = chat.remoteJid ?? chat.id ?? ''
-          if (!remoteJid) continue
+          const remoteJid: string = chat.remoteJid ?? ''
+          if (!remoteJid || !remoteJid.includes('@')) continue
+          // Skip @lid JIDs — Evolution sends them for some contacts but they create duplicate
+          // conversations separate from the @s.whatsapp.net entry for the same contact
+          if (remoteJid.endsWith('@lid')) continue
           const isGroup = remoteJid.endsWith('@g.us')
           const contactPhone = isGroup
             ? remoteJid
@@ -254,7 +257,28 @@ export async function POST(req: NextRequest) {
     }
 
     const isGroup = remoteJid.endsWith('@g.us')
-    const contactPhone = isGroup ? remoteJid : remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '')
+
+    // @lid is an internal WhatsApp ID that Evolution sometimes uses instead of @s.whatsapp.net.
+    // When detected, resolve to the existing @s.whatsapp.net conversation (matched by contact name)
+    // so inbound messages don't end up in a separate conversation from the bot's replies.
+    let effectiveRemoteJid = remoteJid
+    if (!isGroup && remoteJid.endsWith('@lid') && data.key.fromMe === false) {
+      const lidPushName: string | null = data.pushName ?? null
+      if (lidPushName) {
+        const { data: existingConv } = await supabase
+          .from('conversations')
+          .select('wa_id')
+          .eq('instance_name', instanceName)
+          .eq('contact_name', lidPushName)
+          .not('wa_id', 'like', '%@lid')
+          .order('last_message_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (existingConv?.wa_id) effectiveRemoteJid = existingConv.wa_id
+      }
+    }
+
+    const contactPhone = isGroup ? remoteJid : effectiveRemoteJid.replace('@s.whatsapp.net', '').replace('@lid', '')
 
     // For groups: pushName is the SENDER's name, not the group name.
     // Never overwrite the group name with a sender's name — look up the group name from our DB.
@@ -340,7 +364,7 @@ export async function POST(req: NextRequest) {
       .from('conversations')
       .upsert(
         {
-          wa_id: remoteJid,
+          wa_id: effectiveRemoteJid,
           instance_name: instanceName,
           contact_phone: contactPhone,
           // Só atualiza contact_name se pushName veio preenchido,
@@ -380,6 +404,7 @@ export async function POST(req: NextRequest) {
       type,
       direction: data.key.fromMe === true ? 'outbound' : 'inbound',
       status: data.key.fromMe === true ? 'sent' : 'delivered',
+      sender_type: data.key.fromMe === true ? 'human' : null,
       sender_jid:  isGroup ? (data.key.participant ?? null) : null,
       sender_name: isGroup ? (data.pushName || null)        : null,
     })
@@ -387,16 +412,16 @@ export async function POST(req: NextRequest) {
     if (data.key.fromMe !== true && type === 'text') {
       void (async () => {
         try {
-          const session = await checkActiveSession(instanceName, remoteJid)
+          const session = await checkActiveSession(instanceName, effectiveRemoteJid)
           if (session) {
             await handleActiveSession(session, {
               instanceName,
-              remoteJid,
+              remoteJid: effectiveRemoteJid,
               conversationId: conversation.id,
               incomingMessage: content,
             })
           } else {
-            await executeTriggers(instanceName, remoteJid, conversation.id, content, type)
+            await executeTriggers(instanceName, effectiveRemoteJid, conversation.id, content, type)
           }
         } catch (err) {
           console.error('session/trigger error:', err)
