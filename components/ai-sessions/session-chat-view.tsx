@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bot, XCircle } from 'lucide-react'
+import { Bot, XCircle, User } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { AISessionWithContext, Message } from '@/types'
 import MessageBubble from '@/components/chat/message-bubble'
@@ -42,6 +42,10 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [operatorName, setOperatorName] = useState(() =>
+    typeof window !== 'undefined' ? (localStorage.getItem('flashflow_operator_name') ?? '') : ''
+  )
+  const [showNameDrawer, setShowNameDrawer] = useState(false)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const displayName = conversation.contact_name || conversation.contact_phone
 
@@ -58,6 +62,11 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
   useEffect(() => {
     setLoading(true)
     loadMessages()
+  }, [loadMessages])
+
+  useEffect(() => {
+    const interval = setInterval(() => loadMessages(), 10000)
+    return () => clearInterval(interval)
   }, [loadMessages])
 
   useEffect(() => {
@@ -91,12 +100,16 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
   }, [messages])
 
   const handleSend = async (content: string) => {
+    const actualContent = operatorName.trim()
+      ? `*${operatorName.trim()}*\n${content}`
+      : content
+
     const tempId = `temp-${Date.now()}`
     const optimisticMsg: Message = {
       id: tempId,
       conversation_id: conversation.id,
       wa_message_id: null,
-      content,
+      content: actualContent,
       type: 'text',
       direction: 'outbound',
       status: 'sending',
@@ -114,7 +127,7 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
       await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversationId: conversation.id, waId: conversation.wa_id, content }),
+        body: JSON.stringify({ conversationId: conversation.id, waId: conversation.wa_id, content: actualContent }),
       })
     } catch (err) {
       console.error('Erro ao enviar:', err)
@@ -160,10 +173,14 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
     }
   }
 
+  const handleReleaseToAI = async () => {
+    await fetch(`/api/ai-sessions/${session.id}/release`, { method: 'PATCH' })
+  }
+
   const groups = groupByDate(messages)
 
   return (
-    <div className="flex flex-col overflow-hidden h-full">
+    <div className="relative flex flex-col overflow-hidden h-full">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-[#d1d7db] dark:border-[#2a3942] bg-[#f0f2f5] dark:bg-[#202c33] shrink-0">
         <div className="w-9 h-9 rounded-full bg-[#dfe5e7] dark:bg-[#2a3942] flex items-center justify-center shrink-0">
@@ -180,6 +197,15 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
             <span className="w-2 h-2 rounded-full bg-[#00a884] animate-pulse inline-block" />
             IA ativa
           </span>
+          {session.requires_human && (
+            <button
+              onClick={handleReleaseToAI}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-[#00a884] border border-[#00a884]/30 hover:bg-[#00a884]/10 dark:hover:bg-[#00a884]/10 transition-colors"
+            >
+              <Bot size={14} />
+              Devolver à IA
+            </button>
+          )}
           <span className="text-[#d1d7db] dark:text-[#2a3942]">|</span>
           <button
             onClick={onTerminate}
@@ -234,8 +260,50 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
         )}
       </div>
 
+      {/* Operator name drawer */}
+      {showNameDrawer && (
+        <div className="absolute bottom-[88px] left-0 right-0 bg-white dark:bg-[#202c33] border-t border-[#d1d7db] dark:border-[#2a3942] px-4 py-3 shadow-lg z-20 flex items-center gap-3">
+          <User size={16} className="text-[#667781] dark:text-[#8696a0] shrink-0" />
+          <input
+            type="text"
+            value={operatorName}
+            onChange={(e) => {
+              setOperatorName(e.target.value)
+              localStorage.setItem('flashflow_operator_name', e.target.value)
+            }}
+            placeholder="Nome do atendente (opcional)"
+            className="flex-1 text-sm bg-transparent text-[#111b21] dark:text-[#e9edef] placeholder:text-[#667781] dark:placeholder:text-[#8696a0] outline-none"
+            autoFocus
+          />
+          <button
+            onClick={() => setShowNameDrawer(false)}
+            className="text-xs text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] px-2 py-1 transition-colors"
+          >
+            Fechar
+          </button>
+        </div>
+      )}
+
       {/* Input */}
-      <MessageInput onSend={handleSend} onSendImage={handleSendImage} disabled={sending} />
+      <MessageInput
+        onSend={handleSend}
+        onSendImage={handleSendImage}
+        disabled={sending}
+        leftAction={
+          <button
+            type="button"
+            onClick={() => setShowNameDrawer((v) => !v)}
+            title={operatorName ? `Atendente: ${operatorName}` : 'Personalizar atendente'}
+            className={`p-2 rounded-full transition-colors shrink-0 ${
+              operatorName
+                ? 'text-[#00a884] hover:bg-[#00a884]/10'
+                : 'text-[#54656f] dark:text-[#aebac1] hover:bg-[#e9edef] dark:hover:bg-[#2a3942]'
+            }`}
+          >
+            <User size={22} />
+          </button>
+        }
+      />
 
       {/* Session info bar */}
       <div className="px-4 py-1.5 border-t border-[#d1d7db] dark:border-[#2a3942] bg-[#f0f2f5] dark:bg-[#202c33] shrink-0">

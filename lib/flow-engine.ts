@@ -640,9 +640,9 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
       const stopOnObstacle = (aiCfgRow?.escalation_stop_on_obstacle as boolean | null) ?? true
       const escalationBasePrompt = ((aiCfgRow?.escalation_base_prompt as string | null) ?? '').trim() || DEFAULT_ESCALATION_PROMPT
 
-      // If session is already escalated and stop_on_obstacle is active, skip AI call
-      if (latest.requires_human && stopOnObstacle) {
-        log(`handleActiveSession: session requires human and stop_on_obstacle=true, skipping AI call`, { sessionId: session.id })
+      // If session is already escalated, skip AI call — human is handling it
+      if (latest.requires_human) {
+        log(`handleActiveSession: session requires human, skipping AI call`, { sessionId: session.id })
         return
       }
 

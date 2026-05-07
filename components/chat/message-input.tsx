@@ -7,9 +7,10 @@ interface MessageInputProps {
   onSend: (content: string) => void
   onSendImage: (file: File) => void
   disabled?: boolean
+  leftAction?: React.ReactNode
 }
 
-export default function MessageInput({ onSend, onSendImage, disabled }: MessageInputProps) {
+export default function MessageInput({ onSend, onSendImage, disabled, leftAction }: MessageInputProps) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -66,6 +67,8 @@ export default function MessageInput({ onSend, onSendImage, disabled }: MessageI
         className="hidden"
         onChange={handleFileChange}
       />
+
+      {leftAction}
 
       <div className="flex-1 bg-white dark:bg-[#2a3942] rounded-lg px-4 py-2">
         <textarea
