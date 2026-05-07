@@ -193,6 +193,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
+    // Quando o WhatsApp sincroniza a lista de chats com a Evolution API, ela envia CHATS_UPSERT.
+    // Processamos aqui para criar conversas imediatamente — sem depender do endpoint findChats.
+    if (event === 'chats.upsert') {
+      const chats = Array.isArray(body.data) ? body.data : []
+      const instanceName: string = body.instance ?? ''
+      if (instanceName && chats.length > 0) {
+        console.log(`[webhook] chats.upsert: ${chats.length} chat(s) para "${instanceName}"`)
+        for (const chat of chats) {
+          const remoteJid: string = chat.remoteJid ?? chat.id ?? ''
+          if (!remoteJid) continue
+          const isGroup = remoteJid.endsWith('@g.us')
+          const contactPhone = isGroup
+            ? remoteJid
+            : remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '')
+          const contactName: string | null = chat.name ?? chat.pushName ?? null
+          const unreadCount: number = chat.unreadCount ?? 0
+
+          await supabase.from('conversations').upsert(
+            {
+              wa_id: remoteJid,
+              instance_name: instanceName,
+              contact_phone: contactPhone,
+              unread_count: unreadCount,
+              ...(contactName ? { contact_name: contactName } : {}),
+            },
+            { onConflict: 'wa_id, instance_name' }
+          )
+        }
+      }
+      return NextResponse.json({ ok: true })
+    }
+
     if (event !== 'messages.upsert') {
       return NextResponse.json({ ok: true })
     }
