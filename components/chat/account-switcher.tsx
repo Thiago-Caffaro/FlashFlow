@@ -21,7 +21,11 @@ function StateIcon({ state }: { state: Account['state'] }) {
   return <span className="w-2 h-2 rounded-full bg-[#aebac1] shrink-0" title="Desconectado" />
 }
 
-export default function AccountSwitcher() {
+interface AccountSwitcherProps {
+  onConnectingChange?: (isConnecting: boolean) => void
+}
+
+export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherProps) {
   const { accounts, activeAccount, setActiveAccount, refreshAccounts } = useAccount()
   const [isOpen, setIsOpen] = useState(false)
   const [hoveredName, setHoveredName] = useState<string | null>(null)
@@ -39,6 +43,10 @@ export default function AccountSwitcher() {
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
 
   const wrapperRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    onConnectingChange?.(modalStep !== null || syncingInstance !== null || creating)
+  }, [modalStep, syncingInstance, creating, onConnectingChange])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {

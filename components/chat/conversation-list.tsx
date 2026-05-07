@@ -20,6 +20,7 @@ export default function ConversationList({
   onSelect,
 }: ConversationListProps) {
   const [query, setQuery] = useState('')
+  const [isConnecting, setIsConnecting] = useState(false)
 
   const filtered = query
     ? conversations.filter((c) =>
@@ -54,7 +55,10 @@ export default function ConversationList({
       </div>
 
       {/* Conversation list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="relative flex-1 overflow-y-auto">
+        {isConnecting && (
+          <div className="absolute inset-0 z-10 bg-white/60 dark:bg-[#111b21]/60 cursor-not-allowed" />
+        )}
         {loading ? (
           <div className="flex items-center justify-center h-20 text-[#667781] dark:text-[#8696a0] text-sm">
             Carregando...
@@ -74,7 +78,7 @@ export default function ConversationList({
           ))
         )}
       </div>
-      <AccountSwitcher />
+      <AccountSwitcher onConnectingChange={setIsConnecting} />
     </div>
   )
 }
