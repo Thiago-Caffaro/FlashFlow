@@ -13,7 +13,7 @@ export async function PATCH(_req: NextRequest, { params }: { params: Promise<{ i
 
     await supabase
       .from('ai_sessions')
-      .update({ requires_human: false })
+      .update({ requires_human: false, pending_messages: [] })
       .eq('id', id)
 
     return NextResponse.json({ ok: true })
