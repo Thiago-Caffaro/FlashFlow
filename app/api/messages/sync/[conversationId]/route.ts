@@ -118,6 +118,8 @@ export async function POST(
       .order('messageTimestamp', { ascending: false })
       .limit(30)
 
+    console.log(`[messages/sync] conversationId=${conversationId} instanceId=${instanceId} remoteJid=${remoteJid} evoMessages=${evoMessages?.length ?? 0}${error ? ` error=${error.message}` : ''}`)
+
     if (error || !evoMessages?.length) return NextResponse.json({ ok: true, added: 0 })
 
     // Deduplicate against messages already stored for this conversation
@@ -166,6 +168,7 @@ export async function POST(
       await supabase.from('messages').insert(toInsert)
     }
 
+    console.log(`[messages/sync] conversationId=${conversationId} added=${toInsert.length} (skipped=${evoMessages.length - toInsert.length} already existed)`)
     return NextResponse.json({ ok: true, added: toInsert.length })
   } catch (err) {
     console.error('Messages sync error:', err)

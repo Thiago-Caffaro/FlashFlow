@@ -75,6 +75,14 @@ export async function POST(req: NextRequest) {
       })
       .eq('id', conversationId)
 
+    // Limpa notificação de escalação quando operador responde manualmente
+    await supabase
+      .from('ai_sessions')
+      .update({ requires_human: false })
+      .eq('instance_name', instanceName)
+      .eq('remote_jid', waId)
+      .eq('requires_human', true)
+
     return NextResponse.json({ ok: true, message })
   } catch (err) {
     console.error('Send image error:', err)

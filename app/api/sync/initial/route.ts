@@ -242,18 +242,54 @@ async function syncConversationMessages(
 async function runSync(instanceName: string) {
   try {
     progress.set(instanceName, { stage: 'contacts', total: 0, done: 0 })
+    console.log(`[SYNC initial] iniciando para "${instanceName}"`)
 
-    // Evolution API may need a few seconds to receive history from the phone after QR scan.
-    // Retry up to 5 times (every 3s) before giving up.
+    // Evolution API can take 30-60s to receive chat history from the phone after a QR scan.
+    // We retry every 3s for the first 10 attempts, then every 10s up to 2 minutes total.
     let conversationIds: string[] = []
-    for (let attempt = 0; attempt < 5 && conversationIds.length === 0; attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 3000))
+    const syncStart = Date.now()
+    const MAX_WAIT_MS = 120_000
+    let attempt = 0
+
+    while (conversationIds.length === 0) {
+      if (progress.get(instanceName)?.cancelled) break
+
+      if (attempt > 0) {
+        const delay = attempt < 10 ? 3000 : 10_000
+        await new Promise((r) => setTimeout(r, delay))
+      }
+
+      // Tenta findChats na Evolution API
       conversationIds = await syncContacts(instanceName)
+
+      // Fallback: o handler chats.upsert pode ter criado conversas antes do findChats funcionar
+      if (conversationIds.length === 0) {
+        const { data: existing } = await supabase
+          .from('conversations')
+          .select('id')
+          .eq('instance_name', instanceName)
+        if ((existing?.length ?? 0) > 0) {
+          conversationIds = existing!.map((c) => c.id as string)
+          console.log(`[SYNC initial] tentativa ${attempt + 1} → findChats=0 mas ${conversationIds.length} conversa(s) já criadas via chats.upsert`)
+        } else {
+          attempt++
+          console.log(`[SYNC initial] tentativa ${attempt} → ${conversationIds.length} conversa(s)`)
+        }
+      } else {
+        attempt++
+        console.log(`[SYNC initial] tentativa ${attempt} → ${conversationIds.length} conversa(s) via findChats`)
+      }
+
+      if (Date.now() - syncStart >= MAX_WAIT_MS) {
+        console.log(`[SYNC initial] timeout de 2 minutos atingido após ${attempt} tentativas`)
+        break
+      }
     }
 
     const total = conversationIds.length
 
     if (total === 0) {
+      console.log(`[SYNC initial] nenhuma conversa encontrada — encerrando`)
       progress.set(instanceName, { stage: 'done', total: 0, done: 0 })
       return
     }
@@ -261,6 +297,15 @@ async function runSync(instanceName: string) {
     progress.set(instanceName, { stage: 'messages', total, done: 0, createdConversationIds: conversationIds })
 
     const instanceId = await getInstanceId(instanceName)
+    console.log(`[SYNC initial] instanceId da Evolution API: ${instanceId ?? 'NÃO ENCONTRADO'}`)
+
+    if (instanceId) {
+      const { count: msgCount } = await supabase
+        .from('Message')
+        .select('*', { count: 'exact', head: true })
+        .eq('instanceId', instanceId)
+      console.log(`[SYNC initial] registros na tabela Message da Evolution API: ${msgCount}`)
+    }
 
     const { data: convRows } = await supabase
       .from('conversations')
@@ -282,8 +327,10 @@ async function runSync(instanceName: string) {
       progress.set(instanceName, { stage: 'messages', total, done: i + 1, createdConversationIds: conversationIds })
     }
 
+    console.log(`[SYNC initial] concluído: ${total} conversa(s) sincronizadas`)
     progress.set(instanceName, { stage: 'done', total, done: total })
   } catch (err) {
+    console.error(`[SYNC initial] erro:`, err)
     progress.set(instanceName, { stage: 'error', total: 0, done: 0, error: String(err) })
   }
 }

@@ -13,9 +13,11 @@ const PROVIDER_CONFIG: Record<AIProvider, { label: string; Icon: React.ElementTy
 export default function AiAssistantNode({ data, selected }: NodeProps & { data: FlowNodeData }) {
   const provider: AIProvider = (data.provider as AIProvider) ?? 'gemini'
   const { label, Icon, color } = PROVIDER_CONFIG[provider]
-  const modelName = provider === 'openrouter'
-    ? (data.customModel || 'modelo customizado')
-    : (data.model || 'modelo padrão')
+  const modelName = (data.useDefaultModel as boolean | undefined) !== false
+    ? 'modelo padrão'
+    : provider === 'openrouter'
+      ? (data.customModel as string || 'modelo customizado')
+      : (data.model as string || 'modelo padrão')
 
   const borderColor = selected ? color : color + '66'
 

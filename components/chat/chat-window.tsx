@@ -77,7 +77,9 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
 
     if (msgs.length < 30 && !syncedConversations.has(conversationId)) {
       syncedConversations.add(conversationId)
-      fetch(`/api/messages/sync/${conversationId}`, { method: 'POST' }).catch(() => {})
+      fetch(`/api/messages/sync/${conversationId}`, { method: 'POST' })
+        .then(() => fetchMessages())
+        .catch(() => {})
     }
   }, [conversationId])
 
@@ -121,6 +123,12 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     return () => {
       supabase.removeChannel(channel)
     }
+  }, [conversationId, fetchMessages])
+
+  useEffect(() => {
+    if (!conversationId) return
+    const interval = setInterval(() => fetchMessages(), 10000)
+    return () => clearInterval(interval)
   }, [conversationId, fetchMessages])
 
   useEffect(() => {

@@ -92,6 +92,17 @@ function mockSupabaseSuccess(savedMessage = { id: 'msg-saved', content: 'oi' }) 
         }),
       }
     }
+    if (table === 'ai_sessions') {
+      return {
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              eq: jest.fn().mockResolvedValue({ error: null }),
+            }),
+          }),
+        }),
+      }
+    }
   })
 }
 

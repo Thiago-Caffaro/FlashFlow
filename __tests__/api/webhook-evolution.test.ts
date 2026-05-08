@@ -55,6 +55,20 @@ function mockSupabaseSuccess(conversation = { id: 'conv-123' }) {
   supabaseMock.from.mockImplementation((table: string) => {
     if (table === 'conversations') {
       return {
+        // Used by @lid resolution: .select().eq().eq().not().order().limit().maybeSingle()
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              not: jest.fn().mockReturnValue({
+                order: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockReturnValue({
+                    maybeSingle: jest.fn().mockResolvedValue({ data: null }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
         upsert: jest.fn().mockReturnValue({
           select: jest.fn().mockReturnValue({
             single: jest.fn().mockResolvedValue({
@@ -271,7 +285,7 @@ describe('POST /api/webhook/evolution', () => {
     expect(upsertArg.wa_id).toBe('5521912345678@s.whatsapp.net')
   })
 
-  it('extrai contact_phone correto de JID @lid', async () => {
+  it('extrai contact_phone correto de JID @lid sem conversa existente', async () => {
     mockSupabaseSuccess()
     const req = buildRequest({
       event: 'messages.upsert',
@@ -284,8 +298,13 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
 
-    const upsertCall = supabaseMock.from.mock.results[0].value.upsert
-    const upsertArg = upsertCall.mock.calls[0][0]
+    // A resolução @lid é o primeiro from('conversations') — retorna null (sem conversa existente)
+    // O upsert é o segundo from('conversations')
+    const allConvCalls = supabaseMock.from.mock.calls
+      .map((args: string[], i: number) => ({ table: args[0], result: supabaseMock.from.mock.results[i].value }))
+      .filter((c: { table: string }) => c.table === 'conversations')
+    const upsertCall = allConvCalls.find((c: { result: { upsert?: jest.Mock } }) => c.result.upsert?.mock?.calls?.length > 0)
+    const upsertArg = upsertCall.result.upsert.mock.calls[0][0]
 
     expect(upsertArg.contact_phone).toBe('82038')
     expect(upsertArg.wa_id).toBe('82038@lid')

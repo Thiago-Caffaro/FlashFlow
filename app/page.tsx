@@ -19,13 +19,41 @@ import { FEATURES } from '@/lib/features'
 
 const TAB_INDEX: Record<View, number> = { chat: 0, gatilhos: 1, fluxos: 2, memoria: 3, galeria: 4, 'sessoes-ia': 5, ia: 6, 'conf-gerais': 7 }
 
+function playEscalationSound() {
+  try {
+    const AC = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AC) return
+    const ctx = new AC()
+    const playNote = (freq: number, start: number, dur: number) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.frequency.value = freq
+      osc.type = 'sine'
+      gain.gain.setValueAtTime(0, ctx.currentTime + start)
+      gain.gain.linearRampToValueAtTime(0.22, ctx.currentTime + start + 0.01)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur)
+      osc.start(ctx.currentTime + start)
+      osc.stop(ctx.currentTime + start + dur)
+    }
+    playNote(880, 0, 0.22)
+    playNote(1174, 0.18, 0.3)
+    setTimeout(() => ctx.close(), 1000)
+  } catch { /* Audio bloqueado pelo browser */ }
+}
+
 function ChatApp() {
   const { activeAccount } = useAccount()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeView, setActiveView] = useState<View>('chat')
+  const [escalationCount, setEscalationCount] = useState(0)
   const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const escalationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prevEscalationRef = useRef(0)
+  const escalationInitialized = useRef(false)
 
   const fetchConversations = useCallback(async (showLoading = false) => {
     if (!activeAccount) {
@@ -85,6 +113,55 @@ function ChatApp() {
       if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current)
     }
   }, [activeAccount, fetchConversations])
+
+  useEffect(() => {
+    if (!activeAccount) {
+      setEscalationCount(0)
+      return
+    }
+
+    const instanceName = activeAccount.instanceName
+
+    const fetchEscalationCount = async () => {
+      const { count } = await supabase
+        .from('ai_sessions')
+        .select('id', { count: 'exact', head: true })
+        .eq('instance_name', instanceName)
+        .eq('requires_human', true)
+      const newCount = count ?? 0
+      if (escalationInitialized.current && newCount > prevEscalationRef.current) {
+        playEscalationSound()
+      }
+      prevEscalationRef.current = newCount
+      escalationInitialized.current = true
+      setEscalationCount(newCount)
+    }
+
+    fetchEscalationCount()
+
+    const channel = supabase
+      .channel(`escalations:${instanceName}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'ai_sessions' },
+        (payload) => {
+          const record = (payload.new ?? payload.old ?? {}) as Record<string, unknown>
+          if (record.instance_name && record.instance_name !== instanceName) return
+          if (escalationTimerRef.current) clearTimeout(escalationTimerRef.current)
+          escalationTimerRef.current = setTimeout(fetchEscalationCount, 300)
+        }
+      )
+      .subscribe()
+
+    // Polling fallback — realtime de ai_sessions pode não estar habilitado no Supabase
+    const pollInterval = setInterval(fetchEscalationCount, 10000)
+
+    return () => {
+      supabase.removeChannel(channel)
+      clearInterval(pollInterval)
+      if (escalationTimerRef.current) clearTimeout(escalationTimerRef.current)
+    }
+  }, [activeAccount])
 
   const selectedConversation = conversations.find((c) => c.id === selectedId) ?? null
   const tabIndex = TAB_INDEX[activeView]
@@ -238,7 +315,7 @@ function ChatApp() {
       </div>
 
       {/* Vertical tab bar — always visible on right edge */}
-      <VerticalTabBar activeTab={activeView} onTabChange={setActiveView} />
+      <VerticalTabBar activeTab={activeView} onTabChange={setActiveView} badges={{ 'sessoes-ia': escalationCount }} />
     </div>
   )
 }

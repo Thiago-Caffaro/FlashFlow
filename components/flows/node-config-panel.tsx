@@ -19,6 +19,12 @@ const PROVIDER_LABELS: Record<AIProvider, string> = {
 
 // ─── AI assistant config sub-component ───────────────────────────────────────
 
+const PROVIDER_DEFAULT_FALLBACK: Record<AIProvider, string> = {
+  gemini: 'gemini-2.5-flash',
+  openai: 'gpt-4o',
+  openrouter: 'openai/gpt-4o-mini',
+}
+
 function AiAssistantConfig({
   node,
   onChange,
@@ -30,7 +36,8 @@ function AiAssistantConfig({
 }) {
   const { data } = node
   const provider: AIProvider = data.provider ?? 'gemini'
-  const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
+  const useDefaultModel = (data.useDefaultModel as boolean | undefined) !== false
+  const [configuredKeys, setConfiguredKeys] = useState<Record<string, { custom_model?: string }>>({})
   const [availableBlocks, setAvailableBlocks] = useState<AgentMemoryBlock[]>([])
   const [showBlockPicker, setShowBlockPicker] = useState(false)
 
@@ -40,14 +47,15 @@ function AiAssistantConfig({
     fetch('/api/ai-keys')
       .then((r) => r.json())
       .then((json) => {
-        if (json.ok) setConfiguredProviders(Object.keys(json.configured))
+        if (json.ok) setConfiguredKeys(json.configured ?? {})
       })
     fetch(`/api/memory-blocks?instance=${encodeURIComponent(instanceName)}`)
       .then((r) => r.json())
       .then((json) => { if (json.ok) setAvailableBlocks(json.blocks) })
   }, [instanceName])
 
-  const isConfigured = configuredProviders.includes(provider)
+  const isConfigured = !!configuredKeys[provider]
+  const providerDefaultModel = configuredKeys[provider]?.custom_model || PROVIDER_DEFAULT_FALLBACK[provider]
 
   return (
     <>
@@ -59,7 +67,7 @@ function AiAssistantConfig({
           onChange={(e) => {
             const p = e.target.value as AIProvider
             const defaultModel = p === 'gemini' ? 'gemini-2.5-flash' : p === 'openai' ? 'gpt-4o' : ''
-            onChange(node.id, { provider: p, model: defaultModel, customModel: '' })
+            onChange(node.id, { provider: p, model: defaultModel, customModel: '', useDefaultModel: true })
           }}
           className={inputClass}
         >
@@ -77,24 +85,43 @@ function AiAssistantConfig({
       {/* Model */}
       <div>
         <label className={labelClass}>Modelo</label>
-        {provider === 'openrouter' ? (
+
+        {/* "Usar modelo padrão" toggle */}
+        <label className="flex items-center gap-2 mb-2 cursor-pointer select-none">
           <input
-            type="text"
-            value={data.customModel ?? ''}
-            onChange={(e) => onChange(node.id, { customModel: e.target.value })}
-            placeholder="ex: mistral/mistral-7b-instruct"
-            className={inputClass + ' font-mono'}
+            type="checkbox"
+            checked={useDefaultModel}
+            onChange={(e) => onChange(node.id, { useDefaultModel: e.target.checked })}
+            className="w-3.5 h-3.5 accent-[#00a884] cursor-pointer"
           />
-        ) : (
-          <select
-            value={data.model ?? PROVIDER_MODELS[provider][0]}
-            onChange={(e) => onChange(node.id, { model: e.target.value })}
-            className={inputClass}
-          >
-            {PROVIDER_MODELS[provider].map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
+          <span className="text-xs text-[#54656f] dark:text-[#8696a0]">
+            Usar modelo padrão
+            {useDefaultModel && (
+              <span className="ml-1.5 font-mono text-[#00a884]">{providerDefaultModel}</span>
+            )}
+          </span>
+        </label>
+
+        {!useDefaultModel && (
+          provider === 'openrouter' ? (
+            <input
+              type="text"
+              value={data.customModel ?? ''}
+              onChange={(e) => onChange(node.id, { customModel: e.target.value })}
+              placeholder="ex: mistral/mistral-7b-instruct"
+              className={inputClass + ' font-mono'}
+            />
+          ) : (
+            <select
+              value={data.model ?? PROVIDER_MODELS[provider][0]}
+              onChange={(e) => onChange(node.id, { model: e.target.value })}
+              className={inputClass}
+            >
+              {PROVIDER_MODELS[provider].map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          )
         )}
       </div>
 
