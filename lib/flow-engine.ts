@@ -543,7 +543,7 @@ export async function checkActiveSession(instanceName: string, remoteJid: string
     return null
   }
 
-  log(`session active`, { id: data.id, remoteJid, messageCount: data.message_count })
+  log(`session active`, { id: data.id, remoteJid, messageCount: data.message_count, requiresHuman: data.requires_human ?? false })
   return data as AISession
 }
 
@@ -682,9 +682,10 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
 
       if (requiresHuman) {
         log(`handleActiveSession: escalation triggered`, { sessionId: session.id, provider, withEscalation })
-        await supabase.from('ai_sessions')
+        const { error: escalationErr } = await supabase.from('ai_sessions')
           .update({ requires_human: true, pending_messages: [] })
           .eq('id', session.id)
+        if (escalationErr) logError(`handleActiveSession: failed to set requires_human`, { sessionId: session.id, error: escalationErr.message })
       }
 
       if (reply.trim()) {
