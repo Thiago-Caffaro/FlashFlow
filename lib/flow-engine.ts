@@ -553,6 +553,12 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
 
   log(`handleActiveSession`, { sessionId: session.id, newCount, delayMs, message: ctx.incomingMessage.slice(0, 80) })
 
+  // Early exit: session already handed off to a human — don't update anything, don't schedule a timer
+  if (session.requires_human) {
+    log(`handleActiveSession: skipping — session already requires human`, { sessionId: session.id })
+    return
+  }
+
   // Fetch current accumulated messages to append (prevents overwrite race on rapid messages)
   const { data: currentSession } = await supabase
     .from('ai_sessions')
@@ -677,7 +683,7 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
       if (requiresHuman) {
         log(`handleActiveSession: escalation triggered`, { sessionId: session.id, provider, withEscalation })
         await supabase.from('ai_sessions')
-          .update({ requires_human: true })
+          .update({ requires_human: true, pending_messages: [] })
           .eq('id', session.id)
       }
 
