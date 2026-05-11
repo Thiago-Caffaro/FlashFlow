@@ -67,7 +67,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     if (!conversationId) return
     if (showLoading) setLoading(true)
     try {
-      const res = await fetch(`/api/messages?conversationId=${encodeURIComponent(conversationId)}`)
+      const res = await fetch(`/api/messages?conversationId=${encodeURIComponent(conversationId)}`, { cache: 'no-store' })
       const json = await res.json()
       if (json.ok) {
         const msgs: Message[] = json.messages

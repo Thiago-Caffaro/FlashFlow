@@ -241,19 +241,16 @@ export async function POST(req: NextRequest) {
     const waMessageId: string = data.key.id
     const remoteJid: string = data.key.remoteJid
 
-    if (data.key.fromMe === true) {
-      // Verifica se essa mensagem já foi salva pelo FlashFlow (via /api/messages)
-      const { data: existing } = await supabase
-        .from('messages')
-        .select('id')
-        .eq('wa_message_id', waMessageId)
-        .maybeSingle()
+    // Dedup: Evolution API pode reenviar o mesmo webhook; evita violação de constraint
+    const { data: existingMsg } = await supabase
+      .from('messages')
+      .select('id')
+      .eq('wa_message_id', waMessageId)
+      .maybeSingle()
 
-      if (existing) {
-        // Já existe: enviada pelo FlashFlow — ignora para evitar duplicata
-        return NextResponse.json({ ok: true })
-      }
-      // Não existe: enviada por outro dispositivo — processa como outbound
+    if (existingMsg) {
+      // Já existe: enviada pelo FlashFlow ou webhook duplicado — ignora
+      return NextResponse.json({ ok: true })
     }
 
     const isGroup = remoteJid.endsWith('@g.us')
@@ -397,7 +394,7 @@ export async function POST(req: NextRequest) {
       })
       .eq('id', conversation.id)
 
-    await supabase.from('messages').insert({
+    const { error: msgError } = await supabase.from('messages').insert({
       conversation_id: conversation.id,
       wa_message_id: waMessageId,
       content,
@@ -408,6 +405,9 @@ export async function POST(req: NextRequest) {
       sender_jid:  isGroup ? (data.key.participant ?? null) : null,
       sender_name: isGroup ? (data.pushName || null)        : null,
     })
+    if (msgError) {
+      console.error('[webhook] Erro ao inserir mensagem:', msgError.message, { waMessageId, conversationId: conversation.id })
+    }
 
     if (data.key.fromMe !== true && type === 'text') {
       void (async () => {

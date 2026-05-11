@@ -22,7 +22,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json({ ok: true, messages: data ?? [] })
+  return NextResponse.json({ ok: true, messages: data ?? [] }, {
+    headers: { 'Cache-Control': 'no-store' },
+  })
 }
 
 export async function POST(req: NextRequest) {
