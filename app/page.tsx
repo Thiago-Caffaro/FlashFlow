@@ -88,16 +88,13 @@ function ChatApp() {
 
     const instanceName = activeAccount.instanceName
 
+    // Sem filtro server-side: com REPLICA IDENTITY DEFAULT, UPDATE events são descartados
+    // quando há filtro por coluna não-pk. Filtramos instance_name no client.
     const channel = supabase
       .channel(`conversations:${instanceName}`)
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'conversations',
-          filter: `instance_name=eq.${instanceName}`,
-        },
+        { event: '*', schema: 'public', table: 'conversations' },
         (payload) => {
           const record = (payload.new ?? payload.old ?? {}) as Record<string, string>
           if (record.instance_name && record.instance_name !== instanceName) return
@@ -108,8 +105,11 @@ function ChatApp() {
       )
       .subscribe()
 
+    const pollInterval = setInterval(() => fetchConversations(), 15000)
+
     return () => {
       supabase.removeChannel(channel)
+      clearInterval(pollInterval)
       if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current)
     }
   }, [activeAccount, fetchConversations])
