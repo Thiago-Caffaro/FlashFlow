@@ -6,6 +6,25 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+export async function GET(req: NextRequest) {
+  const conversationId = req.nextUrl.searchParams.get('conversationId')
+  if (!conversationId) {
+    return NextResponse.json({ ok: false, error: 'conversationId required' }, { status: 400 })
+  }
+
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  }
+
+  return NextResponse.json({ ok: true, messages: data ?? [] })
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { conversationId, waId, content } = await req.json()

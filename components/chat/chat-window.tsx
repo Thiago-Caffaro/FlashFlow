@@ -66,20 +66,22 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const fetchMessages = useCallback(async (showLoading = false) => {
     if (!conversationId) return
     if (showLoading) setLoading(true)
-    const { data } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true })
-    const msgs = data ?? []
-    setMessages(msgs)
-    setLoading(false)
+    try {
+      const res = await fetch(`/api/messages?conversationId=${encodeURIComponent(conversationId)}`)
+      const json = await res.json()
+      if (json.ok) {
+        const msgs: Message[] = json.messages
+        setMessages(msgs)
 
-    if (msgs.length < 30 && !syncedConversations.has(conversationId)) {
-      syncedConversations.add(conversationId)
-      fetch(`/api/messages/sync/${conversationId}`, { method: 'POST' })
-        .then(() => fetchMessages())
-        .catch(() => {})
+        if (msgs.length < 30 && !syncedConversations.has(conversationId)) {
+          syncedConversations.add(conversationId)
+          fetch(`/api/messages/sync/${conversationId}`, { method: 'POST' })
+            .then(() => fetchMessages())
+            .catch(() => {})
+        }
+      }
+    } finally {
+      setLoading(false)
     }
   }, [conversationId])
 
