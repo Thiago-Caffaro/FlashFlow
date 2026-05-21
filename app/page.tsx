@@ -15,9 +15,10 @@ import AiSessionsTab from '@/components/ai-sessions/ai-sessions-tab'
 import VerticalTabBar, { View } from '@/components/nav/vertical-tab-bar'
 import { AccountProvider, useAccount } from '@/contexts/account-context'
 import { ThemeProvider } from '@/contexts/theme-context'
+import { AuthProvider } from '@/contexts/auth-context'
 import { FEATURES } from '@/lib/features'
 
-const TAB_INDEX: Record<View, number> = { chat: 0, gatilhos: 1, fluxos: 2, memoria: 3, galeria: 4, 'sessoes-ia': 5, ia: 6, 'conf-gerais': 7 }
+const TAB_INDEX: Record<View, number> = { 'sessoes-ia': 0, chat: 1, gatilhos: 2, fluxos: 3, memoria: 4, galeria: 5, ia: 6, 'conf-gerais': 7 }
 
 function playEscalationSound() {
   try {
@@ -48,7 +49,7 @@ function ChatApp() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [activeView, setActiveView] = useState<View>('chat')
+  const [activeView, setActiveView] = useState<View>('sessoes-ia')
   const [escalationCount, setEscalationCount] = useState(0)
   const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const escalationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -170,11 +171,29 @@ function ChatApp() {
     <div className="relative flex h-screen w-full overflow-hidden bg-[#f0f2f5] dark:bg-[#0b141a]">
       {/* Sliding panels container — right-12 reserves 48px for the tab bar */}
       <div className="absolute inset-0 right-12 overflow-hidden">
-        {/* Panel 0: Chat */}
+        {/* Panel 0: Sessões IA */}
+        <div
+          className="absolute inset-0 bg-white dark:bg-[#111b21]"
+          style={{
+            transform: `translateY(${(0 - tabIndex) * 100}%)`,
+            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
+            willChange: 'transform',
+          }}
+        >
+          {activeAccount?.instanceName ? (
+            <AiSessionsTab instanceName={activeAccount.instanceName} />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Panel 1: Chat */}
         <div
           className="absolute inset-0 flex"
           style={{
-            transform: `translateY(${(0 - tabIndex) * 100}%)`,
+            transform: `translateY(${(1 - tabIndex) * 100}%)`,
             transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
             willChange: 'transform',
           }}
@@ -191,11 +210,11 @@ function ChatApp() {
           />
         </div>
 
-        {/* Panel 1: Gatilhos */}
+        {/* Panel 2: Gatilhos */}
         <div
           className="absolute inset-0 bg-white dark:bg-[#111b21]"
           style={{
-            transform: `translateY(${(1 - tabIndex) * 100}%)`,
+            transform: `translateY(${(2 - tabIndex) * 100}%)`,
             transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
             willChange: 'transform',
           }}
@@ -209,11 +228,11 @@ function ChatApp() {
           )}
         </div>
 
-        {/* Panel 2: Fluxos */}
+        {/* Panel 3: Fluxos */}
         <div
           className="absolute inset-0 bg-white dark:bg-[#111b21]"
           style={{
-            transform: `translateY(${(2 - tabIndex) * 100}%)`,
+            transform: `translateY(${(3 - tabIndex) * 100}%)`,
             transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
             willChange: 'transform',
           }}
@@ -227,11 +246,11 @@ function ChatApp() {
           )}
         </div>
 
-        {/* Panel 3: Memória */}
+        {/* Panel 4: Memória */}
         <div
           className="absolute inset-0 bg-white dark:bg-[#111b21]"
           style={{
-            transform: `translateY(${(3 - tabIndex) * 100}%)`,
+            transform: `translateY(${(4 - tabIndex) * 100}%)`,
             transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
             willChange: 'transform',
           }}
@@ -245,11 +264,11 @@ function ChatApp() {
           )}
         </div>
 
-        {/* Panel 4: Galeria */}
+        {/* Panel 5: Galeria */}
         {FEATURES.gallery && <div
           className="absolute inset-0 bg-white dark:bg-[#111b21]"
           style={{
-            transform: `translateY(${(4 - tabIndex) * 100}%)`,
+            transform: `translateY(${(5 - tabIndex) * 100}%)`,
             transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
             willChange: 'transform',
           }}
@@ -262,26 +281,6 @@ function ChatApp() {
             </div>
           )}
         </div>}
-
-        {/* Panel 5: Sessões IA */}
-        {FEATURES.aiSessions && (
-          <div
-            className="absolute inset-0 bg-white dark:bg-[#111b21]"
-            style={{
-              transform: `translateY(${(5 - tabIndex) * 100}%)`,
-              transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
-              willChange: 'transform',
-            }}
-          >
-            {activeAccount?.instanceName ? (
-              <AiSessionsTab instanceName={activeAccount.instanceName} />
-            ) : (
-              <div className="flex items-center justify-center h-full">
-                <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Panel 6: Config. IA */}
         <div
@@ -323,9 +322,11 @@ function ChatApp() {
 export default function Home() {
   return (
     <ThemeProvider>
-      <AccountProvider>
-        <ChatApp />
-      </AccountProvider>
+      <AuthProvider>
+        <AccountProvider>
+          <ChatApp />
+        </AccountProvider>
+      </AuthProvider>
     </ThemeProvider>
   )
 }

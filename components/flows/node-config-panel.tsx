@@ -8,7 +8,12 @@ import { FlowNode, FlowNodeData, Trigger, AIProvider, AgentMemoryBlock, SwitchCa
 
 const PROVIDER_MODELS: Record<Exclude<AIProvider, 'openrouter'>, string[]> = {
   gemini: ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'],
-  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+  openai: [
+    'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano',
+    'o4-mini', 'o3', 'o3-mini', 'o1', 'o1-mini',
+    'gpt-4o', 'gpt-4o-mini',
+    'gpt-4-turbo', 'gpt-3.5-turbo',
+  ],
 }
 
 const PROVIDER_LABELS: Record<AIProvider, string> = {
@@ -111,13 +116,27 @@ function AiAssistantConfig({
               placeholder="ex: mistral/mistral-7b-instruct"
               className={inputClass + ' font-mono'}
             />
+          ) : provider === 'openai' ? (
+            <>
+              <input
+                type="text"
+                list="node-openai-models-datalist"
+                value={data.model ?? PROVIDER_MODELS.openai[0]}
+                onChange={(e) => onChange(node.id, { model: e.target.value })}
+                placeholder="ex: gpt-4o"
+                className={inputClass + ' font-mono'}
+              />
+              <datalist id="node-openai-models-datalist">
+                {PROVIDER_MODELS.openai.map((m) => <option key={m} value={m} />)}
+              </datalist>
+            </>
           ) : (
             <select
-              value={data.model ?? PROVIDER_MODELS[provider][0]}
+              value={data.model ?? PROVIDER_MODELS[provider as Exclude<AIProvider, 'openrouter'>][0]}
               onChange={(e) => onChange(node.id, { model: e.target.value })}
               className={inputClass}
             >
-              {PROVIDER_MODELS[provider].map((m) => (
+              {PROVIDER_MODELS[provider as Exclude<AIProvider, 'openrouter'>].map((m) => (
                 <option key={m} value={m}>{m}</option>
               ))}
             </select>
@@ -265,7 +284,7 @@ function AiAssistantConfig({
           <div className="relative mt-0.5 shrink-0">
             <input
               type="checkbox"
-              checked={data.continueConversation ?? false}
+              checked={data.continueConversation ?? true}
               onChange={(e) => onChange(node.id, { continueConversation: e.target.checked })}
               className="sr-only peer"
             />

@@ -8,7 +8,12 @@ type TestState = 'idle' | 'testing' | 'ok' | 'error'
 type ModelCheckState = 'idle' | 'checking'
 
 const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-pro']
-const OPENAI_MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo']
+const OPENAI_MODELS = [
+  'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano',
+  'o4-mini', 'o3', 'o3-mini', 'o1', 'o1-mini',
+  'gpt-4o', 'gpt-4o-mini',
+  'gpt-4-turbo', 'gpt-3.5-turbo',
+]
 
 interface ProviderInfo {
   id: Provider
@@ -264,7 +269,23 @@ function ProviderCard({
           <label className="text-[11px] font-semibold text-[#667781] dark:text-[#8696a0] uppercase tracking-wide mb-1.5 block">
             Modelo padrão
           </label>
-          {info.modelOptions ? (
+          {info.id === 'openai' ? (
+            <>
+              <input
+                type="text"
+                list={`${info.id}-models-datalist`}
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                onBlur={(e) => { if (e.target.value.trim() !== (configured?.custom_model ?? info.defaultModel)) handleModelChange(e.target.value.trim()) }}
+                placeholder={`ex: ${info.defaultModel}`}
+                className={inputClass + ' w-full font-mono'}
+                disabled={!isSaved && !key.trim()}
+              />
+              <datalist id={`${info.id}-models-datalist`}>
+                {info.modelOptions!.map((m) => <option key={m} value={m} />)}
+              </datalist>
+            </>
+          ) : info.modelOptions ? (
             <select
               value={customModel}
               onChange={(e) => handleModelChange(e.target.value)}

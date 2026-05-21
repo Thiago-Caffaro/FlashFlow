@@ -176,3 +176,17 @@ export interface AISessionWithContext {
   conversation: Conversation
   flow_name: string | null
 }
+
+// ─── Conversation Analysis ─────────────────────────────────────────────────────
+
+export interface MemorySuggestion {
+  name: string
+  content: string
+  type: MemoryBlockType
+  keywords: string[]
+}
+
+export interface AnalysisResult {
+  analysis: string
+  suggestions: MemorySuggestion[]
+}

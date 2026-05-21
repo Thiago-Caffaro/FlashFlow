@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Plus, Trash2, Brain, Tag, X, ChevronRight, Search } from 'lucide-react'
+import { Plus, Trash2, Brain, Tag, X, ChevronRight, Search, Sparkles } from 'lucide-react'
 import { AgentMemoryBlock, MemoryBlockType } from '@/types'
+import AnalyzeConversationsDialog from './analyze-conversations-dialog'
 
 interface Props {
   instanceName: string
@@ -35,6 +36,7 @@ export default function MemoryTab({ instanceName }: Props) {
   const [form, setForm] = useState<Partial<AgentMemoryBlock>>(EMPTY)
   const [saving, setSaving] = useState(false)
   const [keywordInput, setKeywordInput] = useState('')
+  const [analyzeOpen, setAnalyzeOpen] = useState(false)
 
   const fetchBlocks = useCallback(async () => {
     const res = await fetch(`/api/memory-blocks?instance=${encodeURIComponent(instanceName)}`)
@@ -123,6 +125,7 @@ export default function MemoryTab({ instanceName }: Props) {
     : null
 
   return (
+    <>
     <div className="flex h-full bg-white dark:bg-[#111b21]">
       {/* Left panel — block list */}
       <div className="w-80 shrink-0 flex flex-col border-r border-[#f0f2f5] dark:border-[#2a3942]">
@@ -133,13 +136,22 @@ export default function MemoryTab({ instanceName }: Props) {
               <Brain size={18} className="text-[#00a884]" />
               <span className="text-base font-bold text-[#111b21] dark:text-[#e9edef]">Memória do Agente</span>
             </div>
-            <button
-              onClick={openNew}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00a884] hover:bg-[#008a6c] text-white text-xs font-semibold transition-colors"
-            >
-              <Plus size={13} />
-              Novo
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setAnalyzeOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#f0f2f5] dark:bg-[#2a3942] hover:bg-[#e9edef] dark:hover:bg-[#3d4f5a] text-[#667781] dark:text-[#aebac1] text-xs font-semibold transition-colors"
+              >
+                <Sparkles size={13} />
+                Analisar
+              </button>
+              <button
+                onClick={openNew}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00a884] hover:bg-[#008a6c] text-white text-xs font-semibold transition-colors"
+              >
+                <Plus size={13} />
+                Novo
+              </button>
+            </div>
           </div>
           {/* Search */}
           <div className="relative">
@@ -368,5 +380,17 @@ export default function MemoryTab({ instanceName }: Props) {
         </div>
       )}
     </div>
+
+    {analyzeOpen && (
+      <AnalyzeConversationsDialog
+        instanceName={instanceName}
+        onClose={() => setAnalyzeOpen(false)}
+        onBlocksAccepted={() => {
+          fetchBlocks()
+          setAnalyzeOpen(false)
+        }}
+      />
+    )}
+    </>
   )
 }

@@ -14,12 +14,12 @@ interface Props {
 }
 
 const TABS: { id: View; label: string; Icon: React.ElementType }[] = [
+  { id: 'sessoes-ia' as View, label: 'Sessões IA', Icon: Bot },
   { id: 'chat',     label: 'Chat',       Icon: MessageSquare },
   { id: 'gatilhos', label: 'Gatilhos',   Icon: Zap },
   { id: 'fluxos',   label: 'Fluxos',     Icon: GitBranch },
   { id: 'memoria',  label: 'Memória',    Icon: BookOpen },
   ...(FEATURES.gallery ? [{ id: 'galeria' as View, label: 'Galeria', Icon: Images }] : []),
-  ...(FEATURES.aiSessions ? [{ id: 'sessoes-ia' as View, label: 'Sessões IA', Icon: Bot }] : []),
   { id: 'ia',         label: 'Config. IA',   Icon: Brain },
   { id: 'conf-gerais' as View, label: 'Conf. Gerais', Icon: Settings2 },
 ]
