@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Search } from 'lucide-react'
 import { Conversation } from '@/types'
 import ConversationItem from './conversation-item'
-import AccountSwitcher from './account-switcher'
+import AccountDropdown from './account-dropdown'
 
 interface ConversationListProps {
   conversations: Conversation[]
@@ -38,6 +38,7 @@ export default function ConversationList({
           </div>
           <span className="font-semibold text-[#111b21] dark:text-[#e9edef] text-base">FlashFlow</span>
         </div>
+        <AccountDropdown onConnectingChange={setIsConnecting} />
       </div>
 
       {/* Search */}
@@ -78,7 +79,6 @@ export default function ConversationList({
           ))
         )}
       </div>
-      <AccountSwitcher onConnectingChange={setIsConnecting} />
     </div>
   )
 }

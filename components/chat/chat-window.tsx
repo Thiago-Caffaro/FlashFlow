@@ -58,6 +58,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const [sending, setSending] = useState(false)
   const [imgError, setImgError] = useState(false)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const isAtBottomRef = useRef(true)
 
   useEffect(() => setImgError(false), [conversation?.wa_id])
 
@@ -134,8 +135,12 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   }, [conversationId, fetchMessages])
 
   useEffect(() => {
+    isAtBottomRef.current = true
+  }, [conversationId])
+
+  useEffect(() => {
     const el = messagesContainerRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && isAtBottomRef.current) el.scrollTop = el.scrollHeight
   }, [messages])
 
   const handleSend = async (content: string) => {
@@ -295,6 +300,11 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       {/* Messages area */}
       <div
         ref={messagesContainerRef}
+        onScroll={() => {
+          const el = messagesContainerRef.current
+          if (!el) return
+          isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150
+        }}
         className="flex-1 overflow-y-auto px-4 md:px-20 py-4 min-h-0"
         style={{ backgroundColor: 'var(--chat-bg)' }}
       >

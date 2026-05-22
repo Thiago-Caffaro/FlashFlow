@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Bot, CheckSquare, ChevronDown, Square, X, Zap } from 'lucide-react'
+import { useState } from 'react'
+import { AlertTriangle, Bot, CheckSquare, Square, X, Zap } from 'lucide-react'
 import { AISessionWithContext } from '@/types'
-import { useAccount } from '@/contexts/account-context'
+import AccountDropdown from '@/components/chat/account-dropdown'
 
 type Filter = 'all' | 'escalated' | 'ai'
 
@@ -151,73 +151,6 @@ const FILTER_OPTIONS: { value: Filter; label: string; Icon?: React.ElementType }
   { value: 'ai',        label: 'Com IA',    Icon: Zap },
 ]
 
-const STATE_DOT: Record<string, string> = {
-  open:       'bg-[#00a884]',
-  connecting: 'bg-amber-400',
-  close:      'bg-[#aebac1] dark:bg-[#667781]',
-}
-
-function AccountSelector() {
-  const { accounts, activeAccount, setActiveAccount } = useAccount()
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [open])
-
-  if (accounts.length <= 1) return null
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors max-w-[160px]"
-      >
-        <span className={`shrink-0 w-2 h-2 rounded-full ${STATE_DOT[activeAccount?.state ?? 'close']}`} />
-        <span className="text-xs font-medium text-[#111b21] dark:text-[#e9edef] truncate">
-          {activeAccount?.label ?? activeAccount?.instanceName ?? '—'}
-        </span>
-        <ChevronDown size={11} className={`shrink-0 text-[#667781] transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-
-      {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 min-w-[180px] rounded-xl bg-white dark:bg-[#233138] border border-[#d1d7db] dark:border-[#2a3942] shadow-lg overflow-hidden">
-          {accounts.map((acc) => (
-            <button
-              key={acc.instanceName}
-              onClick={() => { setActiveAccount(acc); setOpen(false) }}
-              className={[
-                'w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors',
-                acc.instanceName === activeAccount?.instanceName
-                  ? 'bg-[#f0f2f5] dark:bg-[#2a3942]'
-                  : 'hover:bg-[#f5f6f6] dark:hover:bg-[#182229]',
-              ].join(' ')}
-            >
-              <span className={`shrink-0 w-2 h-2 rounded-full ${STATE_DOT[acc.state]}`} />
-              <span className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-[#111b21] dark:text-[#e9edef] truncate">
-                  {acc.label || acc.instanceName}
-                </p>
-                {acc.profileName && (
-                  <p className="text-[10px] text-[#667781] dark:text-[#8696a0] truncate">{acc.profileName}</p>
-                )}
-              </span>
-              {acc.instanceName === activeAccount?.instanceName && (
-                <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-[#00a884]" />
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 export default function SessionList({
   sessions,
@@ -247,7 +180,7 @@ export default function SessionList({
               : `${sessions.length} ${sessions.length === 1 ? 'sessão ativa' : 'sessões ativas'}`}
           </p>
         </div>
-        <AccountSelector />
+        <AccountDropdown />
       </div>
 
       {/* Filter pills */}
