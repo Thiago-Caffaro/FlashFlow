@@ -35,11 +35,24 @@ services:
     entrypoint:
       - /bin/bash
       - -c
-      - >-
-        cd /evolution &&
-        npm install global-agent --no-save --silent &&
-        . ./Docker/scripts/deploy_database.sh &&
-        NODE_OPTIONS="-r global-agent/bootstrap" npm run start:prod
+      - |
+        cd /evolution
+        cat > /tmp/ps.js << 'EOF'
+        const p = process.env.GLOBAL_AGENT_HTTPS_PROXY || process.env.GLOBAL_AGENT_HTTP_PROXY;
+        if (p) {
+          try {
+            const { HttpsProxyAgent, HttpProxyAgent } = require('/evolution/node_modules/hpagent');
+            const https = require('https');
+            const http = require('http');
+            https.globalAgent = new HttpsProxyAgent({ proxy: p });
+            http.globalAgent = new HttpProxyAgent({ proxy: p });
+          } catch (e) {
+            process.stderr.write('proxy-setup: ' + e.message + '\n');
+          }
+        }
+        EOF
+        . ./Docker/scripts/deploy_database.sh
+        NODE_OPTIONS='-r /tmp/ps.js' npm run start:prod
     restart: always
     ports:
       - "8081:8080"
