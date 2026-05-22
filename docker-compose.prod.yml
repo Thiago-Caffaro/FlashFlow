@@ -28,7 +28,13 @@ services:
   # ─── Evolution API ──────────────────────────────────────────────────────────
   # Porta 8081 exposta externamente apenas para debug (opcional remover em prod)
   evolution-api:
-    image: ghcr.io/thiago-caffaro/evolution-api:latest
+    image: evoapicloud/evolution-api:latest
+    # Instala global-agent (não incluso na imagem oficial) antes de subir a app,
+    # necessário para que NODE_OPTIONS=-r global-agent/bootstrap funcione
+    entrypoint:
+      - /bin/bash
+      - -c
+      - cd /evolution && npm install global-agent --no-save --silent && . ./Docker/scripts/deploy_database.sh && npm run start:prod
     restart: always
     ports:
       - "8081:8080"
