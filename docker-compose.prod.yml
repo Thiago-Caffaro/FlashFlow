@@ -29,12 +29,17 @@ services:
   # Porta 8081 exposta externamente apenas para debug (opcional remover em prod)
   evolution-api:
     image: evoapicloud/evolution-api:latest
-    # Instala global-agent (não incluso na imagem oficial) antes de subir a app,
-    # necessário para que NODE_OPTIONS=-r global-agent/bootstrap funcione
+    # Instala global-agent antes de subir a app. NODE_OPTIONS é passado apenas
+    # para o start:prod (não para o npm install nem para as migrations) para evitar
+    # que o bootstrap falhe antes do pacote estar disponível.
     entrypoint:
       - /bin/bash
       - -c
-      - cd /evolution && npm install global-agent --no-save --silent && . ./Docker/scripts/deploy_database.sh && npm run start:prod
+      - >-
+        cd /evolution &&
+        npm install global-agent --no-save --silent &&
+        . ./Docker/scripts/deploy_database.sh &&
+        NODE_OPTIONS="-r global-agent/bootstrap" npm run start:prod
     restart: always
     ports:
       - "8081:8080"
@@ -86,9 +91,8 @@ services:
       PROXY_PASSWORD: ${PROXY_PASSWORD}
 
       # ── Fix: proxy para downloads de mídia do CDN do WhatsApp ──
-      # Sem isso, o Baileys baixa mídia direto de mmg.whatsapp.net → 403 (IP datacenter)
-      # global-agent patcha o http/https global do Node.js para usar o proxy em TODOS requests
-      NODE_OPTIONS: -r global-agent/bootstrap
+      # NODE_OPTIONS é passado inline apenas para o start:prod (ver entrypoint acima).
+      # As vars GLOBAL_AGENT_* precisam estar no ambiente para o global-agent ler em runtime.
       GLOBAL_AGENT_HTTP_PROXY: http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}
       GLOBAL_AGENT_HTTPS_PROXY: http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}
       GLOBAL_AGENT_NO_PROXY: localhost,127.0.0.1,flashflow
