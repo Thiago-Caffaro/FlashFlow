@@ -1,11 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { MessageSquare, Zap, GitBranch, Brain, BookOpen, Images, Sun, Moon, Bot, Settings2 } from 'lucide-react'
+import { MessageSquare, Zap, GitBranch, Brain, BookOpen, Images, Sun, Moon, Settings2 } from 'lucide-react'
 import { useTheme } from '@/contexts/theme-context'
 import { FEATURES } from '@/lib/features'
 
-export type View = 'chat' | 'gatilhos' | 'fluxos' | 'memoria' | 'galeria' | 'sessoes-ia' | 'ia' | 'conf-gerais'
+export type View = 'chats' | 'gatilhos' | 'fluxos' | 'memoria' | 'galeria' | 'ia' | 'conf-gerais'
 
 interface Props {
   activeTab: View
@@ -14,13 +14,12 @@ interface Props {
 }
 
 const TABS: { id: View; label: string; Icon: React.ElementType }[] = [
-  { id: 'sessoes-ia' as View, label: 'Sessões IA', Icon: Bot },
-  { id: 'chat',     label: 'Chat',       Icon: MessageSquare },
-  { id: 'gatilhos', label: 'Gatilhos',   Icon: Zap },
-  { id: 'fluxos',   label: 'Fluxos',     Icon: GitBranch },
-  { id: 'memoria',  label: 'Memória',    Icon: BookOpen },
+  { id: 'chats',      label: 'Chats',       Icon: MessageSquare },
+  { id: 'gatilhos',   label: 'Gatilhos',    Icon: Zap },
+  { id: 'fluxos',     label: 'Fluxos',      Icon: GitBranch },
+  { id: 'memoria',    label: 'Memória',     Icon: BookOpen },
   ...(FEATURES.gallery ? [{ id: 'galeria' as View, label: 'Galeria', Icon: Images }] : []),
-  { id: 'ia',         label: 'Config. IA',   Icon: Brain },
+  { id: 'ia',         label: 'Config. IA',  Icon: Brain },
   { id: 'conf-gerais' as View, label: 'Conf. Gerais', Icon: Settings2 },
 ]
 

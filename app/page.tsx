@@ -1,24 +1,35 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { Conversation } from '@/types'
-import ConversationList from '@/components/chat/conversation-list'
-import ChatWindow from '@/components/chat/chat-window'
+import ChatsTab from '@/components/chats/chats-tab'
 import TriggersTab from '@/components/sidebar-right/triggers-tab'
 import FlowsTab from '@/components/flows/flows-tab'
 import AiSettingsTab from '@/components/settings/ai-settings-tab'
 import GeneralSettingsTab from '@/components/settings/general-settings-tab'
 import MemoryTab from '@/components/memory/memory-tab'
 import GalleryTab from '@/components/gallery/gallery-tab'
-import AiSessionsTab from '@/components/ai-sessions/ai-sessions-tab'
 import VerticalTabBar, { View } from '@/components/nav/vertical-tab-bar'
 import { AccountProvider, useAccount } from '@/contexts/account-context'
 import { ThemeProvider } from '@/contexts/theme-context'
 import { AuthProvider } from '@/contexts/auth-context'
 import { FEATURES } from '@/lib/features'
 
-const TAB_INDEX: Record<View, number> = { 'sessoes-ia': 0, chat: 1, gatilhos: 2, fluxos: 3, memoria: 4, galeria: 5, ia: 6, 'conf-gerais': 7 }
+// Panel positions — fixed regardless of gallery feature flag
+const TAB_INDEX: Record<View, number> = {
+  chats:        0,
+  gatilhos:     1,
+  fluxos:       2,
+  memoria:      3,
+  galeria:      4,
+  ia:           5,
+  'conf-gerais': 6,
+}
+
+function getStoredView(): View {
+  if (typeof window === 'undefined') return 'chats'
+  return (localStorage.getItem('activeView') as View) ?? 'chats'
+}
 
 function playEscalationSound() {
   try {
@@ -46,81 +57,20 @@ function playEscalationSound() {
 
 function ChatApp() {
   const { activeAccount } = useAccount()
-  const [conversations, setConversations] = useState<Conversation[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [activeView, setActiveView] = useState<View>('sessoes-ia')
+  const [activeView, setActiveView] = useState<View>(getStoredView)
   const [escalationCount, setEscalationCount] = useState(0)
-  const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const escalationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevEscalationRef = useRef(0)
   const escalationInitialized = useRef(false)
 
-  const fetchConversations = useCallback(async (showLoading = false) => {
-    if (!activeAccount) {
-      setConversations([])
-      setLoading(false)
-      return
-    }
-    if (showLoading) setLoading(true)
-    const { data } = await supabase
-      .from('conversations')
-      .select('*')
-      .eq('instance_name', activeAccount.instanceName)
-      .order('last_message_at', { ascending: false })
+  const handleTabChange = (v: View) => {
+    setActiveView(v)
+    localStorage.setItem('activeView', v)
+  }
 
-    const seen = new Set<string>()
-    const unique = (data ?? []).filter((c) => {
-      if (seen.has(c.wa_id)) return false
-      seen.add(c.wa_id)
-      return true
-    })
-    setConversations(unique)
-    setLoading(false)
-  }, [activeAccount])
-
+  // Escalation badge polling
   useEffect(() => {
-    setSelectedId(null)
-    fetchConversations(true)
-  }, [activeAccount?.instanceName, fetchConversations])
-
-  useEffect(() => {
-    if (!activeAccount) return
-
-    const instanceName = activeAccount.instanceName
-
-    // Sem filtro server-side: com REPLICA IDENTITY DEFAULT, UPDATE events são descartados
-    // quando há filtro por coluna não-pk. Filtramos instance_name no client.
-    const channel = supabase
-      .channel(`conversations:${instanceName}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'conversations' },
-        (payload) => {
-          const record = (payload.new ?? payload.old ?? {}) as Record<string, string>
-          if (record.instance_name && record.instance_name !== instanceName) return
-
-          if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current)
-          realtimeTimerRef.current = setTimeout(() => fetchConversations(false), 300)
-        }
-      )
-      .subscribe()
-
-    const pollInterval = setInterval(() => fetchConversations(), 15000)
-
-    return () => {
-      supabase.removeChannel(channel)
-      clearInterval(pollInterval)
-      if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current)
-    }
-  }, [activeAccount, fetchConversations])
-
-  useEffect(() => {
-    if (!activeAccount) {
-      setEscalationCount(0)
-      return
-    }
-
+    if (!activeAccount) { setEscalationCount(0); return }
     const instanceName = activeAccount.instanceName
 
     const fetchEscalationCount = async () => {
@@ -142,179 +92,111 @@ function ChatApp() {
 
     const channel = supabase
       .channel(`escalations:${instanceName}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'ai_sessions' },
-        (payload) => {
-          const record = (payload.new ?? payload.old ?? {}) as Record<string, unknown>
-          if (record.instance_name && record.instance_name !== instanceName) return
-          if (escalationTimerRef.current) clearTimeout(escalationTimerRef.current)
-          escalationTimerRef.current = setTimeout(fetchEscalationCount, 300)
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_sessions' }, (payload) => {
+        const record = (payload.new ?? payload.old ?? {}) as Record<string, unknown>
+        if (record.instance_name && record.instance_name !== instanceName) return
+        if (escalationTimerRef.current) clearTimeout(escalationTimerRef.current)
+        escalationTimerRef.current = setTimeout(fetchEscalationCount, 300)
+      })
       .subscribe()
 
-    // Polling fallback — realtime de ai_sessions pode não estar habilitado no Supabase
-    const pollInterval = setInterval(fetchEscalationCount, 10000)
+    const poll = setInterval(fetchEscalationCount, 10000)
 
     return () => {
       supabase.removeChannel(channel)
-      clearInterval(pollInterval)
+      clearInterval(poll)
       if (escalationTimerRef.current) clearTimeout(escalationTimerRef.current)
     }
   }, [activeAccount])
 
-  const selectedConversation = conversations.find((c) => c.id === selectedId) ?? null
   const tabIndex = TAB_INDEX[activeView]
+
+  const noAccount = (
+    <div className="flex items-center justify-center h-full">
+      <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
+    </div>
+  )
+
+  const panel = (position: number, content: React.ReactNode) => (
+    <div
+      className="absolute inset-0"
+      style={{
+        transform: `translateY(${(position - tabIndex) * 100}%)`,
+        transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
+        willChange: 'transform',
+      }}
+    >
+      {content}
+    </div>
+  )
 
   return (
     <div className="relative flex h-screen w-full overflow-hidden bg-[#f0f2f5] dark:bg-[#0b141a]">
-      {/* Sliding panels container — right-12 reserves 48px for the tab bar */}
+      {/* Sliding panels — right-12 reserves 48px for the tab bar */}
       <div className="absolute inset-0 right-12 overflow-hidden">
-        {/* Panel 0: Sessões IA */}
-        <div
-          className="absolute inset-0 bg-white dark:bg-[#111b21]"
-          style={{
-            transform: `translateY(${(0 - tabIndex) * 100}%)`,
-            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
-            willChange: 'transform',
-          }}
-        >
-          {activeAccount?.instanceName ? (
-            <AiSessionsTab instanceName={activeAccount.instanceName} />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
-            </div>
-          )}
-        </div>
 
-        {/* Panel 1: Chat */}
-        <div
-          className="absolute inset-0 flex"
-          style={{
-            transform: `translateY(${(1 - tabIndex) * 100}%)`,
-            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
-            willChange: 'transform',
-          }}
-        >
-          <ConversationList
-            conversations={conversations}
-            loading={loading}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
-          <ChatWindow
-            conversation={selectedConversation}
-            onMessageSent={() => {}}
-          />
-        </div>
+        {/* Panel 0: Chats */}
+        {panel(0,
+          <div className="h-full bg-white dark:bg-[#111b21]">
+            {activeAccount?.instanceName
+              ? <ChatsTab instanceName={activeAccount.instanceName} />
+              : noAccount}
+          </div>
+        )}
 
-        {/* Panel 2: Gatilhos */}
-        <div
-          className="absolute inset-0 bg-white dark:bg-[#111b21]"
-          style={{
-            transform: `translateY(${(2 - tabIndex) * 100}%)`,
-            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
-            willChange: 'transform',
-          }}
-        >
-          {activeAccount?.instanceName ? (
-            <TriggersTab instanceName={activeAccount.instanceName} />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
-            </div>
-          )}
-        </div>
+        {/* Panel 1: Gatilhos */}
+        {panel(1,
+          <div className="h-full bg-white dark:bg-[#111b21]">
+            {activeAccount?.instanceName
+              ? <TriggersTab instanceName={activeAccount.instanceName} />
+              : noAccount}
+          </div>
+        )}
 
-        {/* Panel 3: Fluxos */}
-        <div
-          className="absolute inset-0 bg-white dark:bg-[#111b21]"
-          style={{
-            transform: `translateY(${(3 - tabIndex) * 100}%)`,
-            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
-            willChange: 'transform',
-          }}
-        >
-          {activeAccount?.instanceName ? (
-            <FlowsTab instanceName={activeAccount.instanceName} />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
-            </div>
-          )}
-        </div>
+        {/* Panel 2: Fluxos */}
+        {panel(2,
+          <div className="h-full bg-white dark:bg-[#111b21]">
+            {activeAccount?.instanceName
+              ? <FlowsTab instanceName={activeAccount.instanceName} />
+              : noAccount}
+          </div>
+        )}
 
-        {/* Panel 4: Memória */}
-        <div
-          className="absolute inset-0 bg-white dark:bg-[#111b21]"
-          style={{
-            transform: `translateY(${(4 - tabIndex) * 100}%)`,
-            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
-            willChange: 'transform',
-          }}
-        >
-          {activeAccount?.instanceName ? (
-            <MemoryTab instanceName={activeAccount.instanceName} />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
-            </div>
-          )}
-        </div>
+        {/* Panel 3: Memória */}
+        {panel(3,
+          <div className="h-full bg-white dark:bg-[#111b21]">
+            {activeAccount?.instanceName
+              ? <MemoryTab instanceName={activeAccount.instanceName} />
+              : noAccount}
+          </div>
+        )}
 
-        {/* Panel 5: Galeria */}
-        {FEATURES.gallery && <div
-          className="absolute inset-0 bg-white dark:bg-[#111b21]"
-          style={{
-            transform: `translateY(${(5 - tabIndex) * 100}%)`,
-            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
-            willChange: 'transform',
-          }}
-        >
-          {activeAccount?.instanceName ? (
-            <GalleryTab instanceName={activeAccount.instanceName} />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
-            </div>
-          )}
-        </div>}
+        {/* Panel 4: Galeria (conditional) */}
+        {FEATURES.gallery && panel(4,
+          <div className="h-full bg-white dark:bg-[#111b21]">
+            {activeAccount?.instanceName
+              ? <GalleryTab instanceName={activeAccount.instanceName} />
+              : noAccount}
+          </div>
+        )}
 
-        {/* Panel 6: Config. IA */}
-        <div
-          className="absolute inset-0"
-          style={{
-            transform: `translateY(${(6 - tabIndex) * 100}%)`,
-            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
-            willChange: 'transform',
-          }}
-        >
-          <AiSettingsTab />
-        </div>
+        {/* Panel 5: Config. IA */}
+        {panel(5, <AiSettingsTab />)}
 
-        {/* Panel 7: Conf. Gerais */}
-        <div
-          className="absolute inset-0"
-          style={{
-            transform: `translateY(${(7 - tabIndex) * 100}%)`,
-            transition: 'transform 350ms cubic-bezier(0.4, 0, 0.2, 1)',
-            willChange: 'transform',
-          }}
-        >
-          {activeAccount?.instanceName ? (
-            <GeneralSettingsTab instanceName={activeAccount.instanceName} />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
-            </div>
-          )}
-        </div>
+        {/* Panel 6: Conf. Gerais */}
+        {panel(6,
+          activeAccount?.instanceName
+            ? <GeneralSettingsTab instanceName={activeAccount.instanceName} />
+            : noAccount
+        )}
       </div>
 
-      {/* Vertical tab bar — always visible on right edge */}
-      <VerticalTabBar activeTab={activeView} onTabChange={setActiveView} badges={{ 'sessoes-ia': escalationCount }} />
+      {/* Tab bar */}
+      <VerticalTabBar
+        activeTab={activeView}
+        onTabChange={handleTabChange}
+        badges={{ chats: escalationCount }}
+      />
     </div>
   )
 }
