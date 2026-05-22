@@ -1,34 +1,97 @@
 services:
 
-  # ─── Nginx Proxy Manager ───────────────────────────────────────────────────
-  nginx-proxy:
-    image: jc21/nginx-proxy-manager:latest
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-      - "81:81"
-    volumes:
-      - npm_data:/data
-      - npm_letsencrypt:/etc/letsencrypt
-
   # ─── FlashFlow ─────────────────────────────────────────────────────────────
-  # Evolution API roda no TrueNAS local (100.119.152.43) via Tailscale
-  # para contornar o bloqueio de pre-keys do WhatsApp em IPs de datacenter (Hetzner)
+  # HTTPS exposto via Tailscale Funnel (porta 3000 → funnel :443)
   flashflow:
     image: ghcr.io/thiago-caffaro/flashflow:latest
     restart: always
     ports:
       - "3000:3000"
     environment:
-      SUPABASE_URL: https://lyaaxlbzahvklibomske.supabase.co
-      NEXT_PUBLIC_SUPABASE_URL: https://lyaaxlbzahvklibomske.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YWF4bGJ6YWh2a2xpYm9tc2tlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1ODM4NjcsImV4cCI6MjA5MTE1OTg2N30.TCmRt2ylmJ_p4ubIxewQ2EBealT0p0pCZwdKD6ao_-s
-      SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5YWF4bGJ6YWh2a2xpYm9tc2tlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU4Mzg2NywiZXhwIjoyMDkxMTU5ODY3fQ.YnvxriFvPK5ppULeYjILKaie1B4MTaNyT6wfYvgHsSU
-      EVOLUTION_API_URL: http://100.119.152.43:8080
-      EVOLUTION_API_KEY: flashflow123456
-      WEBHOOK_BASE_URL: http://87.99.134.147:3000
+      SUPABASE_URL: ${SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      EVOLUTION_API_URL: http://evolution-api:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
+      WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL}
+      AI_ENCRYPTION_KEY: ${AI_ENCRYPTION_KEY}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      AUTH_SECRET: ${AUTH_SECRET}
+      NEXT_PUBLIC_FEATURE_AI_SESSIONS: "true"
+      NEXT_PUBLIC_FEATURE_GALLERY: "true"
+      NEXT_PUBLIC_FEATURE_SWITCH_CASE: "false"
+    depends_on:
+      - evolution-api
+
+  # ─── Evolution API ──────────────────────────────────────────────────────────
+  # Porta 8081 exposta externamente apenas para debug (opcional remover em prod)
+  evolution-api:
+    image: ghcr.io/thiago-caffaro/evolution-api:latest
+    restart: always
+    ports:
+      - "8081:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+      - evolution_store:/evolution/store
+    environment:
+      # ── Servidor ──
+      SERVER_TYPE: http
+      SERVER_PORT: 8080
+
+      # ── Auth ──
+      AUTHENTICATION_TYPE: apikey
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+
+      # ── Banco (Supabase — Session pooler :5432, sem bloqueio de datacenter) ──
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: ${EVOLUTION_DATABASE_SESSION_URL}
+      DIRECT_URL: ${EVOLUTION_DATABASE_SESSION_URL}
+      # Transaction pooler (pgbouncer) usado apenas para queries da app
+      DATABASE_URL: ${EVOLUTION_DATABASE_TRANSACTION_URL}
+
+      # ── Redis (Upstash) ──
+      REDIS_ENABLED: "true"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: ${REDIS_URL}
+
+      # ── Sessão WhatsApp ──
+      CONFIG_SESSION_PHONE_CLIENT: FlashFlow
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      CONFIG_SESSION_PHONE_VERSION: 2.3000.1036893687
+
+      # ── Webhook FlashFlow ──
+      WEBHOOK_GLOBAL_URL: ${WEBHOOK_BASE_URL}/api/webhook/evolution
+      WEBHOOK_GLOBAL_ENABLED: "false"
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
+      WEBHOOK_EVENTS_MESSAGES_UPDATE: "true"
+      WEBHOOK_EVENTS_CONTACTS_UPSERT: "true"
+      WEBHOOK_EVENTS_CONNECTION_UPDATE: "true"
+      WEBHOOK_EVENTS_QRCODE_UPDATED: "true"
+
+      # ── Proxy Webshare por instância (conexão WebSocket WhatsApp) ──
+      PROXY_HOST: ${PROXY_HOST}
+      PROXY_PORT: ${PROXY_PORT}
+      PROXY_PROTOCOL: ${PROXY_PROTOCOL}
+      PROXY_USERNAME: ${PROXY_USERNAME}
+      PROXY_PASSWORD: ${PROXY_PASSWORD}
+
+      # ── Fix: proxy para downloads de mídia do CDN do WhatsApp ──
+      # Sem isso, o Baileys baixa mídia direto de mmg.whatsapp.net → 403 (IP datacenter)
+      # global-agent patcha o http/https global do Node.js para usar o proxy em TODOS requests
+      NODE_OPTIONS: -r global-agent/bootstrap
+      GLOBAL_AGENT_HTTP_PROXY: http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}
+      GLOBAL_AGENT_HTTPS_PROXY: http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}
+      GLOBAL_AGENT_NO_PROXY: localhost,127.0.0.1,flashflow
+
+      # ── Misc ──
+      TZ: America/Sao_Paulo
+      DEL_INSTANCE_ON_LOGOUT: "false"
+      DOCKER_ENV: "true"
 
 volumes:
-  npm_data:
-  npm_letsencrypt:
+  evolution_instances:
+  evolution_store:
