@@ -31,11 +31,13 @@ async function syncWebhooks(instanceNames: string[]) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
         body: JSON.stringify({
-          enabled: true,
-          url: webhookUrl,
-          webhook_by_events: true,
-          webhook_base64: false,
-          events: WEBHOOK_EVENTS,
+          webhook: {
+            enabled: true,
+            url: webhookUrl,
+            webhook_by_events: true,
+            webhook_base64: false,
+            events: WEBHOOK_EVENTS,
+          },
         }),
       }).catch(() => {})
     )
@@ -185,6 +187,7 @@ export async function POST(req: NextRequest) {
     }
 
     const createData = await createRes.json()
+    console.log('[accounts/create] resposta completa:', JSON.stringify(createData).slice(0, 800))
 
     // Salva no banco
     const { error: insertError } = await supabaseAdmin
