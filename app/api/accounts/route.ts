@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
       body: JSON.stringify({
         instanceName,
-        qrcode: true,
+        qrcode: false,
         integration: 'WHATSAPP-BAILEYS',
         webhook: {
           enabled: true,
