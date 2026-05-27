@@ -152,42 +152,31 @@ export async function POST(req: NextRequest) {
 
     const webhookUrl = `${WEBHOOK_BASE_URL}/api/webhook/evolution`
 
-    // Cria instância com qrcode:true para obter o QR diretamente na resposta.
-    // Timeout de 40s — o handshake via proxy pode demorar alguns segundos.
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 40_000)
-
-    let createRes: Response
-    try {
-      createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-        signal: controller.signal,
-        body: JSON.stringify({
-          instanceName,
-          qrcode: true,
-          integration: 'WHATSAPP-BAILEYS',
-          webhook: {
-            enabled: true,
-            url: webhookUrl,
-            webhook_by_events: true,
-            webhook_base64: false,
-            events: WEBHOOK_EVENTS,
-          },
-        }),
-      })
-    } finally {
-      clearTimeout(timeoutId)
-    }
+    // qrcode:false — não auto-inicia o Baileys durante o create.
+    // O Baileys só inicia quando /instance/connect for chamado, permitindo que
+    // o polling o inicie e (em algumas versões) receba o QR na resposta.
+    const createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+      body: JSON.stringify({
+        instanceName,
+        qrcode: false,
+        integration: 'WHATSAPP-BAILEYS',
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          webhook_by_events: true,
+          webhook_base64: false,
+          events: WEBHOOK_EVENTS,
+        },
+      }),
+    })
 
     if (!createRes.ok) {
       const errBody = await createRes.text()
       console.error('Erro ao criar instância:', errBody)
       return NextResponse.json({ error: 'Falha ao criar instância' }, { status: 500 })
     }
-
-    const createData = await createRes.json()
-    console.log('[accounts/create] resposta completa:', JSON.stringify(createData).slice(0, 800))
 
     // Salva no banco
     const { error: insertError } = await supabaseAdmin
@@ -199,21 +188,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
     }
 
-    // qrcode:true → QR vem na resposta do create
-    const qr: string | null = createData?.qrcode?.base64 ?? createData?.base64 ?? null
-
-    if (qr) {
-      cacheQr(instanceName, qr)
-    } else {
-      console.log('[accounts/create] QR não veio no create — aguardando QRCODE_UPDATED webhook')
-    }
-
-    return NextResponse.json({ instanceName, qr })
+    return NextResponse.json({ instanceName, qr: null })
   } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      console.error('POST /api/accounts: timeout ao criar instância (40s)')
-      return NextResponse.json({ error: 'Timeout ao criar instância' }, { status: 504 })
-    }
     console.error('POST /api/accounts error:', err)
     return NextResponse.json({ ok: false }, { status: 500 })
   }
