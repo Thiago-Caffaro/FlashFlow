@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { executeFlow, checkActiveSession, handleActiveSession } from '@/lib/flow-engine'
+import { cacheQr, clearQr } from '@/lib/qr-cache'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -173,6 +174,20 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const event = (body.event ?? '').toLowerCase()
+
+    if (event === 'qrcode.updated') {
+      const instanceName: string = body.instance ?? ''
+      const qr: string | null = body.data?.qrcode?.base64 ?? body.data?.base64 ?? null
+      if (instanceName && qr) cacheQr(instanceName, qr)
+      return NextResponse.json({ ok: true })
+    }
+
+    if (event === 'connection.update') {
+      const instanceName: string = body.instance ?? ''
+      const state: string = (body.data?.instance?.state ?? body.data?.state ?? '').toLowerCase()
+      if (state === 'open' && instanceName) clearQr(instanceName)
+      return NextResponse.json({ ok: true })
+    }
 
     if (event === 'messages.update') {
       const updates: Array<{ key: { id: string; fromMe: boolean }; update: { status: string } }> =

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { cacheQr } from '@/lib/qr-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -119,7 +120,7 @@ export async function POST(req: NextRequest) {
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
       body: JSON.stringify({
         instanceName,
-        qrcode: false,
+        qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
         webhook: {
           enabled: true,
@@ -132,6 +133,7 @@ export async function POST(req: NextRequest) {
             'MESSAGES_DELETE',
             'SEND_MESSAGE',
             'CONNECTION_UPDATE',
+            'QRCODE_UPDATED',
             'TYPE_UPDATE',
             'CHATS_UPSERT',
             'CHATS_UPDATE'
@@ -146,6 +148,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao criar instância' }, { status: 500 })
     }
 
+    const createData = await createRes.json()
+
     // Salva no banco
     const { error: insertError } = await supabaseAdmin
       .from('accounts')
@@ -156,22 +160,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
     }
 
-    // Obtém QR code — tenta até 4x com backoff (Baileys precisa de um momento para gerar o QR)
-    let qr: string | null = null
-    for (let attempt = 0; attempt < 4 && !qr; attempt++) {
-      await new Promise(r => setTimeout(r, attempt === 0 ? 800 : 600))
-      try {
-        const qrRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
-          headers: { apikey: EVOLUTION_API_KEY },
-        })
-        if (qrRes.ok) {
-          const d = await qrRes.json()
-          qr = d?.base64 ?? d?.qrcode?.base64 ?? null
-          if (!qr) console.log(`[accounts/qr] attempt ${attempt + 1} no qr — raw:`, JSON.stringify(d).slice(0, 300))
-        }
-      } catch (e) {
-        console.log(`[accounts/qr] attempt ${attempt + 1} error:`, e)
-      }
+    // Com qrcode:true, o QR já vem na resposta do create
+    let qr: string | null = createData?.qrcode?.base64 ?? createData?.base64 ?? null
+
+    if (qr) {
+      cacheQr(instanceName, qr)
+    } else {
+      // Evolution API não gerou o QR a tempo — o webhook QRCODE_UPDATED vai entregar via cache
+      console.log('[accounts/create] QR não veio no create — aguardando QRCODE_UPDATED webhook')
     }
 
     return NextResponse.json({ instanceName, qr })
