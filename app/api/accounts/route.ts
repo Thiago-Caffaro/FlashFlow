@@ -13,6 +13,35 @@ const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL!
 
+const WEBHOOK_EVENTS = [
+  'MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE',
+  'SEND_MESSAGE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED',
+  'TYPE_UPDATE', 'CHATS_UPSERT', 'CHATS_UPDATE',
+]
+
+// Ensures all instances point their webhook to the current WEBHOOK_BASE_URL.
+// Old instances may have a stale IP-based URL that doesn't resolve inside Docker
+// (hairpin NAT is blocked on most VPS providers).
+let webhooksSynced = false
+async function syncWebhooks(instanceNames: string[]) {
+  const webhookUrl = `${WEBHOOK_BASE_URL}/api/webhook/evolution`
+  await Promise.all(
+    instanceNames.map(name =>
+      fetch(`${EVOLUTION_API_URL}/webhook/set/${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+        body: JSON.stringify({
+          enabled: true,
+          url: webhookUrl,
+          webhook_by_events: true,
+          webhook_base64: false,
+          events: WEBHOOK_EVENTS,
+        }),
+      }).catch(() => {})
+    )
+  )
+}
+
 function sanitizeInstanceName(label: string): string {
   const sanitized = label
     .toLowerCase()
@@ -85,6 +114,12 @@ export async function GET() {
       }
     })
 
+    // One-time sync: update stale webhook URLs for existing instances (fire and forget)
+    if (!webhooksSynced && accounts.length > 0) {
+      webhooksSynced = true
+      void syncWebhooks(accounts.map((a) => a.instanceName))
+    }
+
     return NextResponse.json({ accounts })
   } catch (err) {
     console.error('GET /api/accounts error:', err)
@@ -113,34 +148,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Já existe uma conta com esse nome' }, { status: 409 })
     }
 
-    // Cria instância na Evolution API com webhook já configurado
     const webhookUrl = `${WEBHOOK_BASE_URL}/api/webhook/evolution`
-    const createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-      body: JSON.stringify({
-        instanceName,
-        qrcode: false,
-        integration: 'WHATSAPP-BAILEYS',
-        webhook: {
-          enabled: true,
-          url: webhookUrl,
-          webhook_by_events: true,
-          webhook_base64: false,
-          events: [
-            'MESSAGES_UPSERT',
-            'MESSAGES_UPDATE',
-            'MESSAGES_DELETE',
-            'SEND_MESSAGE',
-            'CONNECTION_UPDATE',
-            'QRCODE_UPDATED',
-            'TYPE_UPDATE',
-            'CHATS_UPSERT',
-            'CHATS_UPDATE'
-          ],
-        }
-      }),
-    })
+
+    // Cria instância com qrcode:true para obter o QR diretamente na resposta.
+    // Timeout de 40s — o handshake via proxy pode demorar alguns segundos.
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 40_000)
+
+    let createRes: Response
+    try {
+      createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+        signal: controller.signal,
+        body: JSON.stringify({
+          instanceName,
+          qrcode: true,
+          integration: 'WHATSAPP-BAILEYS',
+          webhook: {
+            enabled: true,
+            url: webhookUrl,
+            webhook_by_events: true,
+            webhook_base64: false,
+            events: WEBHOOK_EVENTS,
+          },
+        }),
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
 
     if (!createRes.ok) {
       const errBody = await createRes.text()
@@ -160,18 +196,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
     }
 
-    // Com qrcode:true, o QR já vem na resposta do create
-    let qr: string | null = createData?.qrcode?.base64 ?? createData?.base64 ?? null
+    // qrcode:true → QR vem na resposta do create
+    const qr: string | null = createData?.qrcode?.base64 ?? createData?.base64 ?? null
 
     if (qr) {
       cacheQr(instanceName, qr)
     } else {
-      // Evolution API não gerou o QR a tempo — o webhook QRCODE_UPDATED vai entregar via cache
       console.log('[accounts/create] QR não veio no create — aguardando QRCODE_UPDATED webhook')
     }
 
     return NextResponse.json({ instanceName, qr })
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.error('POST /api/accounts: timeout ao criar instância (40s)')
+      return NextResponse.json({ error: 'Timeout ao criar instância' }, { status: 504 })
+    }
     console.error('POST /api/accounts error:', err)
     return NextResponse.json({ ok: false }, { status: 500 })
   }
