@@ -40,14 +40,25 @@ services:
         cat > /tmp/ps.js << 'EOF'
         const p = process.env.GLOBAL_AGENT_HTTPS_PROXY || process.env.GLOBAL_AGENT_HTTP_PROXY;
         if (p) {
+          // undici ProxyAgent — built-in no Node.js 18+, sem dependência externa
           try {
-            const { HttpsProxyAgent, HttpProxyAgent } = require('/evolution/node_modules/hpagent');
+            const { setGlobalDispatcher, ProxyAgent } = require('undici');
+            setGlobalDispatcher(new ProxyAgent(p));
+            process.stderr.write('proxy-setup: undici OK\n');
+          } catch (e1) {
+            process.stderr.write('proxy-setup undici: ' + e1.message + '\n');
+          }
+          // Fallback: seta agente legado http/https para libs que não usam fetch
+          try {
             const https = require('https');
             const http = require('http');
-            https.globalAgent = new HttpsProxyAgent({ proxy: p });
-            http.globalAgent = new HttpProxyAgent({ proxy: p });
-          } catch (e) {
-            process.stderr.write('proxy-setup: ' + e.message + '\n');
+            const { HttpsProxyAgent } = require('/evolution/node_modules/https-proxy-agent');
+            const { HttpProxyAgent } = require('/evolution/node_modules/http-proxy-agent');
+            https.globalAgent = new HttpsProxyAgent(p);
+            http.globalAgent = new HttpProxyAgent(p);
+            process.stderr.write('proxy-setup: legacy agents OK\n');
+          } catch (e2) {
+            process.stderr.write('proxy-setup legacy: ' + e2.message + '\n');
           }
         }
         EOF

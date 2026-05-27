@@ -156,12 +156,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
     }
 
-    // Obtém QR code
-    const qrRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
-      headers: { apikey: EVOLUTION_API_KEY },
-    })
-    const qrData = qrRes.ok ? await qrRes.json() : {}
-    const qr: string | null = qrData?.base64 ?? qrData?.qrcode?.base64 ?? qrData?.code ?? null
+    // Obtém QR code — tenta até 4x com backoff (Baileys precisa de um momento para gerar o QR)
+    let qr: string | null = null
+    for (let attempt = 0; attempt < 4 && !qr; attempt++) {
+      await new Promise(r => setTimeout(r, attempt === 0 ? 800 : 600))
+      try {
+        const qrRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
+          headers: { apikey: EVOLUTION_API_KEY },
+        })
+        if (qrRes.ok) {
+          const d = await qrRes.json()
+          qr = d?.base64 ?? d?.qrcode?.base64 ?? null
+          if (!qr) console.log(`[accounts/qr] attempt ${attempt + 1} no qr — raw:`, JSON.stringify(d).slice(0, 300))
+        }
+      } catch (e) {
+        console.log(`[accounts/qr] attempt ${attempt + 1} error:`, e)
+      }
+    }
 
     return NextResponse.json({ instanceName, qr })
   } catch (err) {

@@ -38,6 +38,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const qrLoadedRef = useRef(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -62,6 +63,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
 
   function closeModal() {
     stopQrTimers()
+    qrLoadedRef.current = false
     setModalStep(null)
     setLabel('')
     setCreateError(null)
@@ -74,7 +76,8 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     await refreshAccounts()
   }
 
-  function startQrPolling(instanceName: string) {
+  function startQrPolling(instanceName: string, hasInitialQr: boolean) {
+    qrLoadedRef.current = hasInitialQr
     setTimeLeft(60)
     timerRef.current = setInterval(() => {
       setTimeLeft((t) => {
@@ -96,6 +99,16 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
 
     pollerRef.current = setInterval(async () => {
       try {
+        // Busca QR se ainda não foi carregado
+        if (!qrLoadedRef.current) {
+          const qrRes = await fetch(`/api/accounts/${instanceName}/qr`, { cache: 'no-store' })
+          const { qr } = await qrRes.json()
+          if (qr) {
+            qrLoadedRef.current = true
+            setQrState({ instanceName, qr })
+          }
+        }
+        // Verifica se conectou
         const res = await fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
         const { state } = await res.json()
         if (state === 'open') { stopQrTimers(); closeModal(); setSyncingInstance(instanceName) }
@@ -117,7 +130,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
       if (!res.ok) { setCreateError(json.error ?? 'Erro ao criar conta'); return }
       setQrState({ instanceName: json.instanceName, qr: json.qr })
       setModalStep('qr')
-      startQrPolling(json.instanceName)
+      startQrPolling(json.instanceName, !!json.qr)
     } catch {
       setCreateError('Erro de conexão')
     } finally {
