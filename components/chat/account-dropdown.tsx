@@ -6,12 +6,7 @@ import { useAccount } from '@/contexts/account-context'
 import { Account } from '@/types'
 import SyncOverlay from './sync-overlay'
 
-type ModalStep = 'label' | 'qr'
-
-interface QRState {
-  instanceName: string
-  qr: string | null
-}
+type ModalStep = 'label' | 'phone' | 'code'
 
 const STATE_DOT: Record<string, string> = {
   open:       'bg-[#00a884]',
@@ -33,12 +28,15 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   const [label, setLabel] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
-  const [qrState, setQrState] = useState<QRState | null>(null)
+  const [pendingInstance, setPendingInstance] = useState<string | null>(null)
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [pairingLoading, setPairingLoading] = useState(false)
+  const [pairingError, setPairingError] = useState<string | null>(null)
+  const [pairingCode, setPairingCode] = useState<string | null>(null)
   const [timeLeft, setTimeLeft] = useState(60)
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const qrLoadedRef = useRef(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -54,7 +52,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     return () => document.removeEventListener('mousedown', handleClick)
   }, [open])
 
-  function stopQrTimers() {
+  function stopTimers() {
     if (pollerRef.current) clearInterval(pollerRef.current)
     if (timerRef.current) clearInterval(timerRef.current)
     pollerRef.current = null
@@ -62,12 +60,15 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   }
 
   function closeModal() {
-    stopQrTimers()
-    qrLoadedRef.current = false
+    stopTimers()
     setModalStep(null)
     setLabel('')
     setCreateError(null)
-    setQrState(null)
+    setPendingInstance(null)
+    setPhoneNumber('')
+    setPairingLoading(false)
+    setPairingError(null)
+    setPairingCode(null)
     setTimeLeft(60)
   }
 
@@ -76,13 +77,12 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     await refreshAccounts()
   }
 
-  function startQrPolling(instanceName: string, hasInitialQr: boolean) {
-    qrLoadedRef.current = hasInitialQr
+  function startStatusPoller(instanceName: string) {
     setTimeLeft(60)
     timerRef.current = setInterval(() => {
       setTimeLeft((t) => {
         if (t <= 1) {
-          stopQrTimers()
+          stopTimers()
           closeModal()
           fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
             .then((r) => r.json())
@@ -99,19 +99,9 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
 
     pollerRef.current = setInterval(async () => {
       try {
-        // Busca QR se ainda não foi carregado
-        if (!qrLoadedRef.current) {
-          const qrRes = await fetch(`/api/accounts/${instanceName}/qr`, { cache: 'no-store' })
-          const { qr } = await qrRes.json()
-          if (qr) {
-            qrLoadedRef.current = true
-            setQrState({ instanceName, qr })
-          }
-        }
-        // Verifica se conectou
         const res = await fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
         const { state } = await res.json()
-        if (state === 'open') { stopQrTimers(); closeModal(); setSyncingInstance(instanceName) }
+        if (state === 'open') { stopTimers(); closeModal(); setSyncingInstance(instanceName) }
       } catch { /* silent */ }
     }, 3000)
   }
@@ -128,13 +118,37 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
       })
       const json = await res.json()
       if (!res.ok) { setCreateError(json.error ?? 'Erro ao criar conta'); return }
-      setQrState({ instanceName: json.instanceName, qr: json.qr })
-      setModalStep('qr')
-      startQrPolling(json.instanceName, !!json.qr)
+      setPendingInstance(json.instanceName)
+      setModalStep('phone')
     } catch {
       setCreateError('Erro de conexão')
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function handleRequestPairingCode() {
+    if (!pendingInstance || !phoneNumber.trim()) return
+    setPairingLoading(true)
+    setPairingError(null)
+    try {
+      const res = await fetch(`/api/accounts/${pendingInstance}/pairing-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: phoneNumber.replace(/\D/g, '') }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setPairingError(json.error ?? 'Erro ao gerar código')
+        return
+      }
+      setPairingCode(json.code)
+      setModalStep('code')
+      startStatusPoller(pendingInstance)
+    } catch {
+      setPairingError('Erro de conexão')
+    } finally {
+      setPairingLoading(false)
     }
   }
 
@@ -205,7 +219,8 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
       {modalStep && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white dark:bg-[#233138] rounded-xl shadow-xl p-5 w-80 space-y-4">
-            {modalStep === 'label' ? (
+
+            {modalStep === 'label' && (
               <>
                 <div className="flex items-center justify-between">
                   <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Nova conta</p>
@@ -229,31 +244,69 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                   disabled={creating || !label.trim()}
                   className="w-full py-2 rounded-lg bg-[#00a884] text-white text-sm font-medium hover:bg-[#008f72] disabled:opacity-60"
                 >
-                  {creating ? 'Gerando QR...' : 'Continuar'}
+                  {creating ? 'Criando...' : 'Continuar'}
                 </button>
               </>
-            ) : (
+            )}
+
+            {modalStep === 'phone' && (
               <>
                 <div className="flex items-center justify-between">
-                  <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Escanear QR Code</p>
+                  <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Número do WhatsApp</p>
                   <button onClick={closeModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
                     <X size={18} />
                   </button>
                 </div>
-                {qrState?.qr ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={qrState.qr} alt="QR Code" className="w-full rounded-lg" />
-                ) : (
-                  <div className="flex items-center justify-center h-48 text-[#667781] dark:text-[#8696a0] text-sm gap-2">
-                    <Loader2 size={18} className="animate-spin" />
-                    Aguardando QR...
-                  </div>
-                )}
-                <p className="text-xs text-[#667781] dark:text-[#8696a0] text-center">
-                  Abra o WhatsApp → Dispositivos vinculados → Vincular dispositivo
+                <p className="text-sm text-[#667781] dark:text-[#8696a0]">
+                  Digite o número do WhatsApp que será vinculado a esta conta (com DDI e DDD)
                 </p>
+                <input
+                  type="tel"
+                  placeholder="Ex: 5511999999999"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleRequestPairingCode()}
+                  className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
+                  autoFocus
+                />
+                {pairingError && <p className="text-xs text-red-500">{pairingError}</p>}
+                <button
+                  onClick={handleRequestPairingCode}
+                  disabled={pairingLoading || !phoneNumber.trim()}
+                  className="w-full py-2 rounded-lg bg-[#00a884] text-white text-sm font-medium hover:bg-[#008f72] disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                  {pairingLoading ? <><Loader2 size={15} className="animate-spin" /> Gerando código...</> : 'Gerar código de vinculação'}
+                </button>
+              </>
+            )}
+
+            {modalStep === 'code' && (
+              <>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-[#667781] dark:text-[#8696a0]">Expira em</span>
+                  <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Código de vinculação</p>
+                  <button onClick={closeModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-center py-4">
+                  <span className="text-3xl font-bold tracking-widest text-[#111b21] dark:text-[#e9edef] font-mono">
+                    {pairingCode}
+                  </span>
+                </div>
+
+                <ol className="text-sm text-[#667781] dark:text-[#8696a0] space-y-1 list-decimal list-inside">
+                  <li>Abra o WhatsApp no celular</li>
+                  <li>Toque em <strong className="text-[#111b21] dark:text-[#e9edef]">Dispositivos vinculados</strong></li>
+                  <li>Toque em <strong className="text-[#111b21] dark:text-[#e9edef]">Vincular com número</strong></li>
+                  <li>Digite o código acima</li>
+                </ol>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[#667781] dark:text-[#8696a0] flex items-center gap-1.5">
+                    <Loader2 size={12} className="animate-spin" />
+                    Aguardando vinculação...
+                  </span>
                   <span className={`text-xs font-medium ${timeLeft <= 10 ? 'text-red-500' : 'text-[#00a884]'}`}>
                     {timeLeft}s
                   </span>
@@ -266,6 +319,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                 </div>
               </>
             )}
+
           </div>
         </div>
       )}

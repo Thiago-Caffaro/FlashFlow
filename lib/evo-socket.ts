@@ -2,6 +2,8 @@ import { io, Socket } from 'socket.io-client'
 import { cacheQr, clearQr } from './qr-cache'
 
 let socket: Socket | null = null
+let failedAttempts = 0
+const MAX_ATTEMPTS = 3
 
 function handleQrEvent(data: unknown) {
   const d = data as Record<string, unknown>
@@ -31,10 +33,13 @@ function handleConnectionEvent(data: unknown) {
 
 export function ensureEvoSocket() {
   if (socket?.connected) return
+  if (failedAttempts >= MAX_ATTEMPTS) return  // circuit breaker
 
   const url = process.env.EVOLUTION_API_URL
   const apikey = process.env.EVOLUTION_API_KEY
   if (!url || !apikey) return
+
+  if (socket) return  // já existe tentativa em curso
 
   console.log(`[evo-socket] connecting to ${url}`)
 
@@ -52,7 +57,15 @@ export function ensureEvoSocket() {
   })
 
   socket.on('connect_error', (err) => {
-    console.log(`[evo-socket] connect_error: ${err.message}`)
+    failedAttempts++
+    if (failedAttempts <= MAX_ATTEMPTS) {
+      console.log(`[evo-socket] connect_error (attempt ${failedAttempts}/${MAX_ATTEMPTS}): ${err.message}`)
+    }
+    if (failedAttempts >= MAX_ATTEMPTS) {
+      console.log('[evo-socket] giving up after max attempts — Evolution API does not support Socket.io')
+      socket?.disconnect()
+      socket = null
+    }
   })
 
   socket.on('disconnect', (reason) => {
