@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getQr } from '@/lib/qr-cache'
+import { ensureEvoSocket } from '@/lib/evo-socket'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +14,10 @@ export async function GET(
 ) {
   const { name } = await params
 
-  // 1. Cache — populado via webhook QRCODE_UPDATED
+  // Garante conexão Socket.io ativa com a Evolution API para receber eventos de QR
+  ensureEvoSocket()
+
+  // 1. Cache — populado via webhook QRCODE_UPDATED ou Socket.io
   const cached = getQr(name)
   if (cached) return NextResponse.json({ qr: cached })
 

@@ -174,17 +174,25 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const event = (body.event ?? '').toLowerCase()
+    console.log(`[webhook] received event="${event}" instance="${body.instance ?? ''}"`)
 
-    if (event === 'qrcode.updated') {
+
+    if (event === 'qrcode.updated' || event === 'qrcode_updated') {
       const instanceName: string = body.instance ?? ''
-      const qr: string | null = body.data?.qrcode?.base64 ?? body.data?.base64 ?? null
+      const qr: string | null =
+        body.data?.qrcode?.base64 ??
+        body.data?.base64 ??
+        (typeof body.data?.qrcode === 'string' ? body.data.qrcode : null) ??
+        null
+      console.log(`[webhook] qrcode event for "${instanceName}" qr=${!!qr}`)
       if (instanceName && qr) cacheQr(instanceName, qr)
       return NextResponse.json({ ok: true })
     }
 
-    if (event === 'connection.update') {
+    if (event === 'connection.update' || event === 'connection_update') {
       const instanceName: string = body.instance ?? ''
       const state: string = (body.data?.instance?.state ?? body.data?.state ?? '').toLowerCase()
+      console.log(`[webhook] connection.update "${instanceName}" state=${state}`)
       if (state === 'open' && instanceName) clearQr(instanceName)
       return NextResponse.json({ ok: true })
     }

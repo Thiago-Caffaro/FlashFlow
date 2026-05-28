@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { cacheQr } from '@/lib/qr-cache'
+import { ensureEvoSocket } from '@/lib/evo-socket'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,6 +57,7 @@ function sanitizeInstanceName(label: string): string {
 
 // GET /api/accounts — lista contas com estado de conexão
 export async function GET() {
+  ensureEvoSocket()
   try {
     const { data: stored, error } = await supabaseAdmin
       .from('accounts')
@@ -187,6 +189,11 @@ export async function POST(req: NextRequest) {
       console.error('Erro ao salvar conta no banco:', insertError)
       return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
     }
+
+    // Inicia o Baileys imediatamente para QR ser gerado antes do primeiro poll do frontend
+    fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
+      headers: { apikey: EVOLUTION_API_KEY },
+    }).catch(() => {})
 
     return NextResponse.json({ instanceName, qr: null })
   } catch (err) {
