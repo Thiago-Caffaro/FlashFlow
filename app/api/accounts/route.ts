@@ -131,21 +131,17 @@ export async function GET() {
   }
 }
 
-// POST /api/accounts — cria nova instância com pairing code
-// Body: { label: string, phoneNumber: string }
-// phoneNumber é obrigatório: a Evolution API v2.3.7 gera o pairing code no create
-// quando number + qrcode:true são fornecidos (aguarda ~5s internamente e retorna qrCode)
+// POST /api/accounts — cria nova instância e inicia fluxo de QR code
+// Body: { label: string }
+// qrcode:true sem number → Baileys usa fluxo QR (não pairing code)
+// O QR chega via webhook qrcode.updated → cache → GET /api/accounts/[name]/qr
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const label: string = body.label ?? ''
-    const phoneNumber: string = String(body.phoneNumber ?? '').replace(/\D/g, '')
 
     if (!label.trim()) {
       return NextResponse.json({ error: 'Label obrigatório' }, { status: 400 })
-    }
-    if (!phoneNumber || phoneNumber.length < 8) {
-      return NextResponse.json({ error: 'Número de telefone obrigatório' }, { status: 400 })
     }
 
     const instanceName = sanitizeInstanceName(label)
@@ -163,15 +159,12 @@ export async function POST(req: NextRequest) {
 
     const webhookUrl = `${WEBHOOK_BASE_URL}/api/webhook/evolution`
 
-    // qrcode:true + number → Evolution API conecta ao WhatsApp, aguarda ~5s e retorna
-    // qrCode.pairingCode + qrCode.base64. Descoberto via análise do dist/main.js v2.3.7.
     const createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
       body: JSON.stringify({
         instanceName,
         qrcode: true,
-        number: phoneNumber,
         integration: 'WHATSAPP-BAILEYS',
         webhook: {
           enabled: true,
@@ -190,11 +183,7 @@ export async function POST(req: NextRequest) {
     }
 
     const createData = await createRes.json().catch(() => ({})) as Record<string, unknown>
-    const qrData = (createData.qrcode ?? createData.qrCode) as Record<string, unknown> | undefined
-    const pairingCode: string | null = (qrData?.pairingCode as string) ?? null
-    const qrBase64: string | null = (qrData?.base64 as string) ?? null
-
-    console.log(`[accounts] create "${instanceName}" pairingCode=${!!pairingCode} qr=${!!qrBase64} raw:`, JSON.stringify(createData).slice(0, 300))
+    console.log(`[accounts] create "${instanceName}" raw:`, JSON.stringify(createData).slice(0, 300))
 
     // Salva no banco
     const { error: insertError } = await supabaseAdmin
@@ -206,7 +195,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
     }
 
-    return NextResponse.json({ instanceName, pairingCode, qr: qrBase64 })
+    return NextResponse.json({ instanceName })
   } catch (err) {
     console.error('POST /api/accounts error:', err)
     return NextResponse.json({ ok: false }, { status: 500 })
