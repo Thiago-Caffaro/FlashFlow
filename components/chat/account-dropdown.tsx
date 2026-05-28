@@ -33,6 +33,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   const [pairingLoading, setPairingLoading] = useState(false)
   const [pairingError, setPairingError] = useState<string | null>(null)
   const [pairingCode, setPairingCode] = useState<string | null>(null)
+  const [qrCode, setQrCode] = useState<string | null>(null)
   const [timeLeft, setTimeLeft] = useState(60)
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -69,6 +70,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     setPairingLoading(false)
     setPairingError(null)
     setPairingCode(null)
+    setQrCode(null)
     setTimeLeft(60)
   }
 
@@ -106,45 +108,35 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     }, 3000)
   }
 
-  async function handleCreate() {
+  function handleCreate() {
     if (!label.trim()) return
-    setCreating(true)
-    setCreateError(null)
+    setModalStep('phone')
+  }
+
+  async function handleRequestPairingCode() {
+    if (!phoneNumber.trim()) return
+    setPairingLoading(true)
+    setPairingError(null)
     try {
       const res = await fetch('/api/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: label.trim() }),
-      })
-      const json = await res.json()
-      if (!res.ok) { setCreateError(json.error ?? 'Erro ao criar conta'); return }
-      setPendingInstance(json.instanceName)
-      setModalStep('phone')
-    } catch {
-      setCreateError('Erro de conexão')
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  async function handleRequestPairingCode() {
-    if (!pendingInstance || !phoneNumber.trim()) return
-    setPairingLoading(true)
-    setPairingError(null)
-    try {
-      const res = await fetch(`/api/accounts/${pendingInstance}/pairing-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber: phoneNumber.replace(/\D/g, '') }),
+        body: JSON.stringify({ label: label.trim(), phoneNumber: phoneNumber.replace(/\D/g, '') }),
       })
       const json = await res.json()
       if (!res.ok) {
-        setPairingError(json.error ?? 'Erro ao gerar código')
+        setPairingError(json.error ?? 'Erro ao criar conta')
         return
       }
-      setPairingCode(json.code)
-      setModalStep('code')
-      startStatusPoller(pendingInstance)
+      setPendingInstance(json.instanceName)
+      if (json.pairingCode || json.qr) {
+        if (json.pairingCode) setPairingCode(json.pairingCode)
+        if (json.qr) setQrCode(json.qr)
+        setModalStep('code')
+        startStatusPoller(json.instanceName)
+      } else {
+        setPairingError('Código de pareamento não retornado. Tente novamente.')
+      }
     } catch {
       setPairingError('Erro de conexão')
     } finally {
@@ -238,13 +230,12 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                   className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
                   autoFocus
                 />
-                {createError && <p className="text-xs text-red-500">{createError}</p>}
                 <button
                   onClick={handleCreate}
-                  disabled={creating || !label.trim()}
+                  disabled={!label.trim()}
                   className="w-full py-2 rounded-lg bg-[#00a884] text-white text-sm font-medium hover:bg-[#008f72] disabled:opacity-60"
                 >
-                  {creating ? 'Criando...' : 'Continuar'}
+                  Continuar
                 </button>
               </>
             )}
@@ -275,7 +266,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                   disabled={pairingLoading || !phoneNumber.trim()}
                   className="w-full py-2 rounded-lg bg-[#00a884] text-white text-sm font-medium hover:bg-[#008f72] disabled:opacity-60 flex items-center justify-center gap-2"
                 >
-                  {pairingLoading ? <><Loader2 size={15} className="animate-spin" /> Gerando código...</> : 'Gerar código de vinculação'}
+                  {pairingLoading ? <><Loader2 size={15} className="animate-spin" /> Criando conta...</> : 'Vincular conta'}
                 </button>
               </>
             )}
@@ -289,18 +280,34 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                   </button>
                 </div>
 
-                <div className="flex items-center justify-center py-4">
-                  <span className="text-3xl font-bold tracking-widest text-[#111b21] dark:text-[#e9edef] font-mono">
-                    {pairingCode}
-                  </span>
-                </div>
-
-                <ol className="text-sm text-[#667781] dark:text-[#8696a0] space-y-1 list-decimal list-inside">
-                  <li>Abra o WhatsApp no celular</li>
-                  <li>Toque em <strong className="text-[#111b21] dark:text-[#e9edef]">Dispositivos vinculados</strong></li>
-                  <li>Toque em <strong className="text-[#111b21] dark:text-[#e9edef]">Vincular com número</strong></li>
-                  <li>Digite o código acima</li>
-                </ol>
+                {pairingCode ? (
+                  <>
+                    <div className="flex items-center justify-center py-4">
+                      <span className="text-3xl font-bold tracking-widest text-[#111b21] dark:text-[#e9edef] font-mono">
+                        {pairingCode}
+                      </span>
+                    </div>
+                    <ol className="text-sm text-[#667781] dark:text-[#8696a0] space-y-1 list-decimal list-inside">
+                      <li>Abra o WhatsApp no celular</li>
+                      <li>Toque em <strong className="text-[#111b21] dark:text-[#e9edef]">Dispositivos vinculados</strong></li>
+                      <li>Toque em <strong className="text-[#111b21] dark:text-[#e9edef]">Vincular com número</strong></li>
+                      <li>Digite o código acima</li>
+                    </ol>
+                  </>
+                ) : qrCode ? (
+                  <>
+                    <div className="flex items-center justify-center py-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={qrCode} alt="QR Code" className="w-48 h-48" />
+                    </div>
+                    <ol className="text-sm text-[#667781] dark:text-[#8696a0] space-y-1 list-decimal list-inside">
+                      <li>Abra o WhatsApp no celular</li>
+                      <li>Toque em <strong className="text-[#111b21] dark:text-[#e9edef]">Dispositivos vinculados</strong></li>
+                      <li>Toque em <strong className="text-[#111b21] dark:text-[#e9edef]">Vincular um dispositivo</strong></li>
+                      <li>Escaneie o QR Code acima</li>
+                    </ol>
+                  </>
+                ) : null}
 
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-[#667781] dark:text-[#8696a0] flex items-center gap-1.5">

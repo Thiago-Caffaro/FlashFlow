@@ -131,12 +131,21 @@ export async function GET() {
   }
 }
 
-// POST /api/accounts — cria nova instância e retorna QR code
+// POST /api/accounts — cria nova instância com pairing code
+// Body: { label: string, phoneNumber: string }
+// phoneNumber é obrigatório: a Evolution API v2.3.7 gera o pairing code no create
+// quando number + qrcode:true são fornecidos (aguarda ~5s internamente e retorna qrCode)
 export async function POST(req: NextRequest) {
   try {
-    const { label } = await req.json()
-    if (!label?.trim()) {
+    const body = await req.json()
+    const label: string = body.label ?? ''
+    const phoneNumber: string = String(body.phoneNumber ?? '').replace(/\D/g, '')
+
+    if (!label.trim()) {
       return NextResponse.json({ error: 'Label obrigatório' }, { status: 400 })
+    }
+    if (!phoneNumber || phoneNumber.length < 8) {
+      return NextResponse.json({ error: 'Número de telefone obrigatório' }, { status: 400 })
     }
 
     const instanceName = sanitizeInstanceName(label)
@@ -154,15 +163,15 @@ export async function POST(req: NextRequest) {
 
     const webhookUrl = `${WEBHOOK_BASE_URL}/api/webhook/evolution`
 
-    // qrcode:false — não auto-inicia o Baileys durante o create.
-    // O Baileys só inicia quando /instance/connect for chamado, permitindo que
-    // o polling o inicie e (em algumas versões) receba o QR na resposta.
+    // qrcode:true + number → Evolution API conecta ao WhatsApp, aguarda ~5s e retorna
+    // qrCode.pairingCode + qrCode.base64. Descoberto via análise do dist/main.js v2.3.7.
     const createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
       body: JSON.stringify({
         instanceName,
-        qrcode: false,
+        qrcode: true,
+        number: phoneNumber,
         integration: 'WHATSAPP-BAILEYS',
         webhook: {
           enabled: true,
@@ -180,6 +189,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao criar instância' }, { status: 500 })
     }
 
+    const createData = await createRes.json().catch(() => ({})) as Record<string, unknown>
+    const qrData = (createData.qrcode ?? createData.qrCode) as Record<string, unknown> | undefined
+    const pairingCode: string | null = (qrData?.pairingCode as string) ?? null
+    const qrBase64: string | null = (qrData?.base64 as string) ?? null
+
+    console.log(`[accounts] create "${instanceName}" pairingCode=${!!pairingCode} qr=${!!qrBase64} raw:`, JSON.stringify(createData).slice(0, 300))
+
     // Salva no banco
     const { error: insertError } = await supabaseAdmin
       .from('accounts')
@@ -190,12 +206,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
     }
 
-    // Inicia o Baileys imediatamente para QR ser gerado antes do primeiro poll do frontend
-    fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
-      headers: { apikey: EVOLUTION_API_KEY },
-    }).catch(() => {})
-
-    return NextResponse.json({ instanceName, qr: null })
+    return NextResponse.json({ instanceName, pairingCode, qr: qrBase64 })
   } catch (err) {
     console.error('POST /api/accounts error:', err)
     return NextResponse.json({ ok: false }, { status: 500 })

@@ -74,6 +74,7 @@ export async function GET(
       const item = items[0] as Record<string, unknown> | undefined
       const inst = (item?.instance as Record<string, unknown> | undefined) ?? item
       const qr = (inst?.qrcode as Record<string, unknown> | undefined)?.base64 as string | null ?? null
+      console.log(`[qr/${name}] fetchInstances state=${inst?.connectionStatus ?? inst?.status ?? '?'} qr=${!!qr} raw:`, JSON.stringify(inst).slice(0, 300))
       if (qr) return NextResponse.json({ qr })
     }
   } catch (e) {
