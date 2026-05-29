@@ -19,7 +19,27 @@ export async function GET(
 
   // 1. Cache — populado via webhook QRCODE_UPDATED ou Socket.io
   const cached = getQr(name)
-  if (cached) return NextResponse.json({ qr: cached })
+  if (cached) {
+    console.log(`[qr/${name}] cache hit`)
+    return NextResponse.json({ qr: cached })
+  }
+
+  // 1.5. /instance/connectionState — estado LIVE do Baileys (não do banco)
+  try {
+    const res = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${name}`, {
+      headers: { apikey: EVOLUTION_API_KEY },
+    })
+    if (res.ok) {
+      const d = await res.json() as Record<string, unknown>
+      const inst = (d as Record<string, Record<string, unknown>>)?.instance ?? d
+      const state = (inst as Record<string, unknown>)?.state ?? d?.state ?? d?.connectionStatus ?? '?'
+      const qr = ((d as Record<string, Record<string, unknown>>)?.qrcode?.base64 as string) ?? null
+      console.log(`[qr/${name}] connectionState state=${state} qr=${!!qr} raw:`, JSON.stringify(d).slice(0, 300))
+      if (qr) return NextResponse.json({ qr })
+    }
+  } catch (e) {
+    console.log(`[qr/${name}] connectionState error:`, (e as Error).message)
+  }
 
   // 2. /instance/connect — inicia o Baileys se ainda não iniciou e tenta obter QR
   try {

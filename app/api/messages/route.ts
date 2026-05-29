@@ -43,6 +43,8 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
     const instanceName = conv?.instance_name ?? 'flashflow-main'
 
+    console.log(`[messages/send] instance="${instanceName}" to="${waId}" content="${content.slice(0, 60)}"`)
+
     // Envia pelo Evolution API
     const evoRes = await fetch(
       `${process.env.EVOLUTION_API_URL}/message/sendText/${instanceName}`,
@@ -59,8 +61,9 @@ export async function POST(req: NextRequest) {
     const evoData = await evoRes.json().catch(() => ({}))
     const waMessageId: string | null = evoData?.key?.id ?? null
 
+    console.log(`[messages/send] Evolution status=${evoRes.status} msgId="${waMessageId}" ok=${evoRes.ok}`)
     if (!evoRes.ok) {
-      console.error('Erro Evolution API:', evoData)
+      console.error(`[messages/send] FAIL status=${evoRes.status}`, JSON.stringify(evoData).slice(0, 200))
       return NextResponse.json({ error: 'Falha ao enviar mensagem' }, { status: 500 })
     }
 

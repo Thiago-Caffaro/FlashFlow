@@ -195,6 +195,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
     }
 
+    // Monitor 90s: chama connectionState a cada 5s para diagnóstico do fluxo de QR
+    void (async () => {
+      for (let i = 1; i <= 18; i++) {
+        await new Promise(r => setTimeout(r, 5000))
+        try {
+          const r = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${instanceName}`, {
+            headers: { apikey: EVOLUTION_API_KEY },
+          })
+          const d = await r.json().catch(() => ({})) as Record<string, unknown>
+          console.log(`[monitor] "${instanceName}" t=${i * 5}s:`, JSON.stringify(d).slice(0, 300))
+        } catch (e) {
+          console.log(`[monitor] "${instanceName}" t=${i * 5}s error:`, (e as Error).message)
+        }
+      }
+    })()
+
     return NextResponse.json({ instanceName })
   } catch (err) {
     console.error('POST /api/accounts error:', err)

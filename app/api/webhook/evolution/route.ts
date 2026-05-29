@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { executeFlow, checkActiveSession, handleActiveSession } from '@/lib/flow-engine'
 import { cacheQr, clearQr } from '@/lib/qr-cache'
+import { logWebhookEvent } from '@/lib/webhook-log'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -174,8 +175,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const event = (body.event ?? '').toLowerCase()
-    console.log(`[webhook] received event="${event}" instance="${body.instance ?? ''}"`)
-
+    const evtInstance: string = body.instance ?? ''
+    console.log(`[webhook] received event="${event}" instance="${evtInstance}"`)
+    logWebhookEvent(event, evtInstance, body.data ?? {})
 
     if (event === 'qrcode.updated' || event === 'qrcode_updated') {
       const instanceName: string = body.instance ?? ''
@@ -192,7 +194,11 @@ export async function POST(req: NextRequest) {
     if (event === 'connection.update' || event === 'connection_update') {
       const instanceName: string = body.instance ?? ''
       const state: string = (body.data?.instance?.state ?? body.data?.state ?? '').toLowerCase()
-      console.log(`[webhook] connection.update "${instanceName}" state=${state}`)
+      const reason = body.data?.statusReason ?? body.data?.instance?.statusReason ?? null
+      console.log(`[webhook] connection.update "${instanceName}" state=${state} reason=${reason}`)
+      if (state === 'close' && reason === 401) {
+        console.error(`[webhook] AUTH-401 "${instanceName}" — QR nunca gerado. Proxy pode estar bloqueando nova sessão.`)
+      }
       if (state === 'open' && instanceName) clearQr(instanceName)
       return NextResponse.json({ ok: true })
     }
@@ -264,6 +270,8 @@ export async function POST(req: NextRequest) {
     const waMessageId: string = data.key.id
     const remoteJid: string = data.key.remoteJid
 
+    console.log(`[webhook] messages.upsert instance="${instanceName}" from="${remoteJid}" fromMe=${data.key.fromMe} msgId="${waMessageId}"`)
+
     // Dedup: Evolution API pode reenviar o mesmo webhook; evita violação de constraint
     const { data: existingMsg } = await supabase
       .from('messages')
@@ -272,7 +280,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
 
     if (existingMsg) {
-      // Já existe: enviada pelo FlashFlow ou webhook duplicado — ignora
+      console.log(`[webhook] messages.upsert SKIP (dedup) msgId="${waMessageId}"`)
       return NextResponse.json({ ok: true })
     }
 
@@ -430,6 +438,8 @@ export async function POST(req: NextRequest) {
     })
     if (msgError) {
       console.error('[webhook] Erro ao inserir mensagem:', msgError.message, { waMessageId, conversationId: conversation.id })
+    } else {
+      console.log(`[webhook] messages.upsert SAVED conv="${conversation.id}" dir=${data.key.fromMe ? 'out' : 'in'} content="${content.slice(0, 60)}"`)
     }
 
     if (data.key.fromMe !== true && type === 'text') {
