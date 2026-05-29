@@ -72,36 +72,19 @@ export default function DiagnosticsPage() {
     setSending(true)
     setSendResult(null)
     try {
-      // Busca conversationId pela instância e número
-      const convRes = await fetch(
-        `/api/conversations?instanceName=${sendForm.instance}&waId=${sendForm.number}@s.whatsapp.net`,
-        { cache: 'no-store' }
-      )
-      const convData = await convRes.json()
-      const conv = Array.isArray(convData?.conversations)
-        ? convData.conversations.find(
-            (c: { instance_name: string; wa_id: string }) =>
-              c.instance_name === sendForm.instance &&
-              (c.wa_id === `${sendForm.number}@s.whatsapp.net` || c.wa_id === sendForm.number)
-          )
-        : null
-
-      if (!conv) {
-        setSendResult(`Conversa não encontrada para ${sendForm.number} na instância ${sendForm.instance}. Tente enviar direto pela Evolution API primeiro.`)
-        return
-      }
-
-      const res = await fetch('/api/messages', {
+      const res = await fetch('/api/diagnostics/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          conversationId: conv.id,
-          waId: conv.wa_id,
-          content: sendForm.message,
+          instance: sendForm.instance,
+          number: sendForm.number,
+          message: sendForm.message,
         }),
       })
       const json = await res.json()
-      setSendResult(res.ok ? `✓ Enviado! msgId: ${json.message?.wa_message_id ?? '?'}` : `✗ Erro: ${json.error}`)
+      setSendResult(res.ok
+        ? `✓ Enviado! msgId: ${json.msgId ?? '?'}`
+        : `✗ Erro: ${json.error}`)
     } catch (e) {
       setSendResult(`Erro de conexão: ${(e as Error).message}`)
     } finally {
