@@ -135,7 +135,10 @@ export default function DiagnosticsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-white">FlashFlow — Diagnóstico Técnico</h1>
-          <p className="text-xs text-[#667781] mt-0.5">Última atualização: {new Date(data.ts).toLocaleTimeString('pt-BR')}</p>
+          <p className="text-xs text-[#667781] mt-0.5">
+            Agora: {new Date().toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })} {new Date().toLocaleTimeString('pt-BR')}
+            {' · '}Última atualização: {new Date(data.ts).toLocaleTimeString('pt-BR')}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-xs text-[#8696a0] cursor-pointer">
@@ -279,7 +282,7 @@ export default function DiagnosticsPage() {
               {data.recentWebhooks.map((w, i) => (
                 <tr key={i} className="border-t border-[#2a3942]">
                   <td className={`${td} text-[#667781] whitespace-nowrap`}>
-                    {new Date(w.ts).toLocaleTimeString('pt-BR')}
+                    {new Date(w.ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                   </td>
                   <td className={td}>
                     <span className={`
@@ -323,7 +326,7 @@ export default function DiagnosticsPage() {
               {data.recentMessages.map((m) => (
                 <tr key={m.id} className="border-t border-[#2a3942]">
                   <td className={`${td} text-[#667781] whitespace-nowrap`}>
-                    {new Date(m.created_at).toLocaleTimeString('pt-BR')}
+                    {new Date(m.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                   </td>
                   <td className={td}>
                     <span className={m.direction === 'inbound' ? 'text-green-400' : 'text-blue-400'}>
