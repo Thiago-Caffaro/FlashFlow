@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Loader2, Plus, X } from 'lucide-react'
+import { ChevronDown, Loader2, Plus, RefreshCw, X } from 'lucide-react'
 import { useAccount } from '@/contexts/account-context'
 import { Account } from '@/types'
 import SyncOverlay from './sync-overlay'
@@ -34,6 +34,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const isReconnectRef = useRef(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -71,14 +72,17 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     await refreshAccounts()
   }
 
-  function startQrPoller(instanceName: string) {
+  function startQrPoller(instanceName: string, isReconnect = false) {
+    isReconnectRef.current = isReconnect
     setTimeLeft(120)
     timerRef.current = setInterval(() => {
       setTimeLeft((t) => {
         if (t <= 1) {
           stopTimers()
           closeModal()
-          handleDeletePending(instanceName)
+          if (!isReconnectRef.current) {
+            handleDeletePending(instanceName)
+          }
           return 0
         }
         return t - 1
@@ -87,17 +91,35 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
 
     pollerRef.current = setInterval(async () => {
       try {
-        // Verifica se já conectou
         const statusRes = await fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
         const { state } = await statusRes.json()
-        if (state === 'open') { stopTimers(); closeModal(); setSyncingInstance(instanceName); return }
+        if (state === 'open') {
+          stopTimers()
+          closeModal()
+          if (isReconnectRef.current) {
+            await refreshAccounts()
+          } else {
+            setSyncingInstance(instanceName)
+          }
+          return
+        }
 
-        // Busca QR se ainda não tem
         const qrRes = await fetch(`/api/accounts/${instanceName}/qr`, { cache: 'no-store' })
         const { qr } = await qrRes.json()
         if (qr) setQrCode(qr)
       } catch { /* silent */ }
     }, 3000)
+  }
+
+  async function handleReconnect(acc: Account) {
+    setOpen(false)
+    try {
+      const res = await fetch(`/api/accounts/${acc.instanceName}/reconnect`, { method: 'POST' })
+      if (!res.ok) return
+      setPendingInstance(acc.instanceName)
+      setModalStep('qr')
+      startQrPoller(acc.instanceName, true)
+    } catch { /* silent */ }
   }
 
   async function handleCreate() {
@@ -310,8 +332,17 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                     <p className="text-[10px] text-[#667781] dark:text-[#8696a0] truncate">{acc.profileName}</p>
                   )}
                 </span>
-                {acc.instanceName === activeAccount.instanceName && (
+                {acc.instanceName === activeAccount.instanceName && acc.state === 'open' && (
                   <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-[#00a884]" />
+                )}
+                {hoveredName === acc.instanceName && acc.state === 'close' && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleReconnect(acc) }}
+                    title="Reconectar"
+                    className="p-0.5 rounded-full hover:bg-[#e9edef] dark:hover:bg-[#3d4f5a] text-[#00a884] transition-colors"
+                  >
+                    <RefreshCw size={11} />
+                  </button>
                 )}
                 {hoveredName === acc.instanceName && (
                   <button

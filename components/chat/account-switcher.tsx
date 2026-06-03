@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronUp, Plus, X, Wifi, WifiOff, Loader2 } from 'lucide-react'
+import { ChevronUp, Plus, RefreshCw, X, Wifi, WifiOff, Loader2 } from 'lucide-react'
 import { useAccount } from '@/contexts/account-context'
 import { Account } from '@/types'
 import SyncOverlay from './sync-overlay'
@@ -41,6 +41,7 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
+  const isReconnectRef = useRef(false)
 
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -79,7 +80,8 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
     await refreshAccounts()
   }
 
-  function startQrPolling(instanceName: string) {
+  function startQrPolling(instanceName: string, isReconnect = false) {
+    isReconnectRef.current = isReconnect
     setTimeLeft(60)
 
     timerRef.current = setInterval(() => {
@@ -87,17 +89,19 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
         if (t <= 1) {
           stopQrTimers()
           closeModal()
-          fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then(({ state }) => {
-              if (state === 'open') {
-                refreshAccounts()
-                setIsOpen(true)
-              } else {
-                handleDeletePending(instanceName)
-              }
-            })
-            .catch(() => handleDeletePending(instanceName))
+          if (!isReconnectRef.current) {
+            fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
+              .then((r) => r.json())
+              .then(({ state }) => {
+                if (state === 'open') {
+                  refreshAccounts()
+                  setIsOpen(true)
+                } else {
+                  handleDeletePending(instanceName)
+                }
+              })
+              .catch(() => handleDeletePending(instanceName))
+          }
           return 0
         }
         return t - 1
@@ -111,10 +115,25 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
         if (state === 'open') {
           stopQrTimers()
           closeModal()
-          setSyncingInstance(instanceName)
+          if (isReconnectRef.current) {
+            await refreshAccounts()
+          } else {
+            setSyncingInstance(instanceName)
+          }
         }
       } catch { /* silent */ }
     }, 3000)
+  }
+
+  async function handleReconnect(account: Account) {
+    setIsOpen(false)
+    try {
+      const res = await fetch(`/api/accounts/${account.instanceName}/reconnect`, { method: 'POST' })
+      if (!res.ok) return
+      setQrState({ instanceName: account.instanceName, qr: null })
+      setModalStep('qr')
+      startQrPolling(account.instanceName, true)
+    } catch { /* silent */ }
   }
 
   async function handleCreate() {
@@ -308,6 +327,18 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
                       </span>
                     )}
                   </div>
+                  {hoveredName === account.instanceName && account.state === 'close' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleReconnect(account)
+                      }}
+                      title="Reconectar"
+                      className="p-1 rounded-full hover:bg-[#e9edef] dark:hover:bg-[#2a3942] text-[#00a884] transition-colors shrink-0"
+                    >
+                      <RefreshCw size={13} />
+                    </button>
+                  )}
                   {hoveredName === account.instanceName && (
                     <button
                       onClick={(e) => {

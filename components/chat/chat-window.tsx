@@ -72,7 +72,18 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       const json = await res.json()
       if (json.ok) {
         const msgs: Message[] = json.messages
-        setMessages(msgs)
+        setMessages((prev) => {
+          const sending = prev.filter(
+            (m) => m.id.startsWith('temp-') && m.status === 'sending'
+          )
+          if (msgs.length === 0 && sending.length > 0) return prev
+          const confirmed = msgs.filter(
+            (m) => !sending.some((s) => s.content === m.content && s.direction === m.direction)
+          )
+          return [...confirmed, ...sending].sort((a, b) =>
+            a.created_at.localeCompare(b.created_at)
+          )
+        })
 
         if (msgs.length < 30 && !syncedConversations.has(conversationId)) {
           syncedConversations.add(conversationId)
@@ -130,7 +141,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
 
   useEffect(() => {
     if (!conversationId) return
-    const interval = setInterval(() => fetchMessages(), 10000)
+    const interval = setInterval(() => fetchMessages(), 4000)
     return () => clearInterval(interval)
   }, [conversationId, fetchMessages])
 
@@ -176,6 +187,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
         }),
       })
       onMessageSent()
+      setTimeout(() => fetchMessages(), 1500)
     } catch (err) {
       console.error('Erro ao enviar:', err)
       setMessages(prev => prev.filter(m => m.id !== tempId))
