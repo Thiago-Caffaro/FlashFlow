@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronUp, Plus, RefreshCw, X, Wifi, WifiOff, Loader2 } from 'lucide-react'
+import { ChevronUp, Plus, RefreshCw, RotateCcw, X, Wifi, WifiOff, Loader2 } from 'lucide-react'
 import { useAccount } from '@/contexts/account-context'
 import { Account } from '@/types'
 import SyncOverlay from './sync-overlay'
@@ -42,6 +42,7 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
   const isReconnectRef = useRef(false)
+  const [regenerating, setRegenerating] = useState(false)
 
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -73,6 +74,29 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
     setCreateError(null)
     setQrState(null)
     setTimeLeft(60)
+    setRegenerating(false)
+  }
+
+  async function handleCloseQrModal() {
+    const instance = qrState?.instanceName
+    const wasReconnect = isReconnectRef.current
+    closeModal()
+    if (instance && !wasReconnect) {
+      await handleDeletePending(instance)
+    }
+  }
+
+  async function handleRegenerateQr() {
+    const instance = qrState?.instanceName
+    if (!instance || regenerating) return
+    setRegenerating(true)
+    setQrState((prev) => prev ? { ...prev, qr: null } : null)
+    stopQrTimers()
+    try {
+      await fetch(`/api/accounts/${instance}/reconnect`, { method: 'POST' })
+    } catch { /* silent */ }
+    startQrPolling(instance, isReconnectRef.current)
+    setRegenerating(false)
   }
 
   async function handleDeletePending(instanceName: string) {
@@ -264,7 +288,7 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
               <>
                 <div className="flex items-center justify-between">
                   <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Escanear QR Code</p>
-                  <button onClick={closeModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
+                  <button onClick={handleCloseQrModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
                     <X size={18} />
                   </button>
                 </div>
@@ -282,9 +306,19 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
                 </p>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-[#667781] dark:text-[#8696a0]">Expira em</span>
-                  <span className={`text-xs font-medium ${timeLeft <= 10 ? 'text-red-500' : 'text-[#00a884]'}`}>
-                    {timeLeft}s
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-medium ${timeLeft <= 10 ? 'text-red-500' : 'text-[#00a884]'}`}>
+                      {timeLeft}s
+                    </span>
+                    <button
+                      onClick={handleRegenerateQr}
+                      disabled={regenerating}
+                      title="Gerar novo QR"
+                      className="p-1 rounded-full hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] text-[#667781] dark:text-[#8696a0] hover:text-[#00a884] transition-colors disabled:opacity-40"
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                  </div>
                 </div>
                 <div className="w-full bg-[#f0f2f5] dark:bg-[#2a3942] rounded-full h-1">
                   <div

@@ -18,6 +18,7 @@ export interface Account {
   state: 'open' | 'connecting' | 'close'
   profileName?: string | null
   profilePicUrl?: string | null
+  phone?: string | null
 }
 
 export interface Message {

@@ -59,6 +59,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const [imgError, setImgError] = useState(false)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
+  const currentConvIdRef = useRef<string | null>(null)
 
   useEffect(() => setImgError(false), [conversation?.wa_id])
 
@@ -66,10 +67,13 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
 
   const fetchMessages = useCallback(async (showLoading = false) => {
     if (!conversationId) return
+    const thisConvId = conversationId
     if (showLoading) setLoading(true)
     try {
       const res = await fetch(`/api/messages?conversationId=${encodeURIComponent(conversationId)}`, { cache: 'no-store' })
       const json = await res.json()
+      // Drop stale responses if the user switched conversations while fetch was in-flight
+      if (thisConvId !== currentConvIdRef.current) return
       if (json.ok) {
         const msgs: Message[] = json.messages
         setMessages((prev) => {
@@ -93,15 +97,17 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
         }
       }
     } finally {
-      setLoading(false)
+      if (thisConvId === currentConvIdRef.current) setLoading(false)
     }
   }, [conversationId])
 
   useEffect(() => {
+    currentConvIdRef.current = conversationId
     if (!conversationId) {
       setMessages([])
       return
     }
+    setMessages([])
     fetchMessages(true)
 
     fetch(`/api/conversations/${conversationId}/read`, { method: 'POST' }).catch(() => {})

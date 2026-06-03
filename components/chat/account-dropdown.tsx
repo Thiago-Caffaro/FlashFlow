@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Loader2, Plus, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, Info, Loader2, Plus, RefreshCw, RotateCcw, X } from 'lucide-react'
 import { useAccount } from '@/contexts/account-context'
 import { Account } from '@/types'
 import SyncOverlay from './sync-overlay'
@@ -32,6 +32,8 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   const [qrCode, setQrCode] = useState<string | null>(null)
   const [timeLeft, setTimeLeft] = useState(60)
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
+  const [infoAccount, setInfoAccount] = useState<Account | null>(null)
+  const [regenerating, setRegenerating] = useState(false)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isReconnectRef = useRef(false)
@@ -65,11 +67,33 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     setPendingInstance(null)
     setQrCode(null)
     setTimeLeft(60)
+    setRegenerating(false)
   }
 
   async function handleDeletePending(instanceName: string) {
     await fetch(`/api/accounts/${instanceName}`, { method: 'DELETE' }).catch(() => {})
     await refreshAccounts()
+  }
+
+  async function handleCloseQrModal() {
+    const instance = pendingInstance
+    const wasReconnect = isReconnectRef.current
+    closeModal()
+    if (instance && !wasReconnect) {
+      await handleDeletePending(instance)
+    }
+  }
+
+  async function handleRegenerateQr() {
+    if (!pendingInstance || regenerating) return
+    setRegenerating(true)
+    setQrCode(null)
+    stopTimers()
+    try {
+      await fetch(`/api/accounts/${pendingInstance}/reconnect`, { method: 'POST' })
+    } catch { /* silent */ }
+    startQrPoller(pendingInstance, isReconnectRef.current)
+    setRegenerating(false)
   }
 
   function startQrPoller(instanceName: string, isReconnect = false) {
@@ -245,7 +269,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
               <>
                 <div className="flex items-center justify-between">
                   <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Escanear QR Code</p>
-                  <button onClick={closeModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
+                  <button onClick={handleCloseQrModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
                     <X size={18} />
                   </button>
                 </div>
@@ -275,9 +299,19 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                     <Loader2 size={12} className="animate-spin" />
                     Aguardando vinculação...
                   </span>
-                  <span className={`text-xs font-medium ${timeLeft <= 15 ? 'text-red-500' : 'text-[#00a884]'}`}>
-                    {timeLeft}s
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-medium ${timeLeft <= 15 ? 'text-red-500' : 'text-[#00a884]'}`}>
+                      {timeLeft}s
+                    </span>
+                    <button
+                      onClick={handleRegenerateQr}
+                      disabled={regenerating}
+                      title="Gerar novo QR"
+                      className="p-1 rounded-full hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] text-[#667781] dark:text-[#8696a0] hover:text-[#00a884] transition-colors disabled:opacity-40"
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                  </div>
                 </div>
                 <div className="w-full bg-[#f0f2f5] dark:bg-[#2a3942] rounded-full h-1">
                   <div
@@ -288,6 +322,48 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
               </>
             )}
 
+          </div>
+        </div>
+      )}
+
+      {infoAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setInfoAccount(null)}>
+          <div className="bg-white dark:bg-[#233138] rounded-xl shadow-xl p-5 w-72 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Informações da conta</p>
+              <button onClick={() => setInfoAccount(null)} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-[#667781] dark:text-[#8696a0]">Estado</span>
+                <span className="flex items-center gap-1.5 font-medium text-[#111b21] dark:text-[#e9edef]">
+                  <span className={`w-2 h-2 rounded-full ${STATE_DOT[infoAccount.state]}`} />
+                  {infoAccount.state === 'open' ? 'Conectado' : infoAccount.state === 'connecting' ? 'Conectando' : 'Desconectado'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#667781] dark:text-[#8696a0]">Número</span>
+                <span className="font-medium text-[#111b21] dark:text-[#e9edef]">
+                  {infoAccount.phone ?? '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#667781] dark:text-[#8696a0]">Nome no sistema</span>
+                <span className="font-medium text-[#111b21] dark:text-[#e9edef] truncate max-w-[140px] text-right">
+                  {infoAccount.label || infoAccount.instanceName}
+                </span>
+              </div>
+              {infoAccount.profileName && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[#667781] dark:text-[#8696a0]">Nome no WhatsApp</span>
+                  <span className="font-medium text-[#111b21] dark:text-[#e9edef] truncate max-w-[140px] text-right">
+                    {infoAccount.profileName}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -334,6 +410,15 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                 </span>
                 {acc.instanceName === activeAccount.instanceName && acc.state === 'open' && (
                   <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-[#00a884]" />
+                )}
+                {hoveredName === acc.instanceName && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setInfoAccount(acc) }}
+                    title="Informações"
+                    className="p-0.5 rounded-full hover:bg-[#e9edef] dark:hover:bg-[#3d4f5a] text-[#667781] dark:text-[#8696a0] hover:text-[#00a884] transition-colors"
+                  >
+                    <Info size={11} />
+                  </button>
                 )}
                 {hoveredName === acc.instanceName && acc.state === 'close' && (
                   <button

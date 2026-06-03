@@ -87,7 +87,7 @@ export default function ConversationItem({ conversation, isActive, onClick }: Co
           </span>
         </div>
         {conversation.contact_name && (
-          <p className="text-sm text-[#54656f] dark:text-[#8696a0] truncate leading-tight mb-0.5">
+          <p className="text-[10.5px] text-[#54656f] dark:text-[#8696a0] truncate leading-tight mb-0.5">
             {conversation.contact_phone}
           </p>
         )}

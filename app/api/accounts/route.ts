@@ -77,15 +77,18 @@ export async function GET() {
     }
 
     // Normaliza o formato variável da Evolution API
-    const stateMap = new Map<string, { state: string; profileName?: string; profilePicUrl?: string }>()
+    const stateMap = new Map<string, { state: string; profileName?: string | null; profilePicUrl?: string | null; phone?: string | null }>()
     for (const item of Array.isArray(evoData) ? evoData : []) {
       const inst = item?.instance ?? item
       const name: string = inst?.instanceName ?? inst?.name ?? ''
       const state: string = inst?.connectionStatus ?? inst?.status ?? inst?.state ?? 'close'
+      const ownerRaw: string = inst?.owner ?? inst?.number ?? ''
+      const phone = ownerRaw ? ownerRaw.replace(/@s\.whatsapp\.net$|@c\.us$/, '') : null
       stateMap.set(name, {
         state,
         profileName: inst?.profileName ?? null,
         profilePicUrl: inst?.profilePicUrl ?? null,
+        phone: phone || null,
       })
     }
 
@@ -115,6 +118,7 @@ export async function GET() {
           'open' | 'connecting' | 'close',
         profileName: evo?.profileName ?? null,
         profilePicUrl: evo?.profilePicUrl ?? null,
+        phone: evo?.phone ?? null,
       }
     })
 
