@@ -82,7 +82,14 @@ export async function GET() {
       const inst = item?.instance ?? item
       const name: string = inst?.instanceName ?? inst?.name ?? ''
       const state: string = inst?.connectionStatus ?? inst?.status ?? inst?.state ?? 'close'
-      const ownerRaw: string = inst?.owner ?? inst?.number ?? ''
+      const ownerRaw: string =
+        inst?.ownerJid ??   // Evolution API v2 principal
+        item?.ownerJid ??   // às vezes no nível raiz
+        inst?.owner ??
+        inst?.number ??
+        inst?.phone ??
+        item?.owner ??
+        ''
       const phone = ownerRaw ? ownerRaw.replace(/@s\.whatsapp\.net$|@c\.us$/, '') : null
       stateMap.set(name, {
         state,

@@ -33,6 +33,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   const [timeLeft, setTimeLeft] = useState(60)
   const [syncingInstance, setSyncingInstance] = useState<string | null>(null)
   const [infoAccount, setInfoAccount] = useState<Account | null>(null)
+  const [infoPhone, setInfoPhone] = useState<string | null>(null)
   const [regenerating, setRegenerating] = useState(false)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -51,6 +52,14 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [open])
+
+  useEffect(() => {
+    if (!infoAccount) { setInfoPhone(null); return }
+    fetch(`/api/accounts/${infoAccount.instanceName}/status`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then(({ phone }) => { if (phone) setInfoPhone(phone) })
+      .catch(() => {})
+  }, [infoAccount?.instanceName])
 
   function stopTimers() {
     if (pollerRef.current) clearInterval(pollerRef.current)
@@ -327,11 +336,11 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
       )}
 
       {infoAccount && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setInfoAccount(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => { setInfoAccount(null); setInfoPhone(null) }}>
           <div className="bg-white dark:bg-[#233138] rounded-xl shadow-xl p-5 w-72 space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Informações da conta</p>
-              <button onClick={() => setInfoAccount(null)} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
+              <button onClick={() => { setInfoAccount(null); setInfoPhone(null) }} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
                 <X size={16} />
               </button>
             </div>
@@ -346,7 +355,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
               <div className="flex items-center justify-between">
                 <span className="text-[#667781] dark:text-[#8696a0]">Número</span>
                 <span className="font-medium text-[#111b21] dark:text-[#e9edef]">
-                  {infoAccount.phone ?? '—'}
+                  {infoPhone ?? infoAccount.phone ?? '—'}
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -420,7 +429,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                     <Info size={11} />
                   </button>
                 )}
-                {hoveredName === acc.instanceName && acc.state === 'close' && (
+                {hoveredName === acc.instanceName && acc.state !== 'open' && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleReconnect(acc) }}
                     title="Reconectar"

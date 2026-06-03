@@ -134,8 +134,8 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
 
     pollerRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
-        const { state } = await res.json()
+        const statusRes = await fetch(`/api/accounts/${instanceName}/status`, { cache: 'no-store' })
+        const { state } = await statusRes.json()
         if (state === 'open') {
           stopQrTimers()
           closeModal()
@@ -144,7 +144,12 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
           } else {
             setSyncingInstance(instanceName)
           }
+          return
         }
+        // Fetch latest QR (WhatsApp regenerates it every ~30s)
+        const qrRes = await fetch(`/api/accounts/${instanceName}/qr`, { cache: 'no-store' })
+        const { qr } = await qrRes.json()
+        if (qr) setQrState((prev) => prev ? { ...prev, qr } : { instanceName, qr })
       } catch { /* silent */ }
     }, 3000)
   }
@@ -361,7 +366,7 @@ export default function AccountSwitcher({ onConnectingChange }: AccountSwitcherP
                       </span>
                     )}
                   </div>
-                  {hoveredName === account.instanceName && account.state === 'close' && (
+                  {hoveredName === account.instanceName && account.state !== 'open' && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation()

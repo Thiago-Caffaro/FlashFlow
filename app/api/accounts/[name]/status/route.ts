@@ -21,9 +21,17 @@ export async function GET(
     if (!res.ok) return NextResponse.json({ state: 'close' })
 
     const data = await res.json()
-    const state: string = (data?.instance?.state ?? data?.state ?? 'close').toLowerCase()
+    const instData = data?.instance ?? data
+    const state: string = (instData?.state ?? data?.state ?? 'close').toLowerCase()
+    const ownerRaw: string =
+      instData?.ownerJid ??
+      instData?.owner ??
+      instData?.number ??
+      data?.ownerJid ??
+      ''
+    const phone = ownerRaw ? ownerRaw.replace(/@s\.whatsapp\.net$|@c\.us$/, '') : null
 
-    return NextResponse.json({ state })
+    return NextResponse.json({ state, phone: phone || null })
   } catch {
     return NextResponse.json({ state: 'close' })
   }
