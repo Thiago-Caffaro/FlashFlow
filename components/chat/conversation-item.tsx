@@ -86,8 +86,13 @@ export default function ConversationItem({ conversation, isActive, onClick }: Co
             {formatTime(conversation.last_message_at)}
           </span>
         </div>
+        {conversation.contact_name && (
+          <p className="text-sm text-[#54656f] dark:text-[#8696a0] truncate leading-tight mb-0.5">
+            {conversation.contact_phone}
+          </p>
+        )}
         <div className="flex items-center justify-between gap-2">
-          <p className="text-sm text-[#667781] dark:text-[#8696a0] truncate">{conversation.last_message ?? ''}</p>
+          <p className="text-xs text-[#667781] dark:text-[#8696a0] truncate">{conversation.last_message ?? ''}</p>
           {conversation.unread_count > 0 && (
             <span className="min-w-5 h-5 bg-[#00a884] text-white text-[11px] font-medium rounded-full flex items-center justify-center px-1 shrink-0">
               {conversation.unread_count > 99 ? '99+' : conversation.unread_count}

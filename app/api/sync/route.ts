@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
 
       const { error } = await supabase.from('conversations').upsert(
         {
-          wa_id: jid,
+          wa_id: fallbackJid,
           instance_name: instanceName,
           contact_phone: contactPhone,
           last_message: lastMsg,

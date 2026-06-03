@@ -102,7 +102,7 @@ async function syncContacts(instanceName: string): Promise<string[]> {
       .from('conversations')
       .upsert(
         {
-          wa_id: jid,
+          wa_id: fallbackJid,
           instance_name: instanceName,
           contact_phone: contactPhone,
           last_message: lastMsg,

@@ -287,17 +287,34 @@ export async function POST(req: NextRequest) {
     const isGroup = remoteJid.endsWith('@g.us')
 
     // @lid is an internal WhatsApp ID that Evolution sometimes uses instead of @s.whatsapp.net.
-    // When detected, resolve to the existing @s.whatsapp.net conversation (matched by contact name)
-    // so inbound messages don't end up in a separate conversation from the bot's replies.
+    // Resolve to the existing @s.whatsapp.net conversation so messages don't split into two rows.
     let effectiveRemoteJid = remoteJid
-    if (!isGroup && remoteJid.endsWith('@lid') && data.key.fromMe === false) {
-      const lidPushName: string | null = data.pushName ?? null
-      if (lidPushName) {
+    if (!isGroup && remoteJid.endsWith('@lid')) {
+      if (data.key.fromMe === false) {
+        // Inbound: resolve by contact name (pushName comes from the sender)
+        const lidPushName: string | null = data.pushName ?? null
+        if (lidPushName) {
+          const { data: existingConv } = await supabase
+            .from('conversations')
+            .select('wa_id')
+            .eq('instance_name', instanceName)
+            .eq('contact_name', lidPushName)
+            .not('wa_id', 'like', '%@lid')
+            .order('last_message_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          if (existingConv?.wa_id) effectiveRemoteJid = existingConv.wa_id
+        }
+      } else {
+        // Outbound: no pushName available — find any non-@lid conversation already open
+        // with this instance that has last_message_at set (i.e., a real conversation).
+        // This covers the case where the sync already created @s.whatsapp.net and the
+        // AI/operator replies back to the same contact identified by @lid.
         const { data: existingConv } = await supabase
           .from('conversations')
           .select('wa_id')
           .eq('instance_name', instanceName)
-          .eq('contact_name', lidPushName)
+          .eq('contact_phone', remoteJid.replace('@lid', ''))
           .not('wa_id', 'like', '%@lid')
           .order('last_message_at', { ascending: false })
           .limit(1)

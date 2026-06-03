@@ -179,10 +179,25 @@ export default function ChatsTab({ instanceName }: ChatsTabProps) {
       .eq('instance_name', instanceName)
       .order('last_message_at', { ascending: false })
 
+    // Primary dedup by wa_id
     const seen = new Set<string>()
+    // Build set of contact_phones that already have a non-@lid conversation
+    // (data is already sorted last_message_at DESC, so non-@lid rows come first
+    //  when they have messages, effectively winning the dedup)
+    const nonLidPhones = new Set(
+      (data ?? [])
+        .filter((c) => !c.wa_id.endsWith('@lid') && c.contact_phone)
+        .map((c) => `${c.contact_phone}|${c.instance_name}`)
+    )
     const unique = (data ?? []).filter((c) => {
       if (seen.has(c.wa_id)) return false
       seen.add(c.wa_id)
+      // Drop @lid ghost rows when a real @s.whatsapp.net conversation exists for the same phone
+      if (
+        c.wa_id.endsWith('@lid') &&
+        c.contact_phone &&
+        nonLidPhones.has(`${c.contact_phone}|${c.instance_name}`)
+      ) return false
       return true
     })
     setConversations(unique)
