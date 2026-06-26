@@ -50,6 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   function logout() {
     localStorage.removeItem(STORAGE_KEY)
+    fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
     setState('unauthenticated')
   }
 

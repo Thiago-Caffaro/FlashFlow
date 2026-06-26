@@ -19,6 +19,9 @@ export interface Account {
   profileName?: string | null
   profilePicUrl?: string | null
   phone?: string | null
+  country?: string | null
+  confirmationEnabled?: boolean
+  confirmationPriority?: number
 }
 
 export interface Message {
@@ -55,7 +58,7 @@ export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>
 
 // ─── Flows ────────────────────────────────────────────────────────────────────
 
-export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'switchCase' | 'aiAssistant' | 'end'
+export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'switchCase' | 'aiAssistant' | 'fulfillmentStock' | 'fulfillmentOrder' | 'fulfillmentStatus' | 'end'
 
 export interface SwitchCase {
   id: string
@@ -120,7 +123,158 @@ export interface FlowNodeData {
   inactivityMessage?: string
   // start node
   sessionEndMessage?: { enabled: boolean; text: string }
+  // fulfillment
+  productId?: string
+  quantity?: number
+  successMessage?: string
+  failureMessage?: string
+  customerName?: string
+  address?: string
+  city?: string
+  province?: string
+  zipcode?: string
+  paymentType?: 'COD' | 'PREPAID'
+  fulfillmentItems?: Array<{ productId: string; quantity: number }>
+  confirmationText?: string
+  confirmationMessage?: string
+  collectionMessage?: string
   [key: string]: unknown
+}
+
+export interface FulfillmentProduct {
+  id: string
+  country: string
+  sku: string
+  name: string
+  price: number
+  currency: string
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export const COMMERCIAL_STATUSES = [
+  'Confirmado WhatsApp',
+  'Confirmado Call',
+  'Confirmado Upsell Call',
+  'Confirmado Upsell WhatsApp',
+  'Confirmado',
+  'Desistiu',
+  'Não responde',
+] as const
+
+export type CommercialStatus = typeof COMMERCIAL_STATUSES[number]
+
+export const SEND_STATUSES = ['Pendente', 'Enviado', 'Não enviar'] as const
+export type SendStatus = typeof SEND_STATUSES[number]
+
+export const DELIVERY_STATUSES = [
+  'Não enviado',
+  'Enviado',
+  'A caminho',
+  'Novidade',
+  'Rejeitado',
+  'Entregue',
+] as const
+
+export type DeliveryStatus = typeof DELIVERY_STATUSES[number]
+
+export const ABANDONED_CHECKOUT_STATUSES = ['Pendente', 'Enviado', 'Não enviar', 'Convertido'] as const
+export type AbandonedCheckoutStatus = typeof ABANDONED_CHECKOUT_STATUSES[number]
+
+export interface FulfillmentOrder {
+  id: string
+  order_number: string
+  lead_number: string | null
+  instance_name: string
+  country: string
+  conversation_id: string | null
+  contact_phone: string
+  customer_name: string
+  email: string | null
+  address: string
+  city: string
+  province: string
+  zipcode: string
+  payment_type: 'COD' | 'PREPAID'
+  items: Array<{ product_id: string; sku: string; name: string; quantity: number; unit_price: number; total: number }>
+  total: number
+  currency: string
+  status: string
+  external_snapshot: Record<string, unknown> | null
+  last_error: string | null
+  submitted_at: string | null
+  source: 'manual' | 'shopify'
+  shopify_integration_id: string | null
+  shopify_order_id: string | null
+  shopify_order_name: string | null
+  shopify_order_number: string | null
+  raw_shopify_payload: Record<string, unknown> | null
+  commercial_status: CommercialStatus
+  send_status: SendStatus
+  delivery_status: DeliveryStatus
+  confirmed_at: string | null
+  confirmation_status_updated_at: string | null
+  assigned_instance_name: string | null
+  confirmation_message_sent_at: string | null
+  confirmation_message_error: string | null
+  is_simulation: boolean
+  simulation_marker: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ShopifyIntegration {
+  id: string
+  shop_name: string
+  shop_domain: string
+  default_country: string
+  active: boolean
+  confirmation_message_template: string | null
+  recovery_message_template: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ShopifyAbandonedCheckout {
+  id: string
+  shopify_integration_id: string | null
+  shopify_checkout_id: string | null
+  checkout_token: string | null
+  shop_domain: string
+  assigned_instance_name: string | null
+  country: string
+  contact_phone: string | null
+  customer_name: string | null
+  email: string | null
+  abandoned_checkout_url: string | null
+  total: number
+  currency: string
+  recovery_status: AbandonedCheckoutStatus
+  raw_shopify_payload: Record<string, unknown> | null
+  whatsapp_sent_at: string | null
+  recovered_at: string | null
+  last_error: string | null
+  is_simulation: boolean
+  simulation_marker: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ExternalFulfillmentLead {
+  source: 'fenixcod'
+  lead_number: string
+  order_number: string | null
+  country: string
+  customer_name: string | null
+  contact_phone: string | null
+  city: string | null
+  total: number | null
+  currency: string | null
+  status: string | null
+  created_at: string | null
+  updated_at: string | null
+  raw?: Record<string, unknown>
 }
 
 export interface FlowNode {

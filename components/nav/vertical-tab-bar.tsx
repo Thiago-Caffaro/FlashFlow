@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { MessageSquare, Zap, GitBranch, Brain, BookOpen, Images, Sun, Moon, Settings2 } from 'lucide-react'
+import Link from 'next/link'
+import { MessageSquare, Zap, GitBranch, Brain, BookOpen, Images, Sun, Moon, Settings2, PackageSearch } from 'lucide-react'
 import { useTheme } from '@/contexts/theme-context'
 import { FEATURES } from '@/lib/features'
 
@@ -70,6 +71,19 @@ export default function VerticalTabBar({ activeTab, onTabChange, badges = {} }: 
           )
         })}
       </div>
+
+      <Link
+        href="/fulfillment"
+        className="flex flex-row-reverse items-center h-12 w-full px-3 text-[#54656f] dark:text-[#8696a0] hover:bg-[#f0f2f5] dark:hover:bg-[#182229] hover:text-[#111b21] dark:hover:text-white transition-colors duration-100"
+        title="Pedidos e fulfillment"
+      >
+        <PackageSearch size={19} className="shrink-0" />
+        {expanded && (
+          <span className="flex-1 text-right pr-3 text-sm whitespace-nowrap font-medium">
+            Pedidos
+          </span>
+        )}
+      </Link>
 
       {/* Theme toggle */}
       <button

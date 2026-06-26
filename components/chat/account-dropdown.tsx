@@ -26,6 +26,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   const [deleting, setDeleting] = useState(false)
   const [modalStep, setModalStep] = useState<ModalStep | null>(null)
   const [label, setLabel] = useState('')
+  const [country, setCountry] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [pendingInstance, setPendingInstance] = useState<string | null>(null)
@@ -72,6 +73,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     stopTimers()
     setModalStep(null)
     setLabel('')
+    setCountry('')
     setCreateError(null)
     setPendingInstance(null)
     setQrCode(null)
@@ -156,14 +158,14 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   }
 
   async function handleCreate() {
-    if (!label.trim()) return
+    if (!label.trim() || !country.trim()) return
     setCreating(true)
     setCreateError(null)
     try {
       const res = await fetch('/api/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: label.trim() }),
+        body: JSON.stringify({ label: label.trim(), country: country.trim().toUpperCase() }),
       })
       const json = await res.json()
       if (!res.ok) { setCreateError(json.error ?? 'Erro ao criar conta'); return }
@@ -191,8 +193,6 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
       setConfirmDelete(null)
     }
   }
-
-  if (!activeAccount) return null
 
   return (
     <>
@@ -263,10 +263,17 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                   className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
                   autoFocus
                 />
+                <input
+                  type="text"
+                  placeholder="País, ex: PORTUGAL"
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value.toUpperCase())}
+                  className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
+                />
                 {createError && <p className="text-xs text-red-500">{createError}</p>}
                 <button
                   onClick={handleCreate}
-                  disabled={creating || !label.trim()}
+                  disabled={creating || !label.trim() || !country.trim()}
                   className="w-full py-2 rounded-lg bg-[#00a884] text-white text-sm font-medium hover:bg-[#008f72] disabled:opacity-60 flex items-center justify-center gap-2"
                 >
                   {creating ? <><Loader2 size={15} className="animate-spin" /> Criando...</> : 'Continuar'}
@@ -364,6 +371,12 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                   {infoAccount.label || infoAccount.instanceName}
                 </span>
               </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[#667781] dark:text-[#8696a0]">País</span>
+                <span className="font-medium text-[#111b21] dark:text-[#e9edef]">
+                  {infoAccount.country ?? '—'}
+                </span>
+              </div>
               {infoAccount.profileName && (
                 <div className="flex items-center justify-between">
                   <span className="text-[#667781] dark:text-[#8696a0]">Nome no WhatsApp</span>
@@ -378,18 +391,28 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
       )}
 
       <div ref={ref} className="relative">
-        <button
-          onClick={() => { if (!open) refreshAccounts(); setOpen((v) => !v) }}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors max-w-[160px]"
-        >
-          <span className={`shrink-0 w-2 h-2 rounded-full ${STATE_DOT[activeAccount.state]}`} />
-          <span className="text-xs font-medium text-[#111b21] dark:text-[#e9edef] truncate">
-            {activeAccount.label ?? activeAccount.instanceName}
-          </span>
-          <ChevronDown size={11} className={`shrink-0 text-[#667781] transition-transform ${open ? 'rotate-180' : ''}`} />
-        </button>
+        {activeAccount ? (
+          <button
+            onClick={() => { if (!open) refreshAccounts(); setOpen((v) => !v) }}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors max-w-[160px]"
+          >
+            <span className={`shrink-0 w-2 h-2 rounded-full ${STATE_DOT[activeAccount.state]}`} />
+            <span className="text-xs font-medium text-[#111b21] dark:text-[#e9edef] truncate">
+              {activeAccount.label ?? activeAccount.instanceName}
+            </span>
+            <ChevronDown size={11} className={`shrink-0 text-[#667781] transition-transform ${open ? 'rotate-180' : ''}`} />
+          </button>
+        ) : (
+          <button
+            onClick={() => setModalStep('label')}
+            className="flex items-center gap-2 rounded-lg bg-[#00a884] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#008f72]"
+          >
+            <Plus size={15} />
+            Adicionar conta
+          </button>
+        )}
 
-        {open && (
+        {activeAccount && open && (
           <div className="absolute right-0 top-full mt-1 z-50 min-w-[180px] rounded-xl bg-white dark:bg-[#233138] border border-[#d1d7db] dark:border-[#2a3942] shadow-lg overflow-hidden">
             {accounts.map((acc) => (
               <div

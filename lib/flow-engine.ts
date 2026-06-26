@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession, SwitchCase, FlowNodeData } from '@/types'
 import { decrypt } from './ai-crypto'
+import { createFulfillmentOrder, getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -448,6 +449,34 @@ function nextNodeId(edges: FlowEdge[], fromId: string, handle?: string | null): 
   return edge?.target ?? null
 }
 
+function renderTemplate(template: string, values: Record<string, string | number | null | undefined>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => String(values[key] ?? ''))
+}
+
+function parseOrderFields(message: string): Record<string, string> {
+  const aliases: Record<string, string> = {
+    nome: 'customerName', name: 'customerName',
+    endereco: 'address', endereço: 'address', address: 'address',
+    cidade: 'city', city: 'city',
+    provincia: 'province', província: 'province', province: 'province', estado: 'province',
+    cep: 'zipcode', zipcode: 'zipcode', 'codigo postal': 'zipcode', 'código postal': 'zipcode',
+    email: 'email',
+  }
+  try {
+    const parsed = JSON.parse(message) as Record<string, unknown>
+    return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [aliases[key.toLowerCase()] ?? key, String(value)]))
+  } catch {
+    const result: Record<string, string> = {}
+    for (const line of message.split(/\r?\n/)) {
+      const match = line.match(/^\s*([^:]+):\s*(.+)\s*$/)
+      if (!match) continue
+      const key = aliases[match[1].trim().toLowerCase()]
+      if (key) result[key] = match[2].trim()
+    }
+    return result
+  }
+}
+
 // ─── Model resolution ─────────────────────────────────────────────────────────
 
 const PROVIDER_DEFAULT_FALLBACK: Record<AIProvider, string> = {
@@ -729,7 +758,18 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
 
 // ─── Flow execution ───────────────────────────────────────────────────────────
 
-export async function executeFlow(flowId: string, ctx: FlowContext) {
+export async function checkActiveFlowRun(instanceName: string, remoteJid: string) {
+  const { data } = await supabase
+    .from('flow_runs')
+    .select('*')
+    .eq('instance_name', instanceName)
+    .eq('remote_jid', remoteJid)
+    .in('status', ['collecting', 'waiting_confirmation'])
+    .maybeSingle()
+  return data
+}
+
+export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId?: string | null) {
   log(`executeFlow start`, { flowId, from: ctx.remoteJid, message: ctx.incomingMessage.slice(0, 80) })
 
   const { data: flow, error } = await supabase
@@ -780,7 +820,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
     return
   }
 
-  let currentId: string | null = nextNodeId(edges, startNode.id)
+  let currentId: string | null = resumeNodeId ?? nextNodeId(edges, startNode.id)
   const visited = new Set<string>()
   let anyMessageSent = false
 
@@ -815,7 +855,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
         await sendWhatsApp(ctx, msg)
       }
       if (msg.trim() || images.length > 0) anyMessageSent = true
-      currentId = nextNodeId(edges, currentId)
+      currentId = nextNodeId(edges, node.id)
       continue
     }
 
@@ -841,6 +881,145 @@ export async function executeFlow(flowId: string, ctx: FlowContext) {
       }
       log(`executeFlow switchCase`, { handle, casesCount: cases.length })
       currentId = nextNodeId(edges, currentId, handle)
+      continue
+    }
+
+    if (node.type === 'fulfillmentStock') {
+      try {
+        const productId = String(node.data.productId ?? '')
+        const { data: product, error: productError } = await supabase
+          .from('fulfillment_products')
+          .select('sku')
+          .eq('id', productId)
+          .single()
+        if (productError || !product) throw new Error('Produto não configurado')
+        const country = await getCountryForInstance(ctx.instanceName)
+        const stock = await (await getFulfillmentClient(country)).getStock(product.sku)
+        const message = renderTemplate(String(node.data.successMessage ?? 'Estoque disponível.'), {
+          stock: JSON.stringify(stock),
+        })
+        await sendWhatsApp(ctx, message)
+        anyMessageSent = true
+      } catch (error) {
+        logError('executeFlow fulfillmentStock', error)
+        await sendWhatsApp(ctx, String(node.data.failureMessage ?? 'Não foi possível consultar o estoque.'))
+        anyMessageSent = true
+      }
+      currentId = nextNodeId(edges, currentId)
+      continue
+    }
+
+    if (node.type === 'fulfillmentOrder') {
+      try {
+        const { data: conversation } = await supabase
+          .from('conversations')
+          .select('contact_name, contact_phone')
+          .eq('id', ctx.conversationId)
+          .single()
+        if (!conversation) throw new Error('Conversa não encontrada')
+        const templateValues = {
+          contactName: conversation.contact_name ?? '',
+          contactPhone: conversation.contact_phone,
+          incomingMessage: ctx.incomingMessage,
+        }
+        const { data: existingRun } = await supabase.from('flow_runs')
+          .select('status, variables')
+          .eq('instance_name', ctx.instanceName)
+          .eq('remote_jid', ctx.remoteJid)
+          .maybeSingle()
+        const previous = (existingRun?.variables as Record<string, string> | null) ?? {}
+        const extracted = parseOrderFields(ctx.incomingMessage)
+        const values = {
+          customerName: extracted.customerName || previous.customerName || renderTemplate(String(node.data.customerName ?? '{{contactName}}'), templateValues),
+          address: extracted.address || previous.address || renderTemplate(String(node.data.address ?? ''), templateValues),
+          city: extracted.city || previous.city || renderTemplate(String(node.data.city ?? ''), templateValues),
+          province: extracted.province || previous.province || renderTemplate(String(node.data.province ?? ''), templateValues),
+          zipcode: extracted.zipcode || previous.zipcode || renderTemplate(String(node.data.zipcode ?? ''), templateValues),
+          email: extracted.email || previous.email || '',
+        }
+        const confirmationText = String(node.data.confirmationText ?? 'confirmar').trim().toLowerCase()
+
+        if (existingRun?.status !== 'waiting_confirmation') {
+          const missing = Object.entries(values).filter(([key, value]) => key !== 'email' && !value.trim()).map(([key]) => key)
+          if (missing.length) {
+            await supabase.from('flow_runs').upsert({
+              instance_name: ctx.instanceName, remote_jid: ctx.remoteJid, conversation_id: ctx.conversationId,
+              flow_id: flowId, node_id: node.id, status: 'collecting', variables: values, updated_at: new Date().toISOString(),
+            }, { onConflict: 'instance_name, remote_jid' })
+            await sendWhatsApp(ctx, `${String(node.data.collectionMessage ?? 'Envie os dados faltantes no formato campo: valor.')}\nFaltando: ${missing.join(', ')}`)
+            return
+          }
+          await supabase.from('flow_runs').upsert({
+            instance_name: ctx.instanceName, remote_jid: ctx.remoteJid, conversation_id: ctx.conversationId,
+            flow_id: flowId, node_id: node.id, status: 'waiting_confirmation', variables: values, updated_at: new Date().toISOString(),
+          }, { onConflict: 'instance_name, remote_jid' })
+          const summary = `Confirme o pedido:\n${values.customerName}\n${values.address}, ${values.city}, ${values.province}, ${values.zipcode}\n${String(node.data.confirmationMessage ?? 'Responda CONFIRMAR para preparar o pedido.')}`
+          await sendWhatsApp(ctx, summary)
+          return
+        }
+
+        if (ctx.incomingMessage.trim().toLowerCase() !== confirmationText) {
+          await sendWhatsApp(ctx, String(node.data.confirmationMessage ?? 'Responda CONFIRMAR para preparar o pedido.'))
+          return
+        }
+        const order = await createFulfillmentOrder({
+          instanceName: ctx.instanceName,
+          conversationId: ctx.conversationId,
+          customerName: values.customerName,
+          contactPhone: conversation.contact_phone,
+          email: values.email || null,
+          address: values.address,
+          city: values.city,
+          province: values.province,
+          zipcode: values.zipcode,
+          paymentType: node.data.paymentType === 'PREPAID' ? 'PREPAID' : 'COD',
+          items: (node.data.fulfillmentItems?.length
+            ? node.data.fulfillmentItems
+            : [{ productId: String(node.data.productId ?? ''), quantity: Number(node.data.quantity ?? 1) }]
+          ).map((item) => ({ productId: item.productId, quantity: item.quantity })),
+        })
+        const message = renderTemplate(String(node.data.successMessage ?? 'Pedido recebido para análise: {{leadNumber}}'), {
+          ...templateValues,
+          leadNumber: order?.lead_number ?? order?.order_number ?? '',
+          status: order?.status ?? '',
+        })
+        await sendWhatsApp(ctx, message)
+        await supabase.from('flow_runs').delete()
+          .eq('instance_name', ctx.instanceName)
+          .eq('remote_jid', ctx.remoteJid)
+        anyMessageSent = true
+      } catch (error) {
+        logError('executeFlow fulfillmentOrder', error)
+        await sendWhatsApp(ctx, String(node.data.failureMessage ?? 'Não foi possível preparar o pedido.'))
+        anyMessageSent = true
+      }
+      currentId = nextNodeId(edges, node.id)
+      continue
+    }
+
+    if (node.type === 'fulfillmentStatus') {
+      try {
+        const { data: order, error: orderError } = await supabase
+          .from('fulfillment_orders')
+          .select('*')
+          .eq('conversation_id', ctx.conversationId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (orderError || !order) throw new Error('Pedido não encontrado')
+        const updated = order.lead_number ? await refreshFulfillmentOrder(order.id) : order
+        const message = renderTemplate(String(node.data.successMessage ?? 'Status do seu pedido: {{status}}'), {
+          status: updated?.status ?? order.status,
+          leadNumber: updated?.lead_number ?? order.lead_number ?? order.order_number,
+        })
+        await sendWhatsApp(ctx, message)
+        anyMessageSent = true
+      } catch (error) {
+        logError('executeFlow fulfillmentStatus', error)
+        await sendWhatsApp(ctx, String(node.data.failureMessage ?? 'Não encontrei um pedido para esta conversa.'))
+        anyMessageSent = true
+      }
+      currentId = nextNodeId(edges, node.id)
       continue
     }
 

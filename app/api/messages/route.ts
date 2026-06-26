@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { sendWhatsAppText } from '@/lib/whatsapp-text'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -45,27 +46,10 @@ export async function POST(req: NextRequest) {
 
     console.log(`[messages/send] instance="${instanceName}" to="${waId}" content="${content.slice(0, 60)}"`)
 
-    // Envia pelo Evolution API
-    const evoRes = await fetch(
-      `${process.env.EVOLUTION_API_URL}/message/sendText/${instanceName}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: process.env.EVOLUTION_API_KEY!,
-        },
-        body: JSON.stringify({ number: waId, text: content }),
-      }
-    )
+    const sent = await sendWhatsAppText({ instanceName, number: waId, text: content })
+    const waMessageId = sent.messageId
 
-    const evoData = await evoRes.json().catch(() => ({}))
-    const waMessageId: string | null = evoData?.key?.id ?? null
-
-    console.log(`[messages/send] Evolution status=${evoRes.status} msgId="${waMessageId}" ok=${evoRes.ok}`)
-    if (!evoRes.ok) {
-      console.error(`[messages/send] FAIL status=${evoRes.status}`, JSON.stringify(evoData).slice(0, 200))
-      return NextResponse.json({ error: 'Falha ao enviar mensagem' }, { status: 500 })
-    }
+    console.log(`[messages/send] Evolution msgId="${waMessageId}" ok=true`)
 
     // Salva no Supabase
     const { data: message } = await supabase
@@ -93,6 +77,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, message })
   } catch (err) {
     console.error('Send error:', err)
-    return NextResponse.json({ ok: false }, { status: 500 })
+    return NextResponse.json({ ok: false, error: 'Falha ao enviar mensagem' }, { status: 500 })
   }
 }

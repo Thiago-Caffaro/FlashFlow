@@ -32,6 +32,7 @@ function handleConnectionEvent(data: unknown) {
 }
 
 export function ensureEvoSocket() {
+  if (process.env.EVOLUTION_SOCKET_ENABLED !== 'true') return
   if (socket?.connected) return
   if (failedAttempts >= MAX_ATTEMPTS) return  // circuit breaker
 

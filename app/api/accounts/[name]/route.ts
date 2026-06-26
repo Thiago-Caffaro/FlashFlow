@@ -9,6 +9,41 @@ const supabaseAdmin = createClient(
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ name: string }> }
+) {
+  const { name } = await params
+  const body = await req.json()
+  const patch: Record<string, unknown> = {}
+  if (body.country !== undefined) {
+    const country = String(body.country ?? '').trim().toUpperCase()
+    if (!country) return NextResponse.json({ ok: false, error: 'country required' }, { status: 400 })
+    patch.country = country
+  }
+  if (body.confirmationEnabled !== undefined || body.confirmation_enabled !== undefined) {
+    const value = body.confirmationEnabled ?? body.confirmation_enabled
+    if (typeof value !== 'boolean') return NextResponse.json({ ok: false, error: 'confirmationEnabled invalid' }, { status: 400 })
+    patch.confirmation_enabled = value
+  }
+  if (body.confirmationPriority !== undefined || body.confirmation_priority !== undefined) {
+    const value = Number(body.confirmationPriority ?? body.confirmation_priority)
+    if (!Number.isInteger(value) || value < 0) return NextResponse.json({ ok: false, error: 'confirmationPriority invalid' }, { status: 400 })
+    patch.confirmation_priority = value
+  }
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json({ ok: false, error: 'Nenhuma alteração informada' }, { status: 400 })
+  }
+  const { data, error } = await supabaseAdmin
+    .from('accounts')
+    .update(patch)
+    .eq('instance_name', name)
+    .select('instance_name, label, country, confirmation_enabled, confirmation_priority')
+    .single()
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true, account: data })
+}
+
 // DELETE /api/accounts/[name] — remove conta + todos os dados relacionados
 export async function DELETE(
   _req: NextRequest,
@@ -47,6 +82,9 @@ export async function DELETE(
     const { error: sessErr } = await supabaseAdmin.from('ai_sessions').delete().eq('instance_name', name)
     if (sessErr) console.error('[DELETE accounts] ai_sessions:', sessErr.message)
     else console.log('[DELETE accounts] ai_sessions removidos')
+
+    const { error: runErr } = await supabaseAdmin.from('flow_runs').delete().eq('instance_name', name)
+    if (runErr) console.error('[DELETE accounts] flow_runs:', runErr.message)
 
     // ── 3. agent_memory_blocks ──────────────────────────────────────────────────
     const { error: memErr } = await supabaseAdmin.from('agent_memory_blocks').delete().eq('instance_name', name)

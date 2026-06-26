@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { cacheQr } from '@/lib/qr-cache'
 import { ensureEvoSocket } from '@/lib/evo-socket'
+import {
+  EVOLUTION_WEBHOOK_EVENTS,
+  getEvolutionConnectionState,
+  setEvolutionWebhook,
+  webhookConfigPayload,
+} from '@/lib/evolution-api'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,37 +17,36 @@ const supabaseAdmin = createClient(
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
-const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL!
 
-const WEBHOOK_EVENTS = [
-  'MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE',
-  'SEND_MESSAGE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED',
-  'CHATS_UPSERT', 'CHATS_UPDATE',
-]
+const COUNTRY_MIGRATION_ERROR =
+  'Banco desatualizado: aplique fulfillment_migration.sql antes de criar contas.'
 
-// Ensures all instances point their webhook to the current WEBHOOK_BASE_URL.
-// Old instances may have a stale IP-based URL that doesn't resolve inside Docker
-// (hairpin NAT is blocked on most VPS providers).
-let webhooksSynced = false
+function isMissingCountryColumn(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === 'PGRST204' && error.message?.includes("'country' column") === true
+}
+
+function isMissingConfirmationColumn(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === 'PGRST204' &&
+    (error.message?.includes("'confirmation_enabled' column") === true ||
+      error.message?.includes("'confirmation_priority' column") === true)
+}
+
+// Ensures all instances point their webhook to the current WEBHOOK_BASE_URL and
+// have inbound message events enabled. Retry periodically because Evolution
+// v2.3.7 can return 500 from read endpoints while write endpoints still work.
+let lastWebhookSyncAt = 0
 async function syncWebhooks(instanceNames: string[]) {
-  const webhookUrl = `${WEBHOOK_BASE_URL}/api/webhook/evolution`
-  await Promise.all(
-    instanceNames.map(name =>
-      fetch(`${EVOLUTION_API_URL}/webhook/set/${name}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-        body: JSON.stringify({
-          webhook: {
-            enabled: true,
-            url: webhookUrl,
-            webhook_by_events: true,
-            webhook_base64: false,
-            events: WEBHOOK_EVENTS,
-          },
-        }),
-      }).catch(() => {})
-    )
-  )
+  if (instanceNames.length === 0) return
+  const results = await Promise.allSettled(instanceNames.map((name) => setEvolutionWebhook(name)))
+  const okCount = results.filter((result) => result.status === 'fulfilled' && result.value).length
+  console.log(`[accounts] webhook sync ${okCount}/${instanceNames.length}`)
+}
+
+function shouldSyncWebhooks() {
+  const now = Date.now()
+  if (now - lastWebhookSyncAt < 60_000) return false
+  lastWebhookSyncAt = now
+  return true
 }
 
 function sanitizeInstanceName(label: string): string {
@@ -59,61 +63,34 @@ function sanitizeInstanceName(label: string): string {
 export async function GET() {
   ensureEvoSocket()
   try {
-    const { data: stored, error } = await supabaseAdmin
+    let { data: stored, error } = await supabaseAdmin
       .from('accounts')
-      .select('instance_name, label')
+      .select('instance_name, label, country, confirmation_enabled, confirmation_priority')
       .order('created_at', { ascending: true })
+
+    if (isMissingCountryColumn(error) || isMissingConfirmationColumn(error)) {
+      const fallback = await supabaseAdmin
+        .from('accounts')
+        .select('instance_name, label')
+        .order('created_at', { ascending: true })
+      stored = fallback.data?.map((row) => ({
+        ...row,
+        country: null,
+        confirmation_enabled: true,
+        confirmation_priority: 100,
+      })) ?? null
+      error = fallback.error
+    }
 
     if (error) return NextResponse.json({ accounts: [] })
 
-    // Busca estados das instâncias na Evolution API
-    const evoRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
-      headers: { apikey: EVOLUTION_API_KEY },
-    })
-    let evoData = evoRes.ok ? await evoRes.json() : []
-    // Se vier { instances: [...] } ou similar
-    if (!Array.isArray(evoData) && evoData && typeof evoData === 'object') {
-      evoData = evoData.instances ?? evoData.data ?? []
-    }
-
-    // Normaliza o formato variável da Evolution API
+    // Evolution v2.3.7 can return 500 from /instance/fetchInstances while
+    // /instance/connectionState/{name} still works. Use the per-instance
+    // endpoint so a Next.js restart can recover already connected accounts.
     const stateMap = new Map<string, { state: string; profileName?: string | null; profilePicUrl?: string | null; phone?: string | null }>()
-    for (const item of Array.isArray(evoData) ? evoData : []) {
-      const inst = item?.instance ?? item
-      const name: string = inst?.instanceName ?? inst?.name ?? ''
-      const state: string = inst?.connectionStatus ?? inst?.status ?? inst?.state ?? 'close'
-      const ownerRaw: string =
-        inst?.ownerJid ??   // Evolution API v2 principal
-        item?.ownerJid ??   // às vezes no nível raiz
-        inst?.owner ??
-        inst?.number ??
-        inst?.phone ??
-        item?.owner ??
-        ''
-      const phone = ownerRaw ? ownerRaw.replace(/@s\.whatsapp\.net$|@c\.us$/, '') : null
-      stateMap.set(name, {
-        state,
-        profileName: inst?.profileName ?? null,
-        profilePicUrl: inst?.profilePicUrl ?? null,
-        phone: phone || null,
-      })
-    }
-
-    // Reconcilia: instâncias abertas na Evolution que não estão no Supabase são auto-registradas
-    const storedNames = new Set((stored ?? []).map((r) => r.instance_name))
-    const toInsert: { instance_name: string; label: string }[] = []
-    for (const [name, evo] of stateMap.entries()) {
-      if (!storedNames.has(name) && evo.state.toLowerCase() === 'open') {
-        toInsert.push({ instance_name: name, label: name })
-      }
-    }
-    if (toInsert.length > 0) {
-      await supabaseAdmin.from('accounts').upsert(toInsert, { onConflict: 'instance_name', ignoreDuplicates: true })
-      for (const row of toInsert) {
-        ;(stored ?? []).push(row)
-        storedNames.add(row.instance_name)
-      }
-    }
+    await Promise.all((stored ?? []).map(async (row) => {
+      stateMap.set(row.instance_name, await getEvolutionConnectionState(row.instance_name))
+    }))
 
     const accounts = (stored ?? []).map((row) => {
       const evo = stateMap.get(row.instance_name)
@@ -126,12 +103,14 @@ export async function GET() {
         profileName: evo?.profileName ?? null,
         profilePicUrl: evo?.profilePicUrl ?? null,
         phone: evo?.phone ?? null,
+        country: row.country ?? null,
+        confirmationEnabled: row.confirmation_enabled ?? true,
+        confirmationPriority: row.confirmation_priority ?? 100,
       }
     })
 
-    // One-time sync: update stale webhook URLs for existing instances (fire and forget)
-    if (!webhooksSynced && accounts.length > 0) {
-      webhooksSynced = true
+    // Repair stale/missing per-instance webhook settings in the background.
+    if (accounts.length > 0 && shouldSyncWebhooks()) {
       void syncWebhooks(accounts.map((a) => a.instanceName))
     }
 
@@ -150,25 +129,31 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const label: string = body.label ?? ''
+    const country: string = String(body.country ?? '').trim().toUpperCase()
 
-    if (!label.trim()) {
-      return NextResponse.json({ error: 'Label obrigatório' }, { status: 400 })
+    if (!label.trim() || !country) {
+      return NextResponse.json({ error: 'Nome e país são obrigatórios' }, { status: 400 })
     }
 
     const instanceName = sanitizeInstanceName(label)
 
-    // Verifica se já existe
-    const { data: existing } = await supabaseAdmin
+    // Validate the required schema before creating an Evolution instance.
+    const { data: existing, error: schemaError } = await supabaseAdmin
       .from('accounts')
-      .select('instance_name')
+      .select('instance_name, country')
       .eq('instance_name', instanceName)
       .maybeSingle()
 
+    if (isMissingCountryColumn(schemaError)) {
+      return NextResponse.json({ error: COUNTRY_MIGRATION_ERROR }, { status: 503 })
+    }
+    if (schemaError) {
+      console.error('Erro ao validar schema/accounts:', schemaError)
+      return NextResponse.json({ error: 'Falha ao consultar contas' }, { status: 500 })
+    }
     if (existing) {
       return NextResponse.json({ error: 'Já existe uma conta com esse nome' }, { status: 409 })
     }
-
-    const webhookUrl = `${WEBHOOK_BASE_URL}/api/webhook/evolution`
 
     const createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
       method: 'POST',
@@ -177,13 +162,7 @@ export async function POST(req: NextRequest) {
         instanceName,
         qrcode: true,
         integration: 'WHATSAPP-BAILEYS',
-        webhook: {
-          enabled: true,
-          url: webhookUrl,
-          webhook_by_events: true,
-          webhook_base64: false,
-          events: WEBHOOK_EVENTS,
-        },
+        webhook: webhookConfigPayload(),
       }),
     })
 
@@ -195,14 +174,21 @@ export async function POST(req: NextRequest) {
 
     const createData = await createRes.json().catch(() => ({})) as Record<string, unknown>
     console.log(`[accounts] create "${instanceName}" raw:`, JSON.stringify(createData).slice(0, 300))
+    console.log(`[accounts] webhook events for "${instanceName}": ${EVOLUTION_WEBHOOK_EVENTS.join(',')}`)
 
     // Salva no banco
     const { error: insertError } = await supabaseAdmin
       .from('accounts')
-      .insert({ instance_name: instanceName, label: label.trim() })
+      .insert({ instance_name: instanceName, label: label.trim(), country })
 
     if (insertError) {
       console.error('Erro ao salvar conta no banco:', insertError)
+      await fetch(`${EVOLUTION_API_URL}/instance/delete/${instanceName}`, {
+        method: 'DELETE',
+        headers: { apikey: EVOLUTION_API_KEY },
+      }).catch((cleanupError) => {
+        console.error(`Erro ao remover instância órfã "${instanceName}":`, cleanupError)
+      })
       return NextResponse.json({ error: 'Falha ao registrar conta no banco' }, { status: 500 })
     }
 

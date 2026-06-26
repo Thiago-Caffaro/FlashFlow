@@ -26,6 +26,7 @@ import ConditionNode from './nodes/condition-node'
 import SwitchCaseNode from './nodes/switch-case-node'
 import AiAssistantNode from './nodes/ai-assistant-node'
 import EndNode from './nodes/end-node'
+import FulfillmentActionNode from './nodes/fulfillment-action-node'
 import NodeConfigPanel from './node-config-panel'
 import MessageEditorModal from './message-editor-modal'
 
@@ -35,6 +36,9 @@ const nodeTypes = {
   condition: ConditionNode,
   switchCase: SwitchCaseNode,
   aiAssistant: AiAssistantNode,
+  fulfillmentStock: FulfillmentActionNode,
+  fulfillmentOrder: FulfillmentActionNode,
+  fulfillmentStatus: FulfillmentActionNode,
   end: EndNode,
 }
 
@@ -42,6 +46,9 @@ const BASE_PALETTE: { type: FlowNodeType; label: string; color: string }[] = [
   { type: 'sendMessage', label: 'Enviar Msg',   color: '#00a884' },
   { type: 'condition',   label: 'Condição',     color: '#f59e0b' },
   { type: 'aiAssistant', label: 'IA (Gemini)',  color: '#8b5cf6' },
+  { type: 'fulfillmentStock', label: 'Estoque', color: '#0ea5e9' },
+  { type: 'fulfillmentOrder', label: 'Criar Pedido', color: '#10b981' },
+  { type: 'fulfillmentStatus', label: 'Status Pedido', color: '#6366f1' },
   { type: 'end',         label: 'Fim',          color: '#f87171' },
 ]
 
@@ -215,6 +222,9 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
       condition:    { conditionType: 'contains', conditionValue: '' },
       switchCase:   { cases: [] },
       aiAssistant:  { systemPrompt: '', historyLimit: 10, temperature: 0.7, model: 'gemini-2.5-flash', continueConversation: true },
+      fulfillmentStock: { successMessage: 'Estoque disponível.', failureMessage: 'Produto indisponível.' },
+      fulfillmentOrder: { fulfillmentItems: [], paymentType: 'COD', collectionMessage: 'Envie os dados faltantes no formato campo: valor.', confirmationText: 'confirmar', confirmationMessage: 'Responda CONFIRMAR para preparar o pedido.', successMessage: 'Pedido recebido para análise: {{leadNumber}}', failureMessage: 'Não foi possível preparar o pedido.' },
+      fulfillmentStatus: { successMessage: 'Status do seu pedido: {{status}}', failureMessage: 'Não encontrei um pedido para esta conversa.' },
       end:          {},
     }
     setNodes((nds) => [...nds, { id, type, position, data: defaults[type] }])

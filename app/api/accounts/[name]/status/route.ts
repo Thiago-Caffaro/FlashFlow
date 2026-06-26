@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getEvolutionConnectionState, setEvolutionWebhook } from '@/lib/evolution-api'
 
 export const dynamic = 'force-dynamic'
-
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
 // GET /api/accounts/[name]/status — estado de conexão da instância
 export async function GET(
@@ -13,25 +11,12 @@ export async function GET(
   const { name } = await params
 
   try {
-    const res = await fetch(
-      `${EVOLUTION_API_URL}/instance/connectionState/${name}`,
-      { headers: { apikey: EVOLUTION_API_KEY } }
-    )
+    const current = await getEvolutionConnectionState(name)
+    if (current.state === 'open') {
+      void setEvolutionWebhook(name)
+    }
 
-    if (!res.ok) return NextResponse.json({ state: 'close' })
-
-    const data = await res.json()
-    const instData = data?.instance ?? data
-    const state: string = (instData?.state ?? data?.state ?? 'close').toLowerCase()
-    const ownerRaw: string =
-      instData?.ownerJid ??
-      instData?.owner ??
-      instData?.number ??
-      data?.ownerJid ??
-      ''
-    const phone = ownerRaw ? ownerRaw.replace(/@s\.whatsapp\.net$|@c\.us$/, '') : null
-
-    return NextResponse.json({ state, phone: phone || null })
+    return NextResponse.json(current)
   } catch {
     return NextResponse.json({ state: 'close' })
   }

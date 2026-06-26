@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { executeFlow, checkActiveSession, handleActiveSession } from '@/lib/flow-engine'
+import { executeFlow, checkActiveFlowRun, checkActiveSession, handleActiveSession } from '@/lib/flow-engine'
 import { cacheQr, clearQr } from '@/lib/qr-cache'
 import { logWebhookEvent } from '@/lib/webhook-log'
 
@@ -462,16 +462,26 @@ export async function POST(req: NextRequest) {
     if (data.key.fromMe !== true && type === 'text') {
       void (async () => {
         try {
-          const session = await checkActiveSession(instanceName, effectiveRemoteJid)
-          if (session) {
+          const flowRun = await checkActiveFlowRun(instanceName, effectiveRemoteJid)
+          if (flowRun) {
+            await executeFlow(flowRun.flow_id, {
+              instanceName,
+              remoteJid: effectiveRemoteJid,
+              conversationId: conversation.id,
+              incomingMessage: content,
+            }, flowRun.node_id)
+          } else {
+            const session = await checkActiveSession(instanceName, effectiveRemoteJid)
+            if (session) {
             await handleActiveSession(session, {
               instanceName,
               remoteJid: effectiveRemoteJid,
               conversationId: conversation.id,
               incomingMessage: content,
             })
-          } else {
-            await executeTriggers(instanceName, effectiveRemoteJid, conversation.id, content, type)
+            } else {
+              await executeTriggers(instanceName, effectiveRemoteJid, conversation.id, content, type)
+            }
           }
         } catch (err) {
           console.error('session/trigger error:', err)

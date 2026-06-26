@@ -38,8 +38,9 @@ function buildRequest(body: unknown): NextRequest {
 function mockEvolutionSuccess() {
   fetchMock.mockResolvedValue({
     ok: true,
+    status: 200,
     json: jest.fn().mockResolvedValue({ key: { id: 'evo-msg-id' } }),
-    text: jest.fn().mockResolvedValue(''),
+    text: jest.fn().mockResolvedValue(JSON.stringify({ key: { id: 'evo-msg-id' } })),
   })
 }
 
@@ -47,6 +48,7 @@ function mockEvolutionSuccess() {
 function mockEvolutionFailure() {
   fetchMock.mockResolvedValue({
     ok: false,
+    status: 400,
     json: jest.fn().mockResolvedValue({ error: 'Bad Request' }),
     text: jest.fn().mockResolvedValue('Bad Request'),
   })

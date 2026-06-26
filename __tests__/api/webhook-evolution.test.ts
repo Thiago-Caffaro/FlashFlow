@@ -314,8 +314,13 @@ describe('POST /api/webhook/evolution', () => {
     const allConvCalls = supabaseMock.from.mock.calls
       .map((args: string[], i: number) => ({ table: args[0], result: supabaseMock.from.mock.results[i].value }))
       .filter((c: { table: string }) => c.table === 'conversations')
-    const upsertCall = allConvCalls.find((c: { result: { upsert?: jest.Mock } }) => c.result.upsert?.mock?.calls?.length > 0)
-    const upsertArg = upsertCall.result.upsert.mock.calls[0][0]
+    const upsertCall = allConvCalls.find(
+      (c: { result: { upsert?: jest.Mock } }) => (c.result.upsert?.mock.calls.length ?? 0) > 0
+    )
+    expect(upsertCall).toBeDefined()
+    const upsert = upsertCall?.result.upsert
+    expect(upsert).toBeDefined()
+    const upsertArg = upsert!.mock.calls[0][0]
 
     expect(upsertArg.contact_phone).toBe('82038')
     expect(upsertArg.wa_id).toBe('82038@lid')

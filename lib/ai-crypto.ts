@@ -27,3 +27,6 @@ export function decrypt(encrypted_key: string, iv: string, auth_tag: string): st
     decipher.final(),
   ]).toString('utf8')
 }
+
+export const encryptSecret = encrypt
+export const decryptSecret = decrypt

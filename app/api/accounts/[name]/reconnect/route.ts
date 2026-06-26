@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { setEvolutionWebhook } from '@/lib/evolution-api'
+
+export const dynamic = 'force-dynamic'
 
 export async function POST(
   _req: NextRequest,
@@ -8,6 +11,8 @@ export async function POST(
   const instanceName = decodeURIComponent(name)
 
   try {
+    await setEvolutionWebhook(instanceName)
+
     const res = await fetch(
       `${process.env.EVOLUTION_API_URL}/instance/connect/${instanceName}`,
       {

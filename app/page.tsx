@@ -9,6 +9,7 @@ import AiSettingsTab from '@/components/settings/ai-settings-tab'
 import GeneralSettingsTab from '@/components/settings/general-settings-tab'
 import MemoryTab from '@/components/memory/memory-tab'
 import GalleryTab from '@/components/gallery/gallery-tab'
+import AccountDropdown from '@/components/chat/account-dropdown'
 import VerticalTabBar, { View } from '@/components/nav/vertical-tab-bar'
 import { AccountProvider, useAccount } from '@/contexts/account-context'
 import { ThemeProvider } from '@/contexts/theme-context'
@@ -28,7 +29,8 @@ const TAB_INDEX: Record<View, number> = {
 
 function getStoredView(): View {
   if (typeof window === 'undefined') return 'chats'
-  return (localStorage.getItem('activeView') as View) ?? 'chats'
+  const stored = localStorage.getItem('activeView')
+  return stored && stored in TAB_INDEX ? stored as View : 'chats'
 }
 
 function playEscalationSound() {
@@ -112,8 +114,16 @@ function ChatApp() {
   const tabIndex = TAB_INDEX[activeView]
 
   const noAccount = (
-    <div className="flex items-center justify-center h-full">
-      <p className="text-xs text-[#aebac1] dark:text-[#667781]">Nenhuma conta ativa.</p>
+    <div className="flex h-full items-center justify-center px-6">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <div>
+          <p className="text-sm font-medium text-[#111b21] dark:text-[#e9edef]">Nenhuma conta ativa</p>
+          <p className="mt-1 text-xs text-[#667781] dark:text-[#8696a0]">
+            Conecte uma conta do WhatsApp para começar.
+          </p>
+        </div>
+        <AccountDropdown />
+      </div>
     </div>
   )
 
