@@ -1,17 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  CheckCircle, Loader2, Pencil, RefreshCw,
+  CheckCircle, ExternalLink, Loader2, Pencil, RefreshCw,
   RotateCcw, Save, ShoppingBag, Trash2,
 } from 'lucide-react'
 import { Account, ShopifyIntegration } from '@/types'
 
 type ShopifyIntegrationForm = {
-  shop_name: string
   shop_domain: string
-  admin_token: string
-  webhook_secret: string
   default_country: string
   active: boolean
   confirmation_message_template: string
@@ -19,8 +16,7 @@ type ShopifyIntegrationForm = {
 }
 
 const emptyForm: ShopifyIntegrationForm = {
-  shop_name: '', shop_domain: '', admin_token: '', webhook_secret: '',
-  default_country: '', active: true,
+  shop_domain: '', default_country: '', active: true,
   confirmation_message_template: '', recovery_message_template: '',
 }
 
@@ -59,6 +55,23 @@ export default function ShopifyConfig({
   const [showForm, setShowForm] = useState(false)
   const [activeStep, setActiveStep] = useState(1)
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('shopifyConnected')) {
+      setMessage({ text: 'Loja conectada com sucesso via Shopify OAuth!' })
+      setTimeout(() => setMessage(null), 6000)
+      window.history.replaceState({}, '', window.location.pathname)
+      onRefresh()
+    }
+    const err = params.get('shopifyError')
+    if (err) {
+      setMessage({ text: decodeURIComponent(err), error: true })
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   function showMsg(text: string, error = false) {
     setMessage({ text, error })
     setTimeout(() => setMessage(null), 5000)
@@ -67,10 +80,7 @@ export default function ShopifyConfig({
   function startEdit(integration: ShopifyIntegration) {
     setEditingId(integration.id)
     setForm({
-      shop_name: integration.shop_name,
       shop_domain: integration.shop_domain,
-      admin_token: '',
-      webhook_secret: '',
       default_country: integration.default_country,
       active: integration.active,
       confirmation_message_template: integration.confirmation_message_template ?? '',
@@ -89,15 +99,16 @@ export default function ShopifyConfig({
   }
 
   async function save() {
+    if (!editingId) return
     setBusy('save')
     const res = await fetch('/api/fulfillment/shopify/integrations', {
-      method: editingId ? 'PUT' : 'POST',
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, id: editingId ?? undefined }),
+      body: JSON.stringify({ id: editingId, ...form }),
     })
     const json = await getJson(res)
     if (json.ok) {
-      showMsg(editingId ? 'Loja atualizada.' : 'Loja conectada com sucesso!')
+      showMsg('Loja atualizada.')
       cancelForm()
       await onRefresh()
     } else {
@@ -138,13 +149,13 @@ export default function ShopifyConfig({
   }
 
   const steps = [
-    { n: 1, label: 'Credenciais' },
+    { n: 1, label: 'Conexão' },
     { n: 2, label: 'Sincronização' },
     { n: 3, label: 'Mensagens' },
     { n: 4, label: 'WhatsApp' },
   ]
 
-  const canSave = Boolean(form.shop_name && form.shop_domain && form.default_country)
+  const canSave = Boolean(editingId && form.shop_domain && form.default_country)
 
   return (
     <div className="space-y-6">
@@ -177,7 +188,7 @@ export default function ShopifyConfig({
         <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
           <div className="border-b border-[#f0f2f5] px-6 py-4 dark:border-[#2a3942]">
             <h3 className="font-bold dark:text-[#e9edef]">{editingId ? 'Editar loja' : 'Conectar nova loja'}</h3>
-            <p className="mt-0.5 text-xs text-[#667781]">Token Admin e webhook secret são criptografados antes de serem armazenados.</p>
+            <p className="mt-0.5 text-xs text-[#667781]">{editingId ? 'Edite mensagens e roteamento WhatsApp.' : 'Autentique via OAuth para conectar sua loja Shopify.'}</p>
           </div>
 
           {/* Step tabs */}
@@ -201,36 +212,15 @@ export default function ShopifyConfig({
             {activeStep === 1 && (
               <>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-[#667781]">Nome da loja</label>
-                  <input
-                    className={inputClass}
-                    placeholder="Minha Loja"
-                    value={form.shop_name}
-                    onChange={(e) => setForm((f) => ({ ...f, shop_name: e.target.value }))}
-                  />
-                </div>
-                <div>
                   <label className="mb-1 block text-xs font-semibold text-[#667781]">Domínio Shopify</label>
                   <input
                     className={inputClass}
-                    placeholder="loja.myshopify.com"
+                    placeholder="minha-loja.myshopify.com"
                     value={form.shop_domain}
-                    onChange={(e) => setForm((f) => ({ ...f, shop_domain: e.target.value.toLowerCase() }))}
+                    readOnly={!!editingId}
+                    onChange={(e) => setForm((f) => ({ ...f, shop_domain: e.target.value.toLowerCase().trim() }))}
                   />
                   <p className="mt-1 text-xs text-[#667781]">Encontre em Admin Shopify → Configurações → Informações da Loja</p>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-[#667781]">Admin API Token</label>
-                  <input
-                    className={inputClass}
-                    type="password"
-                    placeholder={editingId ? 'Deixe vazio para manter o atual' : 'shpat_...'}
-                    value={form.admin_token}
-                    onChange={(e) => setForm((f) => ({ ...f, admin_token: e.target.value }))}
-                  />
-                  <p className="mt-1 text-xs text-[#667781]">
-                    Admin Shopify → Configurações → Apps e canais de vendas → Desenvolver apps → Criar app privado
-                  </p>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-[#667781]">País padrão</label>
@@ -242,29 +232,48 @@ export default function ShopifyConfig({
                   />
                   <p className="mt-1 text-xs text-[#667781]">Deve corresponder ao país configurado nas credenciais FenixCOD.</p>
                 </div>
+                {!editingId && (
+                  <div className="rounded-lg border border-[#d1d7db] bg-[#f8f9fa] p-4 dark:border-[#2a3942] dark:bg-[#0b141a]">
+                    <p className="mb-3 text-sm font-semibold dark:text-[#e9edef]">Autenticar via Shopify OAuth</p>
+                    <p className="mb-4 text-xs text-[#667781]">
+                      Você será redirecionado para o Shopify para autorizar o acesso. O token de acesso será capturado e armazenado automaticamente.
+                    </p>
+                    <button
+                      onClick={() => {
+                        if (!form.shop_domain || !form.default_country) {
+                          showMsg('Preencha o domínio e o país padrão antes de conectar.', true)
+                          return
+                        }
+                        window.location.href = `/api/shopify/auth?shop=${encodeURIComponent(form.shop_domain)}&country=${encodeURIComponent(form.default_country)}`
+                      }}
+                      className={`${btnPrimary} w-full justify-center`}
+                    >
+                      <ExternalLink size={14} />
+                      Conectar com Shopify
+                    </button>
+                  </div>
+                )}
+                {editingId && (
+                  <p className="text-xs text-[#667781]">
+                    O token OAuth é gerenciado automaticamente. Para reconectar, desative a loja e use "Conectar loja" novamente.
+                  </p>
+                )}
               </>
             )}
 
             {activeStep === 2 && (
               <>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-[#667781]">Webhook Secret</label>
-                  <input
-                    className={inputClass}
-                    placeholder={editingId ? 'Deixe vazio para manter o atual' : 'shpss_...'}
-                    value={form.webhook_secret}
-                    onChange={(e) => setForm((f) => ({ ...f, webhook_secret: e.target.value }))}
-                  />
-                  <p className="mt-1 text-xs text-[#667781]">Admin Shopify → Configurações → Notificações → Webhooks</p>
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/40 dark:bg-emerald-900/20">
+                  <p className="font-semibold text-emerald-800 dark:text-emerald-300">Webhooks verificados via OAuth</p>
+                  <p className="mt-1 text-emerald-700 dark:text-emerald-400">
+                    Integrações conectadas via OAuth usam a chave do app para verificar webhooks automaticamente — nenhuma configuração manual é necessária.
+                  </p>
                 </div>
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900/40 dark:bg-amber-900/20">
                   <p className="font-semibold text-amber-800 dark:text-amber-300">Modo de sincronização: manual</p>
                   <p className="mt-1 text-amber-700 dark:text-amber-400">
-                    O sistema ainda não recebe webhooks em tempo real do Shopify.
-                    Use o botão <strong>Sincronizar</strong> para importar pedidos e carrinhos manualmente.
-                  </p>
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-                    A sincronização lê os pedidos mais recentes e envia confirmações por WhatsApp automaticamente.
+                    Use o botão <strong>Sincronizar</strong> para importar pedidos e carrinhos. Webhooks em tempo real podem ser configurados no Shopify apontando para
+                    {' '}<code className="rounded bg-amber-100 px-1 dark:bg-amber-900/40">/api/webhook/shopify/orders</code>.
                   </p>
                 </div>
               </>
@@ -361,10 +370,10 @@ export default function ShopifyConfig({
             </div>
             <div className="flex gap-2">
               <button onClick={cancelForm} className={btnSecondary}>Cancelar</button>
-              {(activeStep === 4 || editingId) && (
+              {editingId && (
                 <button onClick={save} disabled={busy === 'save' || !canSave} className={btnPrimary}>
                   {busy === 'save' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  {editingId ? 'Salvar' : 'Conectar loja'}
+                  Salvar
                 </button>
               )}
             </div>
@@ -382,6 +391,9 @@ export default function ShopifyConfig({
                 <b className="dark:text-[#e9edef]">{integration.shop_name}</b>
                 <p className="text-xs text-[#667781]">{integration.shop_domain} · {integration.default_country}</p>
               </div>
+              {integration.oauth_connected && (
+                <span className="rounded-full bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">OAuth</span>
+              )}
               <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusClass(integration.active)}`}>
                 {integration.active ? 'ativa' : 'inativa'}
               </span>

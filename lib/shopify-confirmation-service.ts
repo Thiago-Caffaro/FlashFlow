@@ -16,7 +16,7 @@ import {
 } from '@/types'
 
 export const SHOPIFY_INTEGRATION_PUBLIC_SELECT =
-  'id, shop_name, shop_domain, default_country, active, confirmation_message_template, recovery_message_template, created_at, updated_at'
+  'id, shop_name, shop_domain, default_country, active, oauth_connected, confirmation_message_template, recovery_message_template, created_at, updated_at'
 
 type ShopifyIntegrationCredentialRow = {
   id: string
@@ -25,11 +25,12 @@ type ShopifyIntegrationCredentialRow = {
   encrypted_admin_token: string
   admin_token_iv: string
   admin_token_auth_tag: string
-  encrypted_webhook_secret: string
-  webhook_secret_iv: string
-  webhook_secret_auth_tag: string
+  encrypted_webhook_secret: string | null
+  webhook_secret_iv: string | null
+  webhook_secret_auth_tag: string | null
   default_country: string
   active: boolean
+  oauth_connected: boolean
   confirmation_message_template: string | null
   recovery_message_template: string | null
 }
@@ -202,7 +203,12 @@ export function decodeShopifyAdminToken(row: ShopifyIntegrationCredentialRow): s
 }
 
 export function decodeShopifyWebhookSecret(row: ShopifyIntegrationCredentialRow): string {
-  return decryptSecret(row.encrypted_webhook_secret, row.webhook_secret_iv, row.webhook_secret_auth_tag)
+  if (row.oauth_connected || !row.encrypted_webhook_secret) {
+    const secret = process.env.SHOPIFY_CLIENT_SECRET
+    if (!secret) throw new Error('SHOPIFY_CLIENT_SECRET not configured for OAuth webhook verification')
+    return secret
+  }
+  return decryptSecret(row.encrypted_webhook_secret, row.webhook_secret_iv!, row.webhook_secret_auth_tag!)
 }
 
 export function shopifyClientFromIntegration(row: ShopifyIntegrationCredentialRow): ShopifyClient {

@@ -230,6 +230,7 @@ export interface ShopifyIntegration {
   shop_domain: string
   default_country: string
   active: boolean
+  oauth_connected: boolean
   confirmation_message_template: string | null
   recovery_message_template: string | null
   created_at: string
