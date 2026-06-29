@@ -10,6 +10,12 @@ on:
         description: 'Docker image tag (e.g. test, staging)'
         default: 'test'
         required: false
+      supabase_url:
+        description: 'Supabase URL override (for test builds with dev credentials)'
+        required: false
+      supabase_anon_key:
+        description: 'Supabase Anon Key override (for test builds with dev credentials)'
+        required: false
 
 jobs:
   build-and-push:
@@ -46,5 +52,5 @@ jobs:
             NEXT_PUBLIC_FEATURE_AI_SESSIONS=true
             NEXT_PUBLIC_FEATURE_GALLERY=true
             NEXT_PUBLIC_FEATURE_SWITCH_CASE=true
-            NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ github.event.inputs.supabase_url || secrets.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ github.event.inputs.supabase_anon_key || secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
