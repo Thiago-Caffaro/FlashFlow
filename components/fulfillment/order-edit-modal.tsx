@@ -1,0 +1,270 @@
+'use client'
+
+import { useState } from 'react'
+import { Loader2, MessageCircle, RefreshCw, Send, Trash2, X, XCircle } from 'lucide-react'
+import {
+  Account,
+  COMMERCIAL_STATUSES,
+  DELIVERY_STATUSES,
+  FulfillmentOrder,
+  SEND_STATUSES,
+  type CommercialStatus,
+  type DeliveryStatus,
+  type SendStatus,
+} from '@/types'
+
+type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
+
+interface OrderEditModalProps {
+  order: FulfillmentOrder
+  accounts: Account[]
+  onClose: () => void
+  onUpdateStatus: (id: string, patch: {
+    commercial_status?: CommercialStatus
+    send_status?: SendStatus
+    delivery_status?: DeliveryStatus
+    assigned_instance_name?: string
+  }) => Promise<void>
+  onAction: (id: string, action: OrderAction) => Promise<void>
+  onResendConfirmation: (orderId: string) => Promise<void>
+}
+
+const inputClass = 'w-full rounded-lg border border-transparent bg-[#f0f2f5] px-3 py-2 text-sm outline-none focus:border-[#00a884] dark:bg-[#2a3942] dark:text-[#e9edef]'
+const btnPrimary = 'flex items-center gap-2 rounded-lg bg-[#00a884] px-4 py-2 text-sm font-semibold text-white hover:bg-[#008f72] disabled:opacity-50'
+const btnSecondary = 'flex items-center gap-2 rounded-lg bg-[#f0f2f5] px-3 py-2 text-sm font-semibold text-[#667781] hover:bg-[#e6e9ec] disabled:opacity-40 dark:bg-[#2a3942] dark:text-[#e9edef] dark:hover:bg-[#334650]'
+const btnDanger = 'flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-100 disabled:opacity-40 dark:bg-red-900/20 dark:hover:bg-red-900/30'
+
+function CommercialBadge({ status }: { status: CommercialStatus }) {
+  const color = status.startsWith('Confirmado')
+    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+    : status === 'Desistiu'
+      ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+      : 'bg-[#f0f2f5] text-[#667781] dark:bg-[#2a3942] dark:text-[#aebac1]'
+  return <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${color}`}>{status}</span>
+}
+
+export default function OrderEditModal({
+  order, accounts, onClose, onUpdateStatus, onAction, onResendConfirmation,
+}: OrderEditModalProps) {
+  const [busy, setBusy] = useState(false)
+
+  const hasLead = Boolean(order.lead_number)
+  const canSubmit = !hasLead && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
+  const canCancelLocal = !hasLead && order.status === 'pending_operator' && order.source === 'manual'
+  const accountLabel = accounts.find((a) => a.instanceName === (order.assigned_instance_name || order.instance_name))?.label
+
+  async function handleUpdate(patch: Parameters<typeof onUpdateStatus>[1]) {
+    setBusy(true)
+    await onUpdateStatus(order.id, patch)
+    setBusy(false)
+  }
+
+  async function handleAction(action: OrderAction) {
+    if (action === 'submit' && !window.confirm('Enviar este pedido para o FenixCOD agora?')) return
+    if (action === 'cancel' && !window.confirm('Esta ação cancelará o pedido real no FenixCOD. Continuar?')) return
+    if (action === 'cancel-local' && !window.confirm('Cancelar este pedido local antes do envio?')) return
+    setBusy(true)
+    await onAction(order.id, action)
+    setBusy(false)
+  }
+
+  async function handleResend() {
+    setBusy(true)
+    await onResendConfirmation(order.id)
+    setBusy(false)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-2xl dark:bg-[#111b21]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start gap-3 border-b border-[#f0f2f5] px-6 py-4 dark:border-[#2a3942]">
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-bold dark:text-[#e9edef]">
+                {order.shopify_order_name || order.order_number}
+              </h2>
+              <CommercialBadge status={order.commercial_status} />
+              {order.source === 'shopify' && (
+                <span className="rounded-full bg-[#f0f2f5] px-2 py-0.5 text-xs font-semibold text-[#667781] dark:bg-[#2a3942]">shopify</span>
+              )}
+              {order.source === 'manual' && (
+                <span className="rounded-full bg-[#f0f2f5] px-2 py-0.5 text-xs font-semibold text-[#667781] dark:bg-[#2a3942]">manual</span>
+              )}
+              {order.is_simulation && (
+                <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">simulação</span>
+              )}
+            </div>
+            <p className="text-xs text-[#667781] mt-0.5">
+              {order.country} · {order.currency} {Number(order.total).toFixed(2)} · {accountLabel || order.assigned_instance_name || order.instance_name || 'sem conta'}
+            </p>
+          </div>
+          <button onClick={onClose} className="shrink-0 rounded-lg p-1.5 text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="divide-y divide-[#f0f2f5] dark:divide-[#2a3942]">
+          {/* Customer + Status */}
+          <div className="grid gap-4 px-6 py-4 sm:grid-cols-2">
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">Cliente</p>
+              <p className="font-semibold dark:text-[#e9edef]">{order.customer_name}</p>
+              <p className="text-sm text-[#667781]">{order.contact_phone || 'Sem telefone'}</p>
+              <p className="text-sm text-[#667781]">{order.city}{order.province ? `, ${order.province}` : ''}</p>
+              {order.address && <p className="text-sm text-[#667781]">{order.address}{order.zipcode ? ` · ${order.zipcode}` : ''}</p>}
+              {order.email && <p className="text-xs text-[#667781] mt-1">{order.email}</p>}
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#667781]">Status</p>
+              <div>
+                <label className="mb-0.5 block text-xs text-[#667781]">Comercial</label>
+                <select
+                  disabled={busy}
+                  value={order.commercial_status}
+                  onChange={(e) => handleUpdate({ commercial_status: e.target.value as CommercialStatus })}
+                  className={inputClass}
+                >
+                  {COMMERCIAL_STATUSES.map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-0.5 block text-xs text-[#667781]">Envio</label>
+                <select
+                  disabled={busy}
+                  value={order.send_status}
+                  onChange={(e) => handleUpdate({ send_status: e.target.value as SendStatus })}
+                  className={inputClass}
+                >
+                  {SEND_STATUSES.map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-0.5 block text-xs text-[#667781]">Entrega</label>
+                <select
+                  disabled={busy}
+                  value={order.delivery_status}
+                  onChange={(e) => handleUpdate({ delivery_status: e.target.value as DeliveryStatus })}
+                  className={inputClass}
+                >
+                  {DELIVERY_STATUSES.map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-0.5 block text-xs text-[#667781]">Conta WhatsApp</label>
+                <select
+                  disabled={busy}
+                  value={order.assigned_instance_name || order.instance_name || ''}
+                  onChange={(e) => handleUpdate({ assigned_instance_name: e.target.value })}
+                  className={inputClass}
+                >
+                  <option value="">Sem conta</option>
+                  {accounts.map((a) => (
+                    <option key={a.instanceName} value={a.instanceName}>{a.label || a.instanceName}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Items */}
+          {order.items?.length > 0 && (
+            <div className="px-6 py-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">Itens</p>
+              <div className="space-y-1">
+                {order.items.map((item, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span className="dark:text-[#e9edef]">
+                      {item.name || item.sku}
+                      <span className="text-[#667781]"> × {item.quantity}</span>
+                    </span>
+                    <span className="text-[#667781]">{order.currency} {Number(item.total).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* FenixCOD + WhatsApp info */}
+          <div className="grid gap-4 px-6 py-4 sm:grid-cols-2">
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">FenixCOD</p>
+              {hasLead ? (
+                <p className="text-sm font-semibold text-[#00a884]">Lead #{order.lead_number}</p>
+              ) : (
+                <p className="text-sm text-[#667781]">Não submetido ainda</p>
+              )}
+              <p className="mt-0.5 text-xs text-[#667781]">{order.status}</p>
+              {order.last_error && (
+                <p className="mt-1 text-xs text-red-600">{order.last_error}</p>
+              )}
+              {!hasLead && order.commercial_status.startsWith('Confirmado') && order.send_status === 'Pendente' && !order.is_simulation && (
+                <p className="mt-1 text-xs font-semibold text-amber-600">Pronto para envio automático</p>
+              )}
+            </div>
+            {order.source === 'shopify' && (
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">WhatsApp</p>
+                {order.confirmation_message_sent_at ? (
+                  <>
+                    <p className="text-sm text-[#00a884]">✓ Confirmação enviada</p>
+                    <p className="mt-0.5 text-xs text-[#667781]">
+                      {new Date(order.confirmation_message_sent_at).toLocaleString('pt-BR')}
+                    </p>
+                  </>
+                ) : order.confirmation_message_error ? (
+                  <p className="text-sm text-red-500" title={order.confirmation_message_error ?? undefined}>
+                    Falhou ao enviar
+                  </p>
+                ) : (
+                  <p className="text-sm text-[#667781]">Pendente</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-wrap items-center gap-2 px-6 py-4">
+            {busy && <Loader2 size={16} className="animate-spin text-[#00a884]" />}
+            {order.source === 'shopify' && (
+              <button
+                onClick={handleResend}
+                disabled={busy || order.is_simulation}
+                className={btnSecondary}
+                title="Reenviar confirmação por WhatsApp"
+              >
+                <MessageCircle size={14} />Confirmação WA
+              </button>
+            )}
+            {canSubmit && (
+              <button onClick={() => handleAction('submit')} disabled={busy} className={btnPrimary}>
+                <Send size={14} />Enviar ao FenixCOD
+              </button>
+            )}
+            {hasLead && (
+              <button onClick={() => handleAction('refresh')} disabled={busy} className={btnSecondary}>
+                <RefreshCw size={14} />Atualizar
+              </button>
+            )}
+            {hasLead && order.status !== 'cancelled' && (
+              <button onClick={() => handleAction('cancel')} disabled={busy} className={btnDanger}>
+                <Trash2 size={14} />Cancelar no FenixCOD
+              </button>
+            )}
+            {canCancelLocal && (
+              <button onClick={() => handleAction('cancel-local')} disabled={busy} className={btnDanger}>
+                <XCircle size={14} />Cancelar local
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
