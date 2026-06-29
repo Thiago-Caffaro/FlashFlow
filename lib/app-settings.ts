@@ -11,7 +11,8 @@ export async function getSetting(key: string): Promise<string | null> {
   if (!data) return null
   try {
     return decryptSecret(data.encrypted_value, data.value_iv, data.value_auth_tag)
-  } catch {
+  } catch (err) {
+    console.error(`[SECURITY] Decryption failed for app_settings key="${key}":`, err instanceof Error ? err.message : err)
     return null
   }
 }

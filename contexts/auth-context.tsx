@@ -26,7 +26,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const verify = useCallback(async (token: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/auth/verify?token=${encodeURIComponent(token)}`)
+      const res = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
       const json = await res.json()
       return json.ok === true
     } catch {

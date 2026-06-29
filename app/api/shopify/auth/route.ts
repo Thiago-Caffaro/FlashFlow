@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { normalizeShopDomain } from '@/lib/shopify-client'
 import { getSetting } from '@/lib/app-settings'
+import { encryptSecret } from '@/lib/ai-crypto'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,7 +30,8 @@ export async function GET(req: NextRequest) {
   }
 
   const nonce = randomBytes(16).toString('hex')
-  const cookieValue = Buffer.from(JSON.stringify({ nonce, country })).toString('base64')
+  const encrypted = encryptSecret(JSON.stringify({ nonce, country }))
+  const cookieValue = JSON.stringify(encrypted)
   const redirectUri = `${appBaseUrl}/api/shopify/callback`
 
   const authUrl = `https://${shop}/admin/oauth/authorize?` + new URLSearchParams({
@@ -45,6 +47,7 @@ export async function GET(req: NextRequest) {
     maxAge: 600,
     path: '/',
     sameSite: 'lax',
+    secure: process.env.COOKIE_SECURE !== 'false',
   })
   return res
 }

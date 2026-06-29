@@ -4,13 +4,18 @@ import { NextRequest } from 'next/server'
 
 export const AUTH_COOKIE = 'ff_auth'
 
+function getAuthSecret(): string {
+  const secret = process.env.AUTH_SECRET
+  if (!secret) throw new Error('AUTH_SECRET não configurado — defina no .env.local')
+  return secret
+}
+
 export function generateAuthToken(username: string): string {
   const payload = Buffer.from(JSON.stringify({
     u: username,
     exp: Date.now() + 30 * 24 * 60 * 60 * 1000,
   })).toString('base64url')
-  const secret = process.env.AUTH_SECRET ?? 'fallback-secret-change-in-env'
-  const sig = createHmac('sha256', secret).update(payload).digest('base64url')
+  const sig = createHmac('sha256', getAuthSecret()).update(payload).digest('base64url')
   return `${payload}.${sig}`
 }
 
@@ -20,7 +25,7 @@ export function verifyAuthToken(token: string | undefined): boolean {
   if (parts.length !== 2) return false
 
   const [payload, sig] = parts
-  const secret = process.env.AUTH_SECRET ?? 'fallback-secret-change-in-env'
+  const secret = getAuthSecret()
   const expected = createHmac('sha256', secret).update(payload).digest('base64url')
   const actualBuffer = Buffer.from(sig)
   const expectedBuffer = Buffer.from(expected)

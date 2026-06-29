@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
-import { encryptSecret } from '@/lib/ai-crypto'
+import { encryptSecret, decryptSecret } from '@/lib/ai-crypto'
 import { normalizeShopDomain } from '@/lib/shopify-client'
 import { SHOPIFY_INTEGRATION_PUBLIC_SELECT } from '@/lib/shopify-confirmation-service'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -59,21 +59,24 @@ export async function GET(req: NextRequest) {
   const expectedHmac = createHmac('sha256', clientSecret).update(sortedMessage).digest('hex')
   if (!hmacEqual(expectedHmac, hmac)) return fail('Assinatura HMAC inválida')
 
-  // Step 2 — Verify state from cookie
+  // Step 2 — Verify state from cookie (encrypted)
   const cookieRaw = req.cookies.get('shopify_oauth_state')?.value
   if (!cookieRaw) return fail('Cookie de estado expirado — tente novamente')
 
   let cookieData: { nonce: string; country: string }
   try {
-    cookieData = JSON.parse(Buffer.from(cookieRaw, 'base64').toString('utf8')) as {
-      nonce: string
-      country: string
-    }
+    const encrypted = JSON.parse(cookieRaw) as { encrypted_key: string; iv: string; auth_tag: string }
+    const plain = decryptSecret(encrypted.encrypted_key, encrypted.iv, encrypted.auth_tag)
+    cookieData = JSON.parse(plain) as { nonce: string; country: string }
   } catch {
-    return fail('Cookie de estado inválido')
+    return fail('Cookie de estado inválido ou corrompido')
   }
 
-  if (cookieData.nonce !== state) return fail('Estado OAuth não confere')
+  const nonceA = Buffer.from(cookieData.nonce, 'utf8')
+  const nonceB = Buffer.from(state, 'utf8')
+  if (nonceA.length !== nonceB.length || !timingSafeEqual(nonceA, nonceB)) {
+    return fail('Estado OAuth não confere')
+  }
   const country = cookieData.country.toUpperCase()
 
   // Step 3 — Exchange code for access token

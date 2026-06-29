@@ -11,7 +11,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'Servidor não configurado (ADMIN_PASSWORD ausente)' }, { status: 500 })
     }
 
-    if (username !== expectedUser || password !== expectedPass) {
+    const { timingSafeEqual } = await import('node:crypto')
+    const userMatch = timingSafeEqual(Buffer.from(username), Buffer.from(expectedUser))
+    const passMatch = expectedPass.length === password.length &&
+      timingSafeEqual(Buffer.from(password), Buffer.from(expectedPass))
+    if (!userMatch || !passMatch) {
       return NextResponse.json({ ok: false, error: 'Credenciais inválidas' }, { status: 401 })
     }
 
