@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  CheckCircle, ExternalLink, Loader2, Pencil, RefreshCw,
+  CheckCircle, ExternalLink, KeyRound, Loader2, Pencil, RefreshCw,
   RotateCcw, Save, ShoppingBag, Trash2,
 } from 'lucide-react'
 import { Account, ShopifyIntegration } from '@/types'
@@ -13,6 +13,13 @@ type ShopifyIntegrationForm = {
   active: boolean
   confirmation_message_template: string
   recovery_message_template: string
+}
+
+type AppCredentials = {
+  clientId: string
+  clientSecret: string
+  scopes: string
+  appBaseUrl: string
 }
 
 const emptyForm: ShopifyIntegrationForm = {
@@ -54,6 +61,44 @@ export default function ShopifyConfig({
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [activeStep, setActiveStep] = useState(1)
+
+  const [creds, setCreds] = useState<AppCredentials>({ clientId: '', clientSecret: '', scopes: '', appBaseUrl: '' })
+  const [credsLoaded, setCredsLoaded] = useState(false)
+  const [showCredsForm, setShowCredsForm] = useState(false)
+  const [credsBusy, setCredsBusy] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/settings/shopify').then(getJson).then((json) => {
+      if (json.ok) {
+        setCreds({
+          clientId: json.clientId ?? '',
+          clientSecret: '',
+          scopes: json.scopes ?? '',
+          appBaseUrl: json.appBaseUrl ?? '',
+        })
+        setCredsLoaded(true)
+        if (!json.clientId) setShowCredsForm(true)
+      }
+    })
+  }, [])
+
+  async function saveAppCreds() {
+    setCredsBusy(true)
+    const res = await fetch('/api/settings/shopify', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(creds),
+    })
+    const json = await getJson(res)
+    if (json.ok) {
+      showMsg('Credenciais salvas.')
+      setShowCredsForm(false)
+      setCreds((c) => ({ ...c, clientSecret: '' }))
+    } else {
+      showMsg(json.error ?? 'Erro ao salvar credenciais.', true)
+    }
+    setCredsBusy(false)
+  }
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -164,6 +209,81 @@ export default function ShopifyConfig({
           {message.text}
         </div>
       )}
+
+      {/* App credentials card */}
+      <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
+        <button
+          onClick={() => setShowCredsForm((v) => !v)}
+          className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-[#f8f9fa] dark:hover:bg-[#0b141a]"
+        >
+          <KeyRound size={18} className="shrink-0 text-[#00a884]" />
+          <div className="flex-1">
+            <p className="text-sm font-bold dark:text-[#e9edef]">Credenciais do App Shopify</p>
+            <p className="text-xs text-[#667781]">
+              {credsLoaded
+                ? creds.clientId ? `Client ID: ${creds.clientId.slice(0, 8)}…` : 'Não configurado — clique para preencher'
+                : 'Carregando…'}
+            </p>
+          </div>
+          <span className="text-xs text-[#667781]">{showCredsForm ? '▲' : '▼'}</span>
+        </button>
+
+        {showCredsForm && (
+          <div className="space-y-4 border-t border-[#f0f2f5] px-5 py-4 dark:border-[#2a3942]">
+            <p className="text-xs text-[#667781]">
+              Encontre em{' '}
+              <b>Partners Dashboard → seu app → Settings → Client credentials</b>.
+              O Client Secret só precisa ser preenchido ao alterar — deixe vazio para manter o atual.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#667781]">Client ID</label>
+                <input
+                  className={inputClass}
+                  placeholder="abc123..."
+                  value={creds.clientId}
+                  onChange={(e) => setCreds((c) => ({ ...c, clientId: e.target.value.trim() }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#667781]">Client Secret</label>
+                <input
+                  className={inputClass}
+                  type="password"
+                  placeholder="Deixe vazio para manter o atual"
+                  value={creds.clientSecret}
+                  onChange={(e) => setCreds((c) => ({ ...c, clientSecret: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#667781]">URL do App</label>
+                <input
+                  className={inputClass}
+                  placeholder="https://flashflow.tail826755.ts.net"
+                  value={creds.appBaseUrl}
+                  onChange={(e) => setCreds((c) => ({ ...c, appBaseUrl: e.target.value.trim() }))}
+                />
+                <p className="mt-1 text-xs text-[#667781]">URL pública do FlashFlow (usada no callback OAuth).</p>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#667781]">Scopes</label>
+                <input
+                  className={inputClass}
+                  value={creds.scopes}
+                  onChange={(e) => setCreds((c) => ({ ...c, scopes: e.target.value.trim() }))}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowCredsForm(false)} className={btnSecondary}>Cancelar</button>
+              <button onClick={saveAppCreds} disabled={credsBusy} className={btnPrimary}>
+                {credsBusy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Salvar credenciais
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Section header */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl bg-white p-5 shadow-sm dark:bg-[#111b21]">

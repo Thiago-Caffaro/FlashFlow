@@ -4,6 +4,7 @@ import { encryptSecret } from '@/lib/ai-crypto'
 import { normalizeShopDomain } from '@/lib/shopify-client'
 import { SHOPIFY_INTEGRATION_PUBLIC_SELECT } from '@/lib/shopify-confirmation-service'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,9 +26,14 @@ function hmacEqual(a: string, b: string): boolean {
 }
 
 export async function GET(req: NextRequest) {
-  const clientId = process.env.SHOPIFY_CLIENT_ID ?? ''
-  const clientSecret = process.env.SHOPIFY_CLIENT_SECRET ?? ''
-  const appBaseUrl = process.env.APP_BASE_URL ?? ''
+  const [clientIdDb, clientSecretDb, appBaseUrlDb] = await Promise.all([
+    getSetting('shopify_client_id'),
+    getSetting('shopify_client_secret'),
+    getSetting('shopify_app_base_url'),
+  ])
+  const clientId = clientIdDb ?? process.env.SHOPIFY_CLIENT_ID ?? ''
+  const clientSecret = clientSecretDb ?? process.env.SHOPIFY_CLIENT_SECRET ?? ''
+  const appBaseUrl = appBaseUrlDb ?? process.env.APP_BASE_URL ?? ''
 
   function fail(msg: string) {
     return NextResponse.redirect(`${appBaseUrl}/fulfillment?shopifyError=${encodeURIComponent(msg)}`)

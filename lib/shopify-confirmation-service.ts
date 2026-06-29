@@ -205,7 +205,7 @@ export function decodeShopifyAdminToken(row: ShopifyIntegrationCredentialRow): s
 export function decodeShopifyWebhookSecret(row: ShopifyIntegrationCredentialRow): string {
   if (row.oauth_connected || !row.encrypted_webhook_secret) {
     const secret = process.env.SHOPIFY_CLIENT_SECRET
-    if (!secret) throw new Error('SHOPIFY_CLIENT_SECRET not configured for OAuth webhook verification')
+    if (!secret) throw new Error('SHOPIFY_CLIENT_SECRET not configured — add it in Settings → Shopify or set the env var')
     return secret
   }
   return decryptSecret(row.encrypted_webhook_secret, row.webhook_secret_iv!, row.webhook_secret_auth_tag!)
