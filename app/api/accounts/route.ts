@@ -19,7 +19,7 @@ const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
 const COUNTRY_MIGRATION_ERROR =
-  'Banco desatualizado: aplique fulfillment_migration.sql antes de criar contas.'
+  'Banco desatualizado: aplique migrations/001_fulfillment_shopify_oauth.sql antes de criar contas.'
 
 function isMissingCountryColumn(error: { code?: string; message?: string } | null): boolean {
   return error?.code === 'PGRST204' && error.message?.includes("'country' column") === true
