@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import {
   CheckCircle, ChevronDown, ChevronUp, FlaskConical,
-  Loader2, Pencil, RotateCcw, Save, ShieldCheck, Trash2,
+  KeyRound, Loader2, Pencil, RotateCcw, Save, ShieldCheck, Trash2,
 } from 'lucide-react'
 import { FulfillmentProduct } from '@/types'
 
@@ -72,6 +72,7 @@ export default function FenixCODConfig({
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null)
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showIntegrationForm, setShowIntegrationForm] = useState(false)
 
   function showMsg(text: string, error = false) {
     setMessage({ text, error })
@@ -95,6 +96,7 @@ export default function FenixCODConfig({
     if (json.ok) {
       setIntegrationForm(emptyIntegrationForm)
       setEditingIntegrationId(null)
+      setShowIntegrationForm(false)
       await onRefresh()
     }
     setBusy(null)
@@ -198,60 +200,79 @@ export default function FenixCODConfig({
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Credentials */}
         <div className="space-y-3">
-          <div className="rounded-xl bg-white p-5 shadow-sm dark:bg-[#111b21]">
-            <h3 className="mb-4 text-sm font-bold dark:text-[#e9edef]">
-              {editingIntegrationId ? 'Editar credenciais' : 'Credenciais por país'}
-            </h3>
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[#667781]">País</label>
-                <input
-                  className={inputClass}
-                  disabled={Boolean(editingIntegrationId)}
-                  placeholder="SPAIN"
-                  value={integrationForm.country}
-                  onChange={(e) => setIntegrationForm((f) => ({ ...f, country: e.target.value.toUpperCase() }))}
-                />
+          <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
+            <button
+              onClick={() => setShowIntegrationForm((v) => !v)}
+              className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-[#f8f9fa] dark:hover:bg-[#1a2730]"
+            >
+              <KeyRound size={16} className="shrink-0 text-[#00a884]" />
+              <div className="flex-1">
+                <p className="text-sm font-bold dark:text-[#e9edef]">
+                  {editingIntegrationId ? 'Editar credenciais' : 'Credenciais por país'}
+                </p>
+                <p className="text-xs text-[#667781]">
+                  {integrations.length > 0
+                    ? `${integrations.length} país(es) configurado(s)`
+                    : 'Nenhuma credencial configurada — clique para adicionar'}
+                </p>
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[#667781]">E-mail</label>
-                <input
-                  className={inputClass}
-                  placeholder="email@exemplo.com"
-                  value={integrationForm.email}
-                  onChange={(e) => setIntegrationForm((f) => ({ ...f, email: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[#667781]">Senha</label>
-                <input
-                  className={inputClass}
-                  type="password"
-                  placeholder="••••••••"
-                  value={integrationForm.password}
-                  onChange={(e) => setIntegrationForm((f) => ({ ...f, password: e.target.value }))}
-                />
-                <p className="mt-1 text-xs text-[#667781]">As credenciais salvas não são exibidas. Preencha para substituir ou validar.</p>
-              </div>
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={saveIntegration}
-                  disabled={busy === 'integration' || !integrationForm.country || !integrationForm.email || !integrationForm.password}
-                  className={btnPrimary}
-                >
-                  {busy === 'integration' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  {editingIntegrationId ? 'Salvar' : 'Validar e salvar'}
-                </button>
-                {editingIntegrationId && (
+              {showIntegrationForm ? <ChevronUp size={16} className="text-[#667781]" /> : <ChevronDown size={16} className="text-[#667781]" />}
+            </button>
+
+            {showIntegrationForm && (
+              <div className="space-y-3 border-t border-[#f0f2f5] px-5 py-4 dark:border-[#2a3942]">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#667781]">País</label>
+                  <input
+                    className={inputClass}
+                    disabled={Boolean(editingIntegrationId)}
+                    placeholder="SPAIN"
+                    value={integrationForm.country}
+                    onChange={(e) => setIntegrationForm((f) => ({ ...f, country: e.target.value.toUpperCase() }))}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#667781]">E-mail</label>
+                  <input
+                    className={inputClass}
+                    placeholder="email@exemplo.com"
+                    value={integrationForm.email}
+                    onChange={(e) => setIntegrationForm((f) => ({ ...f, email: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#667781]">Senha</label>
+                  <input
+                    className={inputClass}
+                    type="password"
+                    placeholder="••••••••"
+                    value={integrationForm.password}
+                    onChange={(e) => setIntegrationForm((f) => ({ ...f, password: e.target.value }))}
+                  />
+                  <p className="mt-1 text-xs text-[#667781]">As credenciais salvas não são exibidas. Preencha para substituir ou validar.</p>
+                </div>
+                <div className="flex gap-2 pt-1">
                   <button
-                    onClick={() => { setEditingIntegrationId(null); setIntegrationForm(emptyIntegrationForm) }}
+                    onClick={saveIntegration}
+                    disabled={busy === 'integration' || !integrationForm.country || !integrationForm.email || !integrationForm.password}
+                    className={btnPrimary}
+                  >
+                    {busy === 'integration' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    {editingIntegrationId ? 'Salvar' : 'Validar e salvar'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingIntegrationId(null)
+                      setIntegrationForm(emptyIntegrationForm)
+                      setShowIntegrationForm(false)
+                    }}
                     className={btnSecondary}
                   >
                     Cancelar
                   </button>
-                )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {integrations.map((integration) => (
@@ -270,6 +291,7 @@ export default function FenixCODConfig({
                 onClick={() => {
                   setEditingIntegrationId(integration.id)
                   setIntegrationForm({ country: integration.country, email: '', password: '', environment: integration.environment })
+                  setShowIntegrationForm(true)
                 }}
                 className={btnSecondary}
                 title="Editar"
