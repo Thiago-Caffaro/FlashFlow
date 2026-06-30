@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import {
   CheckCircle, ChevronDown, ChevronUp, FlaskConical,
-  KeyRound, Loader2, Pencil, RotateCcw, Save, ShieldCheck, Trash2,
+  KeyRound, Loader2, Package, Pencil, RotateCcw, Save, ShieldCheck, Trash2,
 } from 'lucide-react'
 import { FulfillmentProduct } from '@/types'
 
@@ -73,6 +73,7 @@ export default function FenixCODConfig({
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showIntegrationForm, setShowIntegrationForm] = useState(false)
+  const [showProductForm, setShowProductForm] = useState(false)
 
   function showMsg(text: string, error = false) {
     setMessage({ text, error })
@@ -135,6 +136,7 @@ export default function FenixCODConfig({
     if (json.ok) {
       setProductForm(emptyProductForm)
       setEditingProductId(null)
+      setShowProductForm(false)
       await onRefresh()
     }
     setBusy(null)
@@ -158,7 +160,7 @@ export default function FenixCODConfig({
     setBusy(null)
   }
 
-  async function runTest(action: 'connection' | 'countries' | 'stock') {
+  async function runTest(action: 'connection' | 'stock') {
     setTestBusy(true)
     setTestResult(null)
     const json = await fetch('/api/fulfillment/test', {
@@ -320,66 +322,85 @@ export default function FenixCODConfig({
 
         {/* Products */}
         <div className="space-y-3">
-          <div className="rounded-xl bg-white p-5 shadow-sm dark:bg-[#111b21]">
-            <h3 className="mb-1 text-sm font-bold dark:text-[#e9edef]">
-              {editingProductId ? 'Editar produto' : 'Produtos locais'}
-            </h3>
-            <p className="mb-4 text-xs text-[#667781]">Associa SKUs externos aos fluxos de atendimento.</p>
-            <div className="space-y-3">
-              <input
-                className={inputClass}
-                placeholder="País, ex: SPAIN"
-                value={productForm.country}
-                onChange={(e) => setProductForm((f) => ({ ...f, country: e.target.value.toUpperCase() }))}
-              />
-              <input
-                className={inputClass}
-                placeholder="SKU externo"
-                value={productForm.sku}
-                onChange={(e) => setProductForm((f) => ({ ...f, sku: e.target.value }))}
-              />
-              <input
-                className={inputClass}
-                placeholder="Nome do produto"
-                value={productForm.name}
-                onChange={(e) => setProductForm((f) => ({ ...f, name: e.target.value }))}
-              />
-              <div className="grid grid-cols-[1fr_80px] gap-2">
-                <input
-                  className={inputClass}
-                  placeholder="Preço"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={productForm.price}
-                  onChange={(e) => setProductForm((f) => ({ ...f, price: e.target.value }))}
-                />
-                <input
-                  className={inputClass}
-                  placeholder="EUR"
-                  value={productForm.currency}
-                  onChange={(e) => setProductForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
-                />
+          <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
+            <button
+              onClick={() => setShowProductForm((v) => !v)}
+              className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-[#f8f9fa] dark:hover:bg-[#1a2730]"
+            >
+              <Package size={16} className="shrink-0 text-[#00a884]" />
+              <div className="flex-1">
+                <p className="text-sm font-bold dark:text-[#e9edef]">
+                  {editingProductId ? 'Editar produto' : 'Produtos locais'}
+                </p>
+                <p className="text-xs text-[#667781]">
+                  {products.length > 0
+                    ? `${products.length} produto(s) cadastrado(s)`
+                    : 'Nenhum produto cadastrado — clique para adicionar'}
+                </p>
               </div>
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={saveProduct}
-                  disabled={busy === 'product' || !productForm.country || !productForm.sku || !productForm.name || !productForm.price}
-                  className={btnPrimary}
-                >
-                  {busy === 'product' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  {editingProductId ? 'Salvar' : 'Adicionar produto'}
-                </button>
-                {editingProductId && (
+              {showProductForm ? <ChevronUp size={16} className="text-[#667781]" /> : <ChevronDown size={16} className="text-[#667781]" />}
+            </button>
+
+            {showProductForm && (
+              <div className="space-y-3 border-t border-[#f0f2f5] px-5 py-4 dark:border-[#2a3942]">
+                <p className="text-xs text-[#667781]">Associa SKUs externos aos fluxos de atendimento.</p>
+                <input
+                  className={inputClass}
+                  placeholder="País, ex: SPAIN"
+                  value={productForm.country}
+                  onChange={(e) => setProductForm((f) => ({ ...f, country: e.target.value.toUpperCase() }))}
+                />
+                <input
+                  className={inputClass}
+                  placeholder="SKU externo"
+                  value={productForm.sku}
+                  onChange={(e) => setProductForm((f) => ({ ...f, sku: e.target.value }))}
+                />
+                <input
+                  className={inputClass}
+                  placeholder="Nome do produto"
+                  value={productForm.name}
+                  onChange={(e) => setProductForm((f) => ({ ...f, name: e.target.value }))}
+                />
+                <div className="grid grid-cols-[1fr_80px] gap-2">
+                  <input
+                    className={inputClass}
+                    placeholder="Preço"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={productForm.price}
+                    onChange={(e) => setProductForm((f) => ({ ...f, price: e.target.value }))}
+                  />
+                  <input
+                    className={inputClass}
+                    placeholder="EUR"
+                    value={productForm.currency}
+                    onChange={(e) => setProductForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
+                  />
+                </div>
+                <div className="flex gap-2 pt-1">
                   <button
-                    onClick={() => { setEditingProductId(null); setProductForm(emptyProductForm) }}
+                    onClick={saveProduct}
+                    disabled={busy === 'product' || !productForm.country || !productForm.sku || !productForm.name || !productForm.price}
+                    className={btnPrimary}
+                  >
+                    {busy === 'product' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    {editingProductId ? 'Salvar' : 'Adicionar produto'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingProductId(null)
+                      setProductForm(emptyProductForm)
+                      setShowProductForm(false)
+                    }}
                     className={btnSecondary}
                   >
                     Cancelar
                   </button>
-                )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Product list */}
@@ -426,6 +447,7 @@ export default function FenixCODConfig({
                           currency: product.currency,
                           active: product.active,
                         })
+                        setShowProductForm(true)
                       }}
                       className="rounded-lg p-1.5 text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]"
                     >
@@ -497,13 +519,6 @@ export default function FenixCODConfig({
                   >
                     {testBusy ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
                     Testar login
-                  </button>
-                  <button
-                    disabled={testBusy || !testCountry}
-                    onClick={() => runTest('countries')}
-                    className={btnSecondary}
-                  >
-                    Países
                   </button>
                 </div>
                 <div className="flex gap-2">
