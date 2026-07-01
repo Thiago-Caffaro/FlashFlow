@@ -22,6 +22,7 @@ export interface Account {
   country?: string | null
   confirmationEnabled?: boolean
   confirmationPriority?: number
+  isSandbox?: boolean
 }
 
 export interface Message {

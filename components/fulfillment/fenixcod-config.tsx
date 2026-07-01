@@ -37,8 +37,6 @@ const emptyProductForm: ProductForm = { country: '', sku: '', name: '', price: '
 interface FenixCODConfigProps {
   integrations: Integration[]
   products: FulfillmentProduct[]
-  simulationBusy: boolean
-  onCreateSimulation: () => Promise<void>
   onRefresh: () => Promise<void>
 }
 
@@ -58,7 +56,7 @@ async function getJson(res: Response) {
 }
 
 export default function FenixCODConfig({
-  integrations, products, simulationBusy, onCreateSimulation, onRefresh,
+  integrations, products, onRefresh,
 }: FenixCODConfigProps) {
   const [integrationForm, setIntegrationForm] = useState<IntegrationForm>(emptyIntegrationForm)
   const [editingIntegrationId, setEditingIntegrationId] = useState<string | null>(null)
@@ -483,20 +481,7 @@ export default function FenixCODConfig({
         </button>
 
         {showAdvanced && (
-          <div className="grid gap-6 border-t border-[#f0f2f5] p-5 dark:border-[#2a3942] lg:grid-cols-2">
-            {/* Simulation */}
-            <div>
-              <h4 className="mb-2 text-sm font-semibold dark:text-[#e9edef]">Criar simulação</h4>
-              <p className="mb-3 text-xs text-[#667781]">
-                Cria um pedido e carrinho marcados como simulação para testar o fluxo.
-                Não envia ao FenixCOD nem dispara WhatsApp real.
-              </p>
-              <button onClick={onCreateSimulation} disabled={simulationBusy} className={btnSecondary}>
-                {simulationBusy ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />}
-                Criar simulação
-              </button>
-            </div>
-
+          <div className="border-t border-[#f0f2f5] p-5 dark:border-[#2a3942]">
             {/* Connection test */}
             <div>
               <h4 className="mb-2 text-sm font-semibold dark:text-[#e9edef]">Testar conexão FenixCOD</h4>

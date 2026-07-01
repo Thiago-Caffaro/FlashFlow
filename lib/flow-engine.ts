@@ -16,6 +16,11 @@ export interface FlowContext {
   remoteJid: string
   conversationId: string
   incomingMessage: string
+  // True when this conversation belongs to the sandbox test account.
+  // Real Evolution/WhatsApp sends and real FenixCOD stock lookups are
+  // intercepted for sandbox conversations; everything else (AI calls,
+  // node traversal, order creation) runs for real.
+  isSandbox?: boolean
 }
 
 
@@ -34,13 +39,16 @@ function logError(tag: string, ...args: unknown[]) {
 // ─── WhatsApp send ────────────────────────────────────────────────────────────
 
 async function sendWhatsApp(ctx: FlowContext, text: string) {
-  const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${ctx.instanceName}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-    body: JSON.stringify({ number: ctx.remoteJid, text }),
-  })
-  const evoData = await res.json().catch(() => ({}))
-  const waMessageId: string | null = evoData?.key?.id ?? null
+  let waMessageId: string | null = null
+  if (!ctx.isSandbox) {
+    const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${ctx.instanceName}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+      body: JSON.stringify({ number: ctx.remoteJid, text }),
+    })
+    const evoData = await res.json().catch(() => ({}))
+    waMessageId = evoData?.key?.id ?? null
+  }
 
   await supabase.from('messages').insert({
     conversation_id: ctx.conversationId,
@@ -59,13 +67,16 @@ async function sendWhatsApp(ctx: FlowContext, text: string) {
 }
 
 async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
-  const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${ctx.instanceName}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-    body: JSON.stringify({ number: ctx.remoteJid, mediatype: 'image', media: imageUrl }),
-  })
-  const evoData = await res.json().catch(() => ({}))
-  const waMessageId: string | null = evoData?.key?.id ?? null
+  let waMessageId: string | null = null
+  if (!ctx.isSandbox) {
+    const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${ctx.instanceName}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+      body: JSON.stringify({ number: ctx.remoteJid, mediatype: 'image', media: imageUrl }),
+    })
+    const evoData = await res.json().catch(() => ({}))
+    waMessageId = evoData?.key?.id ?? null
+  }
 
   await supabase.from('messages').insert({
     conversation_id: ctx.conversationId,
@@ -893,8 +904,9 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
           .eq('id', productId)
           .single()
         if (productError || !product) throw new Error('Produto não configurado')
-        const country = await getCountryForInstance(ctx.instanceName)
-        const stock = await (await getFulfillmentClient(country)).getStock(product.sku)
+        const stock = ctx.isSandbox
+          ? { sku: product.sku, stock: 999, sandbox: true }
+          : await (await getFulfillmentClient(await getCountryForInstance(ctx.instanceName))).getStock(product.sku)
         const message = renderTemplate(String(node.data.successMessage ?? 'Estoque disponível.'), {
           stock: JSON.stringify(stock),
         })
@@ -977,6 +989,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
             ? node.data.fulfillmentItems
             : [{ productId: String(node.data.productId ?? ''), quantity: Number(node.data.quantity ?? 1) }]
           ).map((item) => ({ productId: item.productId, quantity: item.quantity })),
+          isSimulation: ctx.isSandbox,
         })
         const message = renderTemplate(String(node.data.successMessage ?? 'Pedido recebido para análise: {{leadNumber}}'), {
           ...templateValues,

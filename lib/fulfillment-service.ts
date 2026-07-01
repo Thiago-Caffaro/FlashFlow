@@ -80,6 +80,7 @@ export interface OrderInput {
   zipcode: string
   paymentType: 'COD' | 'PREPAID'
   items: Array<{ productId: string; quantity: number }>
+  isSimulation?: boolean
 }
 
 export class FulfillmentOrderSubmissionError extends Error {
@@ -217,6 +218,7 @@ export async function createFulfillmentOrder(input: OrderInput) {
       total,
       currency,
       status: 'pending_operator',
+      is_simulation: input.isSimulation ?? false,
     })
     .select()
     .single()

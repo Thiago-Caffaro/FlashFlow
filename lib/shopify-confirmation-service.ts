@@ -4,6 +4,7 @@ import { sendWhatsAppText } from './whatsapp-text'
 import { ShopifyClient, normalizeShopDomain } from './shopify-client'
 import { submitFulfillmentOrder, FulfillmentOrderSubmissionError } from './fulfillment-service'
 import { supabaseAdmin } from './supabase-admin'
+import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import {
   ABANDONED_CHECKOUT_STATUSES,
   COMMERCIAL_STATUSES,
@@ -18,7 +19,7 @@ import {
 export const SHOPIFY_INTEGRATION_PUBLIC_SELECT =
   'id, shop_name, shop_domain, default_country, active, oauth_connected, confirmation_message_template, recovery_message_template, created_at, updated_at'
 
-type ShopifyIntegrationCredentialRow = {
+export type ShopifyIntegrationCredentialRow = {
   id: string
   shop_name: string
   shop_domain: string
@@ -291,7 +292,7 @@ export async function mapShopifyOrderPayload(
 export async function upsertShopifyOrder(
   integrationRow: ShopifyIntegrationCredentialRow,
   payload: unknown,
-  options: { sendConfirmation?: boolean } = {}
+  options: { sendConfirmation?: boolean; isSimulation?: boolean; forceInstanceName?: string } = {}
 ) {
   const integration = {
     id: integrationRow.id,
@@ -305,7 +306,7 @@ export async function upsertShopifyOrder(
     shipping.country_code ?? shipping.country ?? billing.country_code ?? billing.country,
     integration.defaultCountry
   )
-  const assignedInstanceName = await assignConfirmationAccount(country)
+  const assignedInstanceName = options.forceInstanceName ?? await assignConfirmationAccount(country)
   const mapped = await mapShopifyOrderPayload(payload, integration, assignedInstanceName)
 
   const { data: existing, error: existingError } = await supabaseAdmin
@@ -342,7 +343,7 @@ export async function upsertShopifyOrder(
         commercial_status: 'Não responde',
         send_status: 'Pendente',
         delivery_status: 'Não enviado',
-        is_simulation: false,
+        is_simulation: options.isSimulation ?? false,
       })
       .select()
       .single()
@@ -471,9 +472,9 @@ export async function sendOrderConfirmationMessage(orderId: string) {
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
-  if (order.is_simulation) throw new Error('Pedido de simulação não envia WhatsApp real')
-
   const instanceName = String(order.assigned_instance_name || order.instance_name || '')
+  const isSandboxOrder = instanceName === SANDBOX_INSTANCE_NAME
+  if (order.is_simulation && !isSandboxOrder) throw new Error('Pedido de simulação não envia WhatsApp real')
   const phone = String(order.contact_phone || '')
   if (!instanceName) throw new Error('Pedido sem conta WhatsApp atribuída')
   if (!phone) throw new Error('Pedido sem telefone para confirmação')

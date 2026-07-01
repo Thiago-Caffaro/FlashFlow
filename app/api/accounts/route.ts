@@ -31,6 +31,10 @@ function isMissingConfirmationColumn(error: { code?: string; message?: string } 
       error.message?.includes("'confirmation_priority' column") === true)
 }
 
+function isMissingSandboxColumn(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === 'PGRST204' && error.message?.includes("'is_sandbox' column") === true
+}
+
 // Ensures all instances point their webhook to the current WEBHOOK_BASE_URL and
 // have inbound message events enabled. Retry periodically because Evolution
 // v2.3.7 can return 500 from read endpoints while write endpoints still work.
@@ -65,8 +69,17 @@ export async function GET() {
   try {
     let { data: stored, error } = await supabaseAdmin
       .from('accounts')
-      .select('instance_name, label, country, confirmation_enabled, confirmation_priority')
+      .select('instance_name, label, country, confirmation_enabled, confirmation_priority, is_sandbox')
       .order('created_at', { ascending: true })
+
+    if (isMissingSandboxColumn(error)) {
+      const fallback = await supabaseAdmin
+        .from('accounts')
+        .select('instance_name, label, country, confirmation_enabled, confirmation_priority')
+        .order('created_at', { ascending: true })
+      stored = fallback.data?.map((row) => ({ ...row, is_sandbox: false })) ?? null
+      error = fallback.error
+    }
 
     if (isMissingCountryColumn(error) || isMissingConfirmationColumn(error)) {
       const fallback = await supabaseAdmin
@@ -78,6 +91,7 @@ export async function GET() {
         country: null,
         confirmation_enabled: true,
         confirmation_priority: 100,
+        is_sandbox: false,
       })) ?? null
       error = fallback.error
     }
@@ -87,8 +101,14 @@ export async function GET() {
     // Evolution v2.3.7 can return 500 from /instance/fetchInstances while
     // /instance/connectionState/{name} still works. Use the per-instance
     // endpoint so a Next.js restart can recover already connected accounts.
+    // Sandbox accounts don't correspond to a real Evolution instance, so
+    // skip the real API call and report a fixed synthetic state.
     const stateMap = new Map<string, { state: string; profileName?: string | null; profilePicUrl?: string | null; phone?: string | null }>()
     await Promise.all((stored ?? []).map(async (row) => {
+      if (row.is_sandbox) {
+        stateMap.set(row.instance_name, { state: 'open', profileName: 'Sandbox', profilePicUrl: null, phone: null })
+        return
+      }
       stateMap.set(row.instance_name, await getEvolutionConnectionState(row.instance_name))
     }))
 
@@ -106,6 +126,7 @@ export async function GET() {
         country: row.country ?? null,
         confirmationEnabled: row.confirmation_enabled ?? true,
         confirmationPriority: row.confirmation_priority ?? 100,
+        isSandbox: row.is_sandbox ?? false,
       }
     })
 

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, Loader2, PackageSearch, RefreshCw, Settings2 } from 'lucide-react'
+import { ArrowLeft, FlaskConical, Loader2, PackageSearch, RefreshCw, Settings2 } from 'lucide-react'
 import {
   Account,
   FulfillmentOrder,
@@ -17,8 +17,9 @@ import {
 import OrdersSection from '@/components/fulfillment/orders-section'
 import ShopifyConfig from '@/components/fulfillment/shopify-config'
 import FenixCODConfig, { Integration } from '@/components/fulfillment/fenixcod-config'
+import SandboxPanel from '@/components/fulfillment/sandbox-panel'
 
-type Tab = 'orders' | 'settings'
+type Tab = 'orders' | 'settings' | 'sandbox'
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
 async function getJson(res: Response) {
@@ -184,6 +185,7 @@ export default function FulfillmentPage() {
           {([
             ['orders', 'Pedidos', PackageSearch],
             ['settings', 'Configurações', Settings2],
+            ['sandbox', 'Sandbox', FlaskConical],
           ] as const).map(([id, label, Icon]) => (
             <button
               key={id}
@@ -248,11 +250,18 @@ export default function FulfillmentPage() {
             <FenixCODConfig
               integrations={integrations}
               products={products}
-              simulationBusy={simulationBusy}
-              onCreateSimulation={createSimulation}
               onRefresh={load}
             />
           </div>
+        )}
+
+        {!loading && tab === 'sandbox' && (
+          <SandboxPanel
+            products={products}
+            simulationBusy={simulationBusy}
+            onCreateSimulation={createSimulation}
+            onRefresh={load}
+          />
         )}
       </main>
     </div>
