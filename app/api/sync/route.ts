@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -33,6 +34,11 @@ interface EvoChat {
 
 export async function POST(req: NextRequest) {
   const instanceName = req.nextUrl.searchParams.get('instance') || 'flashflow-main'
+
+  // The sandbox account has no real Evolution instance to sync from.
+  if (instanceName === SANDBOX_INSTANCE_NAME) {
+    return NextResponse.json({ ok: true, total: 0, synced: 0, failed: 0 })
+  }
 
   if (syncInProgress.has(instanceName)) {
     return NextResponse.json({ ok: true, skipped: true })

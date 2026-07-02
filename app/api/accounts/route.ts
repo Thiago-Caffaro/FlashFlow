@@ -131,8 +131,10 @@ export async function GET() {
     })
 
     // Repair stale/missing per-instance webhook settings in the background.
-    if (accounts.length > 0 && shouldSyncWebhooks()) {
-      void syncWebhooks(accounts.map((a) => a.instanceName))
+    // Sandbox accounts have no real Evolution instance, so skip them.
+    const realInstanceNames = accounts.filter((a) => !a.isSandbox).map((a) => a.instanceName)
+    if (realInstanceNames.length > 0 && shouldSyncWebhooks()) {
+      void syncWebhooks(realInstanceNames)
     }
 
     return NextResponse.json({ accounts })

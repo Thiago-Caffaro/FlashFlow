@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FlaskConical, Loader2, RotateCcw, Send, ShoppingCart } from 'lucide-react'
+import { FlaskConical, GitBranch, Loader2, RotateCcw, Send, ShoppingCart } from 'lucide-react'
 import { FulfillmentProduct, Message } from '@/types'
 import MessageBubble from '@/components/chat/message-bubble'
+import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 
 interface SandboxPanelProps {
   products: FulfillmentProduct[]
@@ -153,9 +154,25 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Chat sandbox */}
         <div className="flex h-[520px] flex-col rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
-          <div className="border-b border-[#f0f2f5] px-5 py-3 dark:border-[#2a3942]">
-            <p className="text-sm font-bold dark:text-[#e9edef]">Conversa de teste</p>
-            <p className="text-xs text-[#667781]">Fale com o bot como se fosse o cliente. A IA responde de verdade; nada sai para o WhatsApp real.</p>
+          <div className="flex items-center gap-3 border-b border-[#f0f2f5] px-5 py-3 dark:border-[#2a3942]">
+            <div className="flex-1">
+              <p className="text-sm font-bold dark:text-[#e9edef]">Conversa de teste</p>
+              <p className="text-xs text-[#667781]">Fale com o bot como se fosse o cliente. A IA responde de verdade; nada sai para o WhatsApp real.</p>
+            </div>
+            <button
+              onClick={() => {
+                if (typeof window !== 'undefined') localStorage.setItem('activeInstance', SANDBOX_INSTANCE_NAME)
+                window.location.href = '/'
+              }}
+              title="A conta 'Sandbox de testes' precisa de um gatilho apontando para o fluxo desejado, igual a qualquer conta real. Clique para abrir o chat principal com ela selecionada e configurar em Gatilhos."
+              className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[#f0f2f5] px-3 py-2 text-xs font-semibold text-[#667781] hover:bg-[#e6e9ec] dark:bg-[#2a3942] dark:text-[#e9edef] dark:hover:bg-[#334650]"
+            >
+              <GitBranch size={13} />
+              Configurar gatilho
+            </button>
+          </div>
+          <div className="border-b border-[#f0f2f5] bg-amber-50 px-5 py-2 text-xs text-amber-700 dark:border-[#2a3942] dark:bg-amber-900/20 dark:text-amber-400">
+            O bot só responde se a conta <b>Sandbox de testes</b> tiver um gatilho configurado apontando para um fluxo — igual a qualquer conta WhatsApp real.
           </div>
           <div className="flex-1 space-y-1 overflow-y-auto p-4">
             {messages.length === 0 && (
