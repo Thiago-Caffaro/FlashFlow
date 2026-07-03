@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, FlaskConical, Loader2, PackageSearch, RefreshCw, Settings2 } from 'lucide-react'
+import { ArrowLeft, FlaskConical, Loader2, PackageSearch, PhoneCall, RefreshCw, Settings2 } from 'lucide-react'
 import {
   Account,
   FulfillmentOrder,
@@ -15,11 +15,12 @@ import {
   type SendStatus,
 } from '@/types'
 import OrdersSection from '@/components/fulfillment/orders-section'
+import QueuePanel from '@/components/fulfillment/queue-panel'
 import ShopifyConfig from '@/components/fulfillment/shopify-config'
 import FenixCODConfig, { Integration } from '@/components/fulfillment/fenixcod-config'
 import SandboxPanel from '@/components/fulfillment/sandbox-panel'
 
-type Tab = 'orders' | 'settings' | 'sandbox'
+type Tab = 'queue' | 'orders' | 'settings' | 'sandbox'
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
 async function getJson(res: Response) {
@@ -27,7 +28,7 @@ async function getJson(res: Response) {
 }
 
 export default function FulfillmentPage() {
-  const [tab, setTab] = useState<Tab>('orders')
+  const [tab, setTab] = useState<Tab>('queue')
   const [accounts, setAccounts] = useState<Account[]>([])
   const [orders, setOrders] = useState<FulfillmentOrder[]>([])
   const [products, setProducts] = useState<FulfillmentProduct[]>([])
@@ -156,6 +157,8 @@ export default function FulfillmentPage() {
     setSimulationBusy(false)
   }
 
+  const queueCount = orders.filter((o) => o.commercial_status === 'Não responde' && !o.is_simulation).length
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#f8f9fa] dark:bg-[#0b141a]">
       <header className="shrink-0 border-b border-[#d1d7db] bg-white px-6 py-3 dark:border-[#2a3942] dark:bg-[#111b21]">
@@ -183,6 +186,7 @@ export default function FulfillmentPage() {
 
         <nav className="mt-2 flex gap-1">
           {([
+            ['queue', 'Fila', PhoneCall],
             ['orders', 'Pedidos', PackageSearch],
             ['settings', 'Configurações', Settings2],
             ['sandbox', 'Sandbox', FlaskConical],
@@ -198,6 +202,15 @@ export default function FulfillmentPage() {
             >
               <Icon size={15} />
               {label}
+              {id === 'queue' && queueCount > 0 && (
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-xs font-semibold ${
+                    tab === id ? 'bg-white/25 text-white' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                  }`}
+                >
+                  {queueCount}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -218,6 +231,16 @@ export default function FulfillmentPage() {
           <div className="flex h-40 items-center justify-center">
             <Loader2 className="animate-spin text-[#00a884]" />
           </div>
+        )}
+
+        {!loading && tab === 'queue' && (
+          <QueuePanel
+            orders={orders}
+            accounts={accounts}
+            onUpdateOrderStatus={updateOrderStatus}
+            onOrderAction={orderAction}
+            onResendConfirmation={resendConfirmation}
+          />
         )}
 
         {!loading && tab === 'orders' && (
