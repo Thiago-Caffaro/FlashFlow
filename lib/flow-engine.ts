@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession, SwitchCase, FlowNodeData } from '@/types'
 import { decrypt } from './ai-crypto'
-import { createFulfillmentOrder, getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
+import { getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -130,6 +130,24 @@ const DEFAULT_ESCALATION_PROMPT = `\n\n[Instrução interna do sistema — NUNCA
 // Signal used as text fallback for OpenRouter models that don't support function calling
 const ESCALATION_SIGNAL = '[[ATENDIMENTO_HUMANO]]'
 
+// Dynamic fulfillment lookups the AI can call mid-conversation. Only available
+// in native tool-calling mode (no text-signal fallback like escalation has —
+// parsing query arguments back out of free-form text would be far less
+// reliable than a plain yes/no signal).
+const CONSULTAR_PRODUTOS_TOOL_NAME = 'consultar_produtos'
+const CONSULTAR_ESTOQUE_TOOL_NAME = 'consultar_estoque'
+const CONSULTAR_PEDIDO_TOOL_NAME = 'consultar_pedido'
+
+const CONSULTAR_PRODUTOS_DESCRIPTION = 'Lists the products available in the catalog (name, SKU, price). Call this when the customer asks what products are sold.'
+const CONSULTAR_ESTOQUE_DESCRIPTION = 'Checks real-time stock availability for a specific product. Call this when the customer asks if a product is in stock or available.'
+const CONSULTAR_PEDIDO_DESCRIPTION = 'Looks up this conversation\'s current order status (commercial, shipping and delivery). Call this when the customer asks about their order or delivery.'
+
+export type FulfillmentToolExecutor = (toolName: string, args: Record<string, unknown>) => Promise<string>
+
+function isFulfillmentToolName(name: string | undefined): boolean {
+  return name === CONSULTAR_PRODUTOS_TOOL_NAME || name === CONSULTAR_ESTOQUE_TOOL_NAME || name === CONSULTAR_PEDIDO_TOOL_NAME
+}
+
 async function callAI(
   provider: AIProvider,
   model: string,
@@ -139,7 +157,9 @@ async function callAI(
   temperature: number,
   history: HistoryTurn[] = [],
   maxTokens?: number,
-  withEscalation = false
+  withEscalation = false,
+  withFulfillmentTools = false,
+  executeTool?: FulfillmentToolExecutor
 ): Promise<{ reply: string; requiresHuman: boolean }> {
   const safeTemp = isNaN(temperature) ? 0.7 : temperature
 
@@ -151,6 +171,7 @@ async function callAI(
     userMessageLength: userMessage.length,
     temperature: safeTemp,
     withEscalation,
+    withFulfillmentTools,
   })
 
   // ── Fetch API key ──
@@ -191,25 +212,43 @@ async function callAI(
       role: h.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: h.content }],
     }))
+    const requestContents = [...historyContents, { role: 'user', parts: [{ text: userMessage }] }]
     const requestBody: Record<string, unknown> = {
       ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
-      contents: [...historyContents, { role: 'user', parts: [{ text: userMessage }] }],
+      contents: requestContents,
       generationConfig: { temperature: safeTemp, ...(maxTokens ? { maxOutputTokens: maxTokens } : {}) },
     }
 
+    const geminiFunctionDeclarations: Record<string, unknown>[] = []
     if (withEscalation) {
-      requestBody.tools = [{
-        functionDeclarations: [{
-          name: ESCALATION_TOOL_NAME,
-          description: 'Call this function when you cannot answer the user\'s question, lack sufficient information, or the client explicitly requests to speak with a human agent.',
+      geminiFunctionDeclarations.push({
+        name: ESCALATION_TOOL_NAME,
+        description: 'Call this function when you cannot answer the user\'s question, lack sufficient information, or the client explicitly requests to speak with a human agent.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            motivo: { type: 'STRING', description: 'Brief reason for escalation' },
+          },
+        },
+      })
+    }
+    if (withFulfillmentTools) {
+      geminiFunctionDeclarations.push(
+        { name: CONSULTAR_PRODUTOS_TOOL_NAME, description: CONSULTAR_PRODUTOS_DESCRIPTION, parameters: { type: 'OBJECT', properties: {} } },
+        {
+          name: CONSULTAR_ESTOQUE_TOOL_NAME,
+          description: CONSULTAR_ESTOQUE_DESCRIPTION,
           parameters: {
             type: 'OBJECT',
-            properties: {
-              motivo: { type: 'STRING', description: 'Brief reason for escalation' },
-            },
+            properties: { produto: { type: 'STRING', description: 'Product name or SKU' } },
+            required: ['produto'],
           },
-        }],
-      }]
+        },
+        { name: CONSULTAR_PEDIDO_TOOL_NAME, description: CONSULTAR_PEDIDO_DESCRIPTION, parameters: { type: 'OBJECT', properties: {} } },
+      )
+    }
+    if (geminiFunctionDeclarations.length > 0) {
+      requestBody.tools = [{ functionDeclarations: geminiFunctionDeclarations }]
       requestBody.tool_config = { function_calling_config: { mode: 'AUTO' } }
     }
 
@@ -219,16 +258,16 @@ async function callAI(
       url: `https://generativelanguage.googleapis.com/${apiVersion}/models/${actualModel}:generateContent?key=[REDACTED]`,
       hasSystemInstruction: !!systemPrompt,
       withEscalation,
+      withFulfillmentTools,
     })
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/${apiVersion}/models/${actualModel}:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-      }
-    )
+    const geminiEndpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${actualModel}:generateContent?key=${apiKey}`
+
+    const res = await fetch(geminiEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    })
 
     log(`callAI gemini response status`, { status: res.status, ok: res.ok })
 
@@ -245,11 +284,42 @@ async function callAI(
       throw new Error(`Gemini API error: ${msg}`)
     }
 
-    type GeminiPart = { text?: string; functionCall?: { name?: string } }
+    type GeminiPart = { text?: string; functionCall?: { name?: string; args?: Record<string, unknown> } }
     const parts: GeminiPart[] = data.candidates?.[0]?.content?.parts ?? []
     const funcCallPart = parts.find((p) => p.functionCall)
-    const requiresHuman = funcCallPart?.functionCall?.name === ESCALATION_TOOL_NAME
-    const reply: string = parts.find((p) => p.text)?.text ?? ''
+    const funcName = funcCallPart?.functionCall?.name
+    const requiresHuman = funcName === ESCALATION_TOOL_NAME
+    let reply: string = parts.find((p) => p.text)?.text ?? ''
+
+    if (funcName && isFulfillmentToolName(funcName) && executeTool) {
+      log(`callAI gemini: fulfillment tool call`, { funcName, args: funcCallPart?.functionCall?.args })
+      const toolResult = await executeTool(funcName, funcCallPart?.functionCall?.args ?? {})
+      const followUpBody: Record<string, unknown> = {
+        ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
+        contents: [
+          ...requestContents,
+          { role: 'model', parts: [{ functionCall: { name: funcName, args: funcCallPart?.functionCall?.args ?? {} } }] },
+          { role: 'function', parts: [{ functionResponse: { name: funcName, response: { content: toolResult } } }] },
+        ],
+        generationConfig: requestBody.generationConfig,
+      }
+      const followRes = await fetch(geminiEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(followUpBody),
+      })
+      const followData = await followRes.json().catch((e) => {
+        logError(`callAI gemini follow-up parse error`, { error: e })
+        return {}
+      })
+      log(`callAI gemini follow-up response`, JSON.stringify(followData))
+      if (followRes.ok) {
+        const followParts: GeminiPart[] = followData.candidates?.[0]?.content?.parts ?? []
+        reply = followParts.find((p) => p.text)?.text ?? ''
+      } else {
+        logError(`callAI gemini follow-up API error`, { status: followRes.status })
+      }
+    }
 
     log(`callAI gemini reply`, { replyLength: reply.length, requiresHuman, preview: reply.slice(0, 100) })
     if (!reply && !requiresHuman) {
@@ -262,7 +332,7 @@ async function callAI(
   // ── OpenAI ──
   if (provider === 'openai') {
     const actualModel = model || 'gpt-4o'
-    const messages = [
+    const messages: Record<string, unknown>[] = [
       ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
       ...history.map((h) => ({ role: h.role, content: h.content })),
       { role: 'user', content: userMessage },
@@ -274,8 +344,9 @@ async function callAI(
       ...(maxTokens ? { max_tokens: maxTokens } : {}),
     }
 
+    const openaiTools: Record<string, unknown>[] = []
     if (withEscalation) {
-      requestBody.tools = [{
+      openaiTools.push({
         type: 'function',
         function: {
           name: ESCALATION_TOOL_NAME,
@@ -287,7 +358,28 @@ async function callAI(
             },
           },
         },
-      }]
+      })
+    }
+    if (withFulfillmentTools) {
+      openaiTools.push(
+        { type: 'function', function: { name: CONSULTAR_PRODUTOS_TOOL_NAME, description: CONSULTAR_PRODUTOS_DESCRIPTION, parameters: { type: 'object', properties: {} } } },
+        {
+          type: 'function',
+          function: {
+            name: CONSULTAR_ESTOQUE_TOOL_NAME,
+            description: CONSULTAR_ESTOQUE_DESCRIPTION,
+            parameters: {
+              type: 'object',
+              properties: { produto: { type: 'string', description: 'Product name or SKU' } },
+              required: ['produto'],
+            },
+          },
+        },
+        { type: 'function', function: { name: CONSULTAR_PEDIDO_TOOL_NAME, description: CONSULTAR_PEDIDO_DESCRIPTION, parameters: { type: 'object', properties: {} } } },
+      )
+    }
+    if (openaiTools.length > 0) {
+      requestBody.tools = openaiTools
       requestBody.tool_choice = 'auto'
     }
 
@@ -297,6 +389,7 @@ async function callAI(
       hasSystem: !!systemPrompt,
       temperature: safeTemp,
       withEscalation,
+      withFulfillmentTools,
     })
 
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -320,10 +413,43 @@ async function callAI(
       throw new Error(`OpenAI API error: ${msg}`)
     }
 
-    type ToolCall = { function?: { name?: string } }
+    type ToolCall = { id?: string; function?: { name?: string; arguments?: string } }
     const toolCalls: ToolCall[] = data.choices?.[0]?.message?.tool_calls ?? []
     const requiresHuman = toolCalls.some((tc) => tc.function?.name === ESCALATION_TOOL_NAME)
-    const reply: string = data.choices?.[0]?.message?.content ?? ''
+    const fulfillmentCall = toolCalls.find((tc) => isFulfillmentToolName(tc.function?.name))
+    let reply: string = data.choices?.[0]?.message?.content ?? ''
+
+    if (fulfillmentCall && executeTool) {
+      const toolName = fulfillmentCall.function?.name as string
+      let toolArgs: Record<string, unknown> = {}
+      try {
+        toolArgs = fulfillmentCall.function?.arguments ? JSON.parse(fulfillmentCall.function.arguments) : {}
+      } catch (e) {
+        logError(`callAI openai: failed to parse tool arguments`, { toolName, error: e })
+      }
+      log(`callAI openai: fulfillment tool call`, { toolName, toolArgs })
+      const toolResult = await executeTool(toolName, toolArgs)
+      const followUpMessages: Record<string, unknown>[] = [
+        ...messages,
+        data.choices?.[0]?.message,
+        { role: 'tool', tool_call_id: fulfillmentCall.id, content: toolResult },
+      ]
+      const followRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: actualModel, messages: followUpMessages, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }),
+      })
+      const followData = await followRes.json().catch((e) => {
+        logError(`callAI openai follow-up parse error`, { error: e })
+        return {}
+      })
+      log(`callAI openai follow-up response`, JSON.stringify(followData))
+      if (followRes.ok) {
+        reply = followData.choices?.[0]?.message?.content ?? ''
+      } else {
+        logError(`callAI openai follow-up API error`, { status: followRes.status })
+      }
+    }
 
     log(`callAI openai reply`, { replyLength: reply.length, requiresHuman, preview: reply.slice(0, 100) })
     if (!reply && !requiresHuman) {
@@ -344,13 +470,49 @@ async function callAI(
       'X-Title': 'FlashFlow',
     }
 
-    async function callOpenRouter(msgs: Array<{ role: string; content: string }>, attempt: number) {
+    const openrouterTools: Record<string, unknown>[] = []
+    if (withEscalation) {
+      openrouterTools.push({
+        type: 'function',
+        function: {
+          name: ESCALATION_TOOL_NAME,
+          description: 'Call this function when you cannot answer the user\'s question, lack sufficient information, or the client explicitly requests to speak with a human agent.',
+          parameters: {
+            type: 'object',
+            properties: {
+              motivo: { type: 'string', description: 'Brief reason for escalation' },
+            },
+          },
+        },
+      })
+    }
+    if (withFulfillmentTools) {
+      openrouterTools.push(
+        { type: 'function', function: { name: CONSULTAR_PRODUTOS_TOOL_NAME, description: CONSULTAR_PRODUTOS_DESCRIPTION, parameters: { type: 'object', properties: {} } } },
+        {
+          type: 'function',
+          function: {
+            name: CONSULTAR_ESTOQUE_TOOL_NAME,
+            description: CONSULTAR_ESTOQUE_DESCRIPTION,
+            parameters: {
+              type: 'object',
+              properties: { produto: { type: 'string', description: 'Product name or SKU' } },
+              required: ['produto'],
+            },
+          },
+        },
+        { type: 'function', function: { name: CONSULTAR_PEDIDO_TOOL_NAME, description: CONSULTAR_PEDIDO_DESCRIPTION, parameters: { type: 'object', properties: {} } } },
+      )
+    }
+
+    async function callOpenRouter(msgs: Array<Record<string, unknown>>, attempt: number, includeTools = true) {
       log(`callAI openrouter request (attempt ${attempt})`, {
         model: actualModel,
         messageCount: msgs.length,
         hasSystem: msgs[0]?.role === 'system',
         temperature: safeTemp,
         withEscalation,
+        withFulfillmentTools: withFulfillmentTools && includeTools,
       })
 
       const body: Record<string, unknown> = {
@@ -365,20 +527,8 @@ async function callAI(
         } : {}),
       }
 
-      if (withEscalation) {
-        body.tools = [{
-          type: 'function',
-          function: {
-            name: ESCALATION_TOOL_NAME,
-            description: 'Call this function when you cannot answer the user\'s question, lack sufficient information, or the client explicitly requests to speak with a human agent.',
-            parameters: {
-              type: 'object',
-              properties: {
-                motivo: { type: 'string', description: 'Brief reason for escalation' },
-              },
-            },
-          },
-        }]
+      if (includeTools && openrouterTools.length > 0) {
+        body.tools = openrouterTools
         body.tool_choice = 'auto'
       }
 
@@ -432,13 +582,36 @@ async function callAI(
       throw new Error(`OpenRouter API error: ${msg}`)
     }
 
-    type ToolCall = { function?: { name?: string } }
+    type ToolCall = { id?: string; function?: { name?: string; arguments?: string } }
     const toolCalls: ToolCall[] = data.choices?.[0]?.message?.tool_calls ?? []
     const toolEscalation = toolCalls.some((tc) => tc.function?.name === ESCALATION_TOOL_NAME)
     const rawReply: string = data.choices?.[0]?.message?.content ?? ''
     const signalEscalation = rawReply.includes(ESCALATION_SIGNAL)
     const requiresHuman = toolEscalation || signalEscalation
-    const reply = rawReply.replace(ESCALATION_SIGNAL, '').trim()
+    let reply = rawReply.replace(ESCALATION_SIGNAL, '').trim()
+
+    const fulfillmentCall = toolCalls.find((tc) => isFulfillmentToolName(tc.function?.name))
+    if (fulfillmentCall && executeTool) {
+      const toolName = fulfillmentCall.function?.name as string
+      let toolArgs: Record<string, unknown> = {}
+      try {
+        toolArgs = fulfillmentCall.function?.arguments ? JSON.parse(fulfillmentCall.function.arguments) : {}
+      } catch (e) {
+        logError(`callAI openrouter: failed to parse tool arguments`, { toolName, error: e })
+      }
+      log(`callAI openrouter: fulfillment tool call`, { toolName, toolArgs })
+      const toolResult = await executeTool(toolName, toolArgs)
+      const { res: followRes, data: followData } = await callOpenRouter([
+        ...messagesWithSystem,
+        data.choices?.[0]?.message,
+        { role: 'tool', tool_call_id: fulfillmentCall.id, content: toolResult },
+      ], 3, false)
+      if (followRes.ok) {
+        reply = String(followData.choices?.[0]?.message?.content ?? '').replace(ESCALATION_SIGNAL, '').trim()
+      } else {
+        logError(`callAI openrouter follow-up API error`, { status: followRes.status })
+      }
+    }
 
     log(`callAI openrouter reply`, { replyLength: reply.length, requiresHuman, toolEscalation, signalEscalation, preview: reply.slice(0, 100) })
     if (!reply && !requiresHuman) {
@@ -449,6 +622,69 @@ async function callAI(
   }
 
   throw new Error(`Provider desconhecido: ${provider}`)
+}
+
+// ─── Fulfillment tool executor for dynamic AI queries ─────────────────────────
+// Reuses the exact same reads the fulfillmentStock/fulfillmentStatus flow
+// nodes already perform — this only exposes them as AI-callable tools.
+
+function buildFulfillmentToolExecutor(ctx: FlowContext): FulfillmentToolExecutor {
+  return async (toolName, args) => {
+    try {
+      if (toolName === CONSULTAR_PRODUTOS_TOOL_NAME) {
+        const country = await getCountryForInstance(ctx.instanceName)
+        const { data: products, error } = await supabase
+          .from('fulfillment_products')
+          .select('name, sku, price')
+          .eq('country', country)
+        if (error) throw new Error(error.message)
+        return JSON.stringify({ products: products ?? [] })
+      }
+
+      if (toolName === CONSULTAR_ESTOQUE_TOOL_NAME) {
+        const produto = String(args.produto ?? '').trim()
+        if (!produto) return JSON.stringify({ error: 'Nenhum produto informado' })
+        const country = await getCountryForInstance(ctx.instanceName)
+        const { data: product } = await supabase
+          .from('fulfillment_products')
+          .select('sku, name')
+          .eq('country', country)
+          .or(`sku.ilike.%${produto}%,name.ilike.%${produto}%`)
+          .limit(1)
+          .maybeSingle()
+        if (!product) return JSON.stringify({ error: `Produto "${produto}" não encontrado no catálogo` })
+        const stock = ctx.isSandbox
+          ? { sku: product.sku, stock: 999, sandbox: true }
+          : await (await getFulfillmentClient(country)).getStock(product.sku)
+        return JSON.stringify({ product: product.name, stock })
+      }
+
+      if (toolName === CONSULTAR_PEDIDO_TOOL_NAME) {
+        const { data: order, error } = await supabase
+          .from('fulfillment_orders')
+          .select('id, order_number, lead_number, status, commercial_status, send_status, delivery_status')
+          .eq('conversation_id', ctx.conversationId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (error || !order) return JSON.stringify({ error: 'Nenhum pedido encontrado para esta conversa' })
+        const updated = order.lead_number ? await refreshFulfillmentOrder(order.id) : null
+        return JSON.stringify({
+          orderNumber: order.order_number,
+          leadNumber: order.lead_number,
+          status: updated?.status ?? order.status,
+          commercialStatus: order.commercial_status,
+          sendStatus: order.send_status,
+          deliveryStatus: updated?.delivery_status ?? order.delivery_status,
+        })
+      }
+
+      return JSON.stringify({ error: `Tool desconhecida: ${toolName}` })
+    } catch (error) {
+      logError('fulfillmentToolExecutor', { toolName, error })
+      return JSON.stringify({ error: 'Falha ao consultar dados' })
+    }
+  }
 }
 
 // ─── Next node helper ─────────────────────────────────────────────────────────
@@ -462,30 +698,6 @@ function nextNodeId(edges: FlowEdge[], fromId: string, handle?: string | null): 
 
 function renderTemplate(template: string, values: Record<string, string | number | null | undefined>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => String(values[key] ?? ''))
-}
-
-function parseOrderFields(message: string): Record<string, string> {
-  const aliases: Record<string, string> = {
-    nome: 'customerName', name: 'customerName',
-    endereco: 'address', endereço: 'address', address: 'address',
-    cidade: 'city', city: 'city',
-    provincia: 'province', província: 'province', province: 'province', estado: 'province',
-    cep: 'zipcode', zipcode: 'zipcode', 'codigo postal': 'zipcode', 'código postal': 'zipcode',
-    email: 'email',
-  }
-  try {
-    const parsed = JSON.parse(message) as Record<string, unknown>
-    return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [aliases[key.toLowerCase()] ?? key, String(value)]))
-  } catch {
-    const result: Record<string, string> = {}
-    for (const line of message.split(/\r?\n/)) {
-      const match = line.match(/^\s*([^:]+):\s*(.+)\s*$/)
-      if (!match) continue
-      const key = aliases[match[1].trim().toLowerCase()]
-      if (key) result[key] = match[2].trim()
-    }
-    return result
-  }
 }
 
 // ─── Model resolution ─────────────────────────────────────────────────────────
@@ -678,13 +890,14 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
       // Read historyLimit and escalation config from global config
       const { data: aiCfgRow } = await supabase
         .from('instance_ai_config')
-        .select('history_limit, escalation_enabled, escalation_stop_on_obstacle, escalation_base_prompt')
+        .select('history_limit, escalation_enabled, escalation_stop_on_obstacle, escalation_base_prompt, fulfillment_tools_enabled')
         .eq('instance_name', ctx.instanceName)
         .maybeSingle()
       const historyLimit = (aiCfgRow?.history_limit as number | null) ?? 20
       const escalationEnabled = (aiCfgRow?.escalation_enabled as boolean | null) ?? true
       const stopOnObstacle = (aiCfgRow?.escalation_stop_on_obstacle as boolean | null) ?? true
       const escalationBasePrompt = ((aiCfgRow?.escalation_base_prompt as string | null) ?? '').trim() || DEFAULT_ESCALATION_PROMPT
+      const fulfillmentToolsEnabled = (aiCfgRow?.fulfillment_tools_enabled as boolean | null) ?? true
 
       // If session is already escalated, skip AI call — human is handling it
       if (latest.requires_human) {
@@ -695,6 +908,8 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
       // Determine escalation mode based on verified tool support
       const withEscalation = escalationEnabled && toolsSupported === true
       const useTextSignal = escalationEnabled && toolsSupported !== true
+      // Dynamic product/stock/order lookups — native tool-calling only, no text-signal fallback
+      const withFulfillmentTools = fulfillmentToolsEnabled && toolsSupported === true
 
       // Trim history to the last N exchanges (each exchange = 1 user + 1 assistant turn)
       const rawHistory = (latest.history as HistoryTurn[] | undefined) ?? []
@@ -708,9 +923,12 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
         systemPrompt += escalationBasePrompt
       }
 
-      log(`handleActiveSession: escalation mode`, { provider, withEscalation, useTextSignal, toolsSupported })
+      log(`handleActiveSession: escalation mode`, { provider, withEscalation, useTextSignal, withFulfillmentTools, toolsSupported })
 
-      const { reply: rawReply, requiresHuman: toolRequiresHuman } = await callAI(provider, model, customModel, systemPrompt, userMessage, temperature, history, maxTokens, withEscalation)
+      const { reply: rawReply, requiresHuman: toolRequiresHuman } = await callAI(
+        provider, model, customModel, systemPrompt, userMessage, temperature, history, maxTokens,
+        withEscalation, withFulfillmentTools, withFulfillmentTools ? buildFulfillmentToolExecutor(ctx) : undefined
+      )
 
       // In text signal mode, detect and strip the signal manually (callAI only strips it for OpenRouter)
       let requiresHuman = toolRequiresHuman
@@ -918,95 +1136,6 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
         anyMessageSent = true
       }
       currentId = nextNodeId(edges, currentId)
-      continue
-    }
-
-    if (node.type === 'fulfillmentOrder') {
-      try {
-        const { data: conversation } = await supabase
-          .from('conversations')
-          .select('contact_name, contact_phone')
-          .eq('id', ctx.conversationId)
-          .single()
-        if (!conversation) throw new Error('Conversa não encontrada')
-        const templateValues = {
-          contactName: conversation.contact_name ?? '',
-          contactPhone: conversation.contact_phone,
-          incomingMessage: ctx.incomingMessage,
-        }
-        const { data: existingRun } = await supabase.from('flow_runs')
-          .select('status, variables')
-          .eq('instance_name', ctx.instanceName)
-          .eq('remote_jid', ctx.remoteJid)
-          .maybeSingle()
-        const previous = (existingRun?.variables as Record<string, string> | null) ?? {}
-        const extracted = parseOrderFields(ctx.incomingMessage)
-        const values = {
-          customerName: extracted.customerName || previous.customerName || renderTemplate(String(node.data.customerName ?? '{{contactName}}'), templateValues),
-          address: extracted.address || previous.address || renderTemplate(String(node.data.address ?? ''), templateValues),
-          city: extracted.city || previous.city || renderTemplate(String(node.data.city ?? ''), templateValues),
-          province: extracted.province || previous.province || renderTemplate(String(node.data.province ?? ''), templateValues),
-          zipcode: extracted.zipcode || previous.zipcode || renderTemplate(String(node.data.zipcode ?? ''), templateValues),
-          email: extracted.email || previous.email || '',
-        }
-        const confirmationText = String(node.data.confirmationText ?? 'confirmar').trim().toLowerCase()
-
-        if (existingRun?.status !== 'waiting_confirmation') {
-          const missing = Object.entries(values).filter(([key, value]) => key !== 'email' && !value.trim()).map(([key]) => key)
-          if (missing.length) {
-            await supabase.from('flow_runs').upsert({
-              instance_name: ctx.instanceName, remote_jid: ctx.remoteJid, conversation_id: ctx.conversationId,
-              flow_id: flowId, node_id: node.id, status: 'collecting', variables: values, updated_at: new Date().toISOString(),
-            }, { onConflict: 'instance_name, remote_jid' })
-            await sendWhatsApp(ctx, `${String(node.data.collectionMessage ?? 'Envie os dados faltantes no formato campo: valor.')}\nFaltando: ${missing.join(', ')}`)
-            return
-          }
-          await supabase.from('flow_runs').upsert({
-            instance_name: ctx.instanceName, remote_jid: ctx.remoteJid, conversation_id: ctx.conversationId,
-            flow_id: flowId, node_id: node.id, status: 'waiting_confirmation', variables: values, updated_at: new Date().toISOString(),
-          }, { onConflict: 'instance_name, remote_jid' })
-          const summary = `Confirme o pedido:\n${values.customerName}\n${values.address}, ${values.city}, ${values.province}, ${values.zipcode}\n${String(node.data.confirmationMessage ?? 'Responda CONFIRMAR para preparar o pedido.')}`
-          await sendWhatsApp(ctx, summary)
-          return
-        }
-
-        if (ctx.incomingMessage.trim().toLowerCase() !== confirmationText) {
-          await sendWhatsApp(ctx, String(node.data.confirmationMessage ?? 'Responda CONFIRMAR para preparar o pedido.'))
-          return
-        }
-        const order = await createFulfillmentOrder({
-          instanceName: ctx.instanceName,
-          conversationId: ctx.conversationId,
-          customerName: values.customerName,
-          contactPhone: conversation.contact_phone,
-          email: values.email || null,
-          address: values.address,
-          city: values.city,
-          province: values.province,
-          zipcode: values.zipcode,
-          paymentType: node.data.paymentType === 'PREPAID' ? 'PREPAID' : 'COD',
-          items: (node.data.fulfillmentItems?.length
-            ? node.data.fulfillmentItems
-            : [{ productId: String(node.data.productId ?? ''), quantity: Number(node.data.quantity ?? 1) }]
-          ).map((item) => ({ productId: item.productId, quantity: item.quantity })),
-          isSimulation: ctx.isSandbox,
-        })
-        const message = renderTemplate(String(node.data.successMessage ?? 'Pedido recebido para análise: {{leadNumber}}'), {
-          ...templateValues,
-          leadNumber: order?.lead_number ?? order?.order_number ?? '',
-          status: order?.status ?? '',
-        })
-        await sendWhatsApp(ctx, message)
-        await supabase.from('flow_runs').delete()
-          .eq('instance_name', ctx.instanceName)
-          .eq('remote_jid', ctx.remoteJid)
-        anyMessageSent = true
-      } catch (error) {
-        logError('executeFlow fulfillmentOrder', error)
-        await sendWhatsApp(ctx, String(node.data.failureMessage ?? 'Não foi possível preparar o pedido.'))
-        anyMessageSent = true
-      }
-      currentId = nextNodeId(edges, node.id)
       continue
     }
 

@@ -315,10 +315,9 @@ function FulfillmentConfig({ node, onChange }: { node: FlowNode; onChange: (id: 
     fetch('/api/fulfillment/products').then((r) => r.json()).then((json) => { if (json.ok) setProducts(json.products) })
   }, [])
   const requiresProduct = node.type !== 'fulfillmentStatus'
-  const orderItems = node.data.fulfillmentItems ?? []
   return (
     <>
-      {requiresProduct && node.type !== 'fulfillmentOrder' && (
+      {requiresProduct && (
         <div>
           <label className={labelClass}>Produto do catálogo</label>
           <select value={node.data.productId ?? ''} onChange={(e) => onChange(node.id, { productId: e.target.value, label: products.find((p) => p.id === e.target.value)?.name })} className={inputClass}>
@@ -326,34 +325,6 @@ function FulfillmentConfig({ node, onChange }: { node: FlowNode; onChange: (id: 
             {products.map((product) => <option key={product.id} value={product.id}>{product.country} · {product.name} · {product.sku}</option>)}
           </select>
         </div>
-      )}
-      {node.type === 'fulfillmentOrder' && (
-        <>
-          <div>
-            <label className={labelClass}>Itens do pedido</label>
-            <div className="space-y-2">
-              {orderItems.map((item, index) => (
-                <div key={`${item.productId}-${index}`} className="flex gap-2">
-                  <select value={item.productId} onChange={(e) => onChange(node.id, { fulfillmentItems: orderItems.map((current, i) => i === index ? { ...current, productId: e.target.value } : current) })} className={inputClass}>
-                    <option value="">Selecione...</option>
-                    {products.map((product) => <option key={product.id} value={product.id}>{product.country} · {product.name}</option>)}
-                  </select>
-                  <input type="number" min={1} value={item.quantity} onChange={(e) => onChange(node.id, { fulfillmentItems: orderItems.map((current, i) => i === index ? { ...current, quantity: Number(e.target.value) } : current) })} className={inputClass + ' max-w-[80px]'} />
-                  <button onClick={() => onChange(node.id, { fulfillmentItems: orderItems.filter((_, i) => i !== index) })} className="text-red-500">×</button>
-                </div>
-              ))}
-              <button onClick={() => onChange(node.id, { fulfillmentItems: [...orderItems, { productId: '', quantity: 1 }] })} className="text-sm font-semibold text-[#00a884]">+ Adicionar item</button>
-            </div>
-          </div>
-          <div><label className={labelClass}>Texto de confirmação</label><input value={node.data.confirmationText ?? 'confirmar'} onChange={(e) => onChange(node.id, { confirmationText: e.target.value })} className={inputClass} /></div>
-          <div><label className={labelClass}>Mensagem de coleta</label><textarea rows={3} value={node.data.collectionMessage ?? ''} onChange={(e) => onChange(node.id, { collectionMessage: e.target.value })} className={inputClass} /></div>
-          <div><label className={labelClass}>Mensagem antes da confirmação</label><textarea rows={3} value={node.data.confirmationMessage ?? ''} onChange={(e) => onChange(node.id, { confirmationMessage: e.target.value })} className={inputClass} /></div>
-          <div><label className={labelClass}>Nome do cliente</label><input value={node.data.customerName ?? '{{contactName}}'} onChange={(e) => onChange(node.id, { customerName: e.target.value })} className={inputClass} /></div>
-          {(['address', 'city', 'province', 'zipcode'] as const).map((field) => (
-            <div key={field}><label className={labelClass}>{field}</label><input value={String(node.data[field] ?? '')} onChange={(e) => onChange(node.id, { [field]: e.target.value })} className={inputClass} /></div>
-          ))}
-          <div><label className={labelClass}>Pagamento</label><select value={node.data.paymentType ?? 'COD'} onChange={(e) => onChange(node.id, { paymentType: e.target.value as 'COD' | 'PREPAID' })} className={inputClass}><option value="COD">COD</option><option value="PREPAID">Pré-pago</option></select></div>
-        </>
       )}
       <div><label className={labelClass}>Mensagem de sucesso</label><textarea rows={3} value={node.data.successMessage ?? ''} onChange={(e) => onChange(node.id, { successMessage: e.target.value })} className={inputClass} /></div>
       <div><label className={labelClass}>Mensagem de falha</label><textarea rows={3} value={node.data.failureMessage ?? ''} onChange={(e) => onChange(node.id, { failureMessage: e.target.value })} className={inputClass} /></div>
@@ -667,7 +638,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
         {type === 'aiAssistant' && (
           <AiAssistantConfig node={node} onChange={onChange} instanceName={instanceName} />
         )}
-        {(type === 'fulfillmentStock' || type === 'fulfillmentOrder' || type === 'fulfillmentStatus') && (
+        {(type === 'fulfillmentStock' || type === 'fulfillmentStatus') && (
           <FulfillmentConfig node={node} onChange={onChange} />
         )}
       </div>

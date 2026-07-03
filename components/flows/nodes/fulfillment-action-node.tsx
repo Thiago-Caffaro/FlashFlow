@@ -1,12 +1,11 @@
 'use client'
 
 import { Handle, NodeProps, Position } from '@xyflow/react'
-import { PackageCheck, PackagePlus, PackageSearch } from 'lucide-react'
+import { PackageCheck, PackageSearch } from 'lucide-react'
 import { FlowNodeData, FlowNodeType } from '@/types'
 
 const META: Record<string, { label: string; color: string; Icon: React.ElementType }> = {
   fulfillmentStock: { label: 'Consultar estoque', color: '#0ea5e9', Icon: PackageCheck },
-  fulfillmentOrder: { label: 'Criar pedido', color: '#10b981', Icon: PackagePlus },
   fulfillmentStatus: { label: 'Status do pedido', color: '#6366f1', Icon: PackageSearch },
 }
 

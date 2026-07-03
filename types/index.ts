@@ -59,7 +59,7 @@ export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>
 
 // ─── Flows ────────────────────────────────────────────────────────────────────
 
-export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'switchCase' | 'aiAssistant' | 'fulfillmentStock' | 'fulfillmentOrder' | 'fulfillmentStatus' | 'end'
+export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'switchCase' | 'aiAssistant' | 'fulfillmentStock' | 'fulfillmentStatus' | 'end'
 
 export interface SwitchCase {
   id: string
@@ -126,19 +126,8 @@ export interface FlowNodeData {
   sessionEndMessage?: { enabled: boolean; text: string }
   // fulfillment
   productId?: string
-  quantity?: number
   successMessage?: string
   failureMessage?: string
-  customerName?: string
-  address?: string
-  city?: string
-  province?: string
-  zipcode?: string
-  paymentType?: 'COD' | 'PREPAID'
-  fulfillmentItems?: Array<{ productId: string; quantity: number }>
-  confirmationText?: string
-  confirmationMessage?: string
-  collectionMessage?: string
   [key: string]: unknown
 }
 
