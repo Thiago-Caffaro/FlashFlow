@@ -291,16 +291,19 @@ async function callAI(
     const requiresHuman = funcName === ESCALATION_TOOL_NAME
     let reply: string = parts.find((p) => p.text)?.text ?? ''
 
+    let lastContents: Record<string, unknown>[] = requestContents
+
     if (funcName && isFulfillmentToolName(funcName) && executeTool) {
       log(`callAI gemini: fulfillment tool call`, { funcName, args: funcCallPart?.functionCall?.args })
       const toolResult = await executeTool(funcName, funcCallPart?.functionCall?.args ?? {})
+      lastContents = [
+        ...requestContents,
+        { role: 'model', parts: [{ functionCall: { name: funcName, args: funcCallPart?.functionCall?.args ?? {} } }] },
+        { role: 'function', parts: [{ functionResponse: { name: funcName, response: { content: toolResult } } }] },
+      ]
       const followUpBody: Record<string, unknown> = {
         ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
-        contents: [
-          ...requestContents,
-          { role: 'model', parts: [{ functionCall: { name: funcName, args: funcCallPart?.functionCall?.args ?? {} } }] },
-          { role: 'function', parts: [{ functionResponse: { name: funcName, response: { content: toolResult } } }] },
-        ],
+        contents: lastContents,
         generationConfig: requestBody.generationConfig,
       }
       const followRes = await fetch(geminiEndpoint, {
@@ -318,6 +321,35 @@ async function callAI(
         reply = followParts.find((p) => p.text)?.text ?? ''
       } else {
         logError(`callAI gemini follow-up API error`, { status: followRes.status })
+      }
+    }
+
+    // Some models occasionally return a fully empty completion (no text, no tool
+    // call) when several tools are offered at once, or right after a tool result.
+    // One bare retry (same contents, no tools) usually resolves it instead of
+    // leaving the customer without any reply.
+    if (!reply.trim() && !requiresHuman) {
+      log(`callAI gemini: empty reply, retrying`)
+      const retryBody: Record<string, unknown> = {
+        ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
+        contents: lastContents,
+        generationConfig: requestBody.generationConfig,
+      }
+      const retryRes = await fetch(geminiEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(retryBody),
+      })
+      const retryData = await retryRes.json().catch((e) => {
+        logError(`callAI gemini retry parse error`, { error: e })
+        return {}
+      })
+      log(`callAI gemini retry response`, JSON.stringify(retryData))
+      if (retryRes.ok) {
+        const retryParts: GeminiPart[] = retryData.candidates?.[0]?.content?.parts ?? []
+        reply = retryParts.find((p) => p.text)?.text ?? ''
+      } else {
+        logError(`callAI gemini retry API error`, { status: retryRes.status })
       }
     }
 
@@ -419,6 +451,8 @@ async function callAI(
     const fulfillmentCall = toolCalls.find((tc) => isFulfillmentToolName(tc.function?.name))
     let reply: string = data.choices?.[0]?.message?.content ?? ''
 
+    let lastMessages: Record<string, unknown>[] = messages
+
     if (fulfillmentCall && executeTool) {
       const toolName = fulfillmentCall.function?.name as string
       let toolArgs: Record<string, unknown> = {}
@@ -429,15 +463,27 @@ async function callAI(
       }
       log(`callAI openai: fulfillment tool call`, { toolName, toolArgs })
       const toolResult = await executeTool(toolName, toolArgs)
-      const followUpMessages: Record<string, unknown>[] = [
+      // Rebuild a minimal, spec-shaped assistant message instead of re-sending the raw
+      // API response (which carries extra fields like `refusal`/`reasoning`) — some
+      // providers return a degenerate empty completion when fed those back as input.
+      const assistantToolCallMessage: Record<string, unknown> = {
+        role: 'assistant',
+        content: data.choices?.[0]?.message?.content ?? null,
+        tool_calls: [{
+          id: fulfillmentCall.id,
+          type: 'function',
+          function: { name: fulfillmentCall.function?.name, arguments: fulfillmentCall.function?.arguments ?? '{}' },
+        }],
+      }
+      lastMessages = [
         ...messages,
-        data.choices?.[0]?.message,
+        assistantToolCallMessage,
         { role: 'tool', tool_call_id: fulfillmentCall.id, content: toolResult },
       ]
       const followRes = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: actualModel, messages: followUpMessages, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }),
+        body: JSON.stringify({ model: actualModel, messages: lastMessages, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }),
       })
       const followData = await followRes.json().catch((e) => {
         logError(`callAI openai follow-up parse error`, { error: e })
@@ -448,6 +494,29 @@ async function callAI(
         reply = followData.choices?.[0]?.message?.content ?? ''
       } else {
         logError(`callAI openai follow-up API error`, { status: followRes.status })
+      }
+    }
+
+    // Some models occasionally return a fully empty completion (no text, no tool
+    // call) when several tools are offered at once, or right after a tool result.
+    // One bare retry (same messages, no tools) usually resolves it instead of
+    // leaving the customer without any reply.
+    if (!reply.trim() && !requiresHuman) {
+      log(`callAI openai: empty reply, retrying`)
+      const retryRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: actualModel, messages: lastMessages, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }),
+      })
+      const retryData = await retryRes.json().catch((e) => {
+        logError(`callAI openai retry parse error`, { error: e })
+        return {}
+      })
+      log(`callAI openai retry response`, JSON.stringify(retryData))
+      if (retryRes.ok) {
+        reply = retryData.choices?.[0]?.message?.content ?? ''
+      } else {
+        logError(`callAI openai retry API error`, { status: retryRes.status })
       }
     }
 
@@ -590,6 +659,8 @@ async function callAI(
     const requiresHuman = toolEscalation || signalEscalation
     let reply = rawReply.replace(ESCALATION_SIGNAL, '').trim()
 
+    let lastMessages: Array<Record<string, unknown>> = messagesWithSystem
+
     const fulfillmentCall = toolCalls.find((tc) => isFulfillmentToolName(tc.function?.name))
     if (fulfillmentCall && executeTool) {
       const toolName = fulfillmentCall.function?.name as string
@@ -601,15 +672,42 @@ async function callAI(
       }
       log(`callAI openrouter: fulfillment tool call`, { toolName, toolArgs })
       const toolResult = await executeTool(toolName, toolArgs)
-      const { res: followRes, data: followData } = await callOpenRouter([
+      // Rebuild a minimal, spec-shaped assistant message instead of re-sending the raw
+      // API response (which carries extra fields like `refusal`/`reasoning`) — some
+      // providers return a degenerate empty completion when fed those back as input.
+      const assistantToolCallMessage: Record<string, unknown> = {
+        role: 'assistant',
+        content: data.choices?.[0]?.message?.content ?? null,
+        tool_calls: [{
+          id: fulfillmentCall.id,
+          type: 'function',
+          function: { name: fulfillmentCall.function?.name, arguments: fulfillmentCall.function?.arguments ?? '{}' },
+        }],
+      }
+      lastMessages = [
         ...messagesWithSystem,
-        data.choices?.[0]?.message,
+        assistantToolCallMessage,
         { role: 'tool', tool_call_id: fulfillmentCall.id, content: toolResult },
-      ], 3, false)
+      ]
+      const { res: followRes, data: followData } = await callOpenRouter(lastMessages, 3, false)
       if (followRes.ok) {
         reply = String(followData.choices?.[0]?.message?.content ?? '').replace(ESCALATION_SIGNAL, '').trim()
       } else {
         logError(`callAI openrouter follow-up API error`, { status: followRes.status })
+      }
+    }
+
+    // Some models occasionally return a fully empty completion (no text, no tool
+    // call) when several tools are offered at once, or right after a tool result.
+    // One bare retry (same messages, no tools) usually resolves it instead of
+    // leaving the customer without any reply.
+    if (!reply.trim() && !requiresHuman) {
+      log(`callAI openrouter: empty reply, retrying`)
+      const { res: retryRes, data: retryData } = await callOpenRouter(lastMessages, 4, false)
+      if (retryRes.ok) {
+        reply = String(retryData.choices?.[0]?.message?.content ?? '').replace(ESCALATION_SIGNAL, '').trim()
+      } else {
+        logError(`callAI openrouter retry API error`, { status: retryRes.status })
       }
     }
 
