@@ -3,6 +3,7 @@ import { decryptSecret } from './ai-crypto'
 import { sendWhatsAppText } from './whatsapp-text'
 import { ShopifyClient, normalizeShopDomain } from './shopify-client'
 import { submitFulfillmentOrder, FulfillmentOrderSubmissionError } from './fulfillment-service'
+import { executeFlow } from './flow-engine'
 import { supabaseAdmin } from './supabase-admin'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import {
@@ -292,7 +293,7 @@ export async function mapShopifyOrderPayload(
 export async function upsertShopifyOrder(
   integrationRow: ShopifyIntegrationCredentialRow,
   payload: unknown,
-  options: { sendConfirmation?: boolean; isSimulation?: boolean; forceInstanceName?: string } = {}
+  options: { sendConfirmation?: boolean; isSimulation?: boolean; forceInstanceName?: string; forceConversationId?: string } = {}
 ) {
   const integration = {
     id: integrationRow.id,
@@ -344,6 +345,7 @@ export async function upsertShopifyOrder(
         send_status: 'Pendente',
         delivery_status: 'Não enviado',
         is_simulation: options.isSimulation ?? false,
+        conversation_id: options.forceConversationId ?? null,
       })
       .select()
       .single()
@@ -353,8 +355,8 @@ export async function upsertShopifyOrder(
   }
 
   if (options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
-    await sendOrderConfirmationMessage(result.data.id).catch((error) => {
-      console.error('[shopify-confirmation] failed to send confirmation:', error)
+    await runShopifyOrderTrigger(result.data.id).catch((error) => {
+      console.error('[shopify-confirmation] failed to run order-created trigger:', error)
     })
   }
 
@@ -459,16 +461,41 @@ export async function upsertShopifyAbandonedCheckout(
   return result.data
 }
 
-const DEFAULT_CONFIRMATION_TEMPLATE =
-  'Olá, {{nome}}!\nRecebemos seu pedido {{pedido}} no valor de {{currency}} {{total}}.\nResponda esta mensagem para confirmar a entrega e finalizar o envio.'
-
 const DEFAULT_RECOVERY_TEMPLATE =
   'Olá{{nome}}!\nSeu carrinho de {{currency}} {{total}} ainda está disponível.{{link}}\nResponda esta mensagem se quiser ajuda para finalizar.'
 
-export async function sendOrderConfirmationMessage(orderId: string) {
+// Finds or creates the conversation for a Shopify order's contact, preferring
+// an existing conversation matched by phone (so a customer who already has a
+// real WhatsApp thread doesn't get a duplicate one from a synthetic wa_id).
+async function resolveConversationForOrder(instanceName: string, phone: string, customerName: string) {
+  const { data: existingConv } = await supabaseAdmin
+    .from('conversations')
+    .select('id, wa_id')
+    .eq('instance_name', instanceName)
+    .eq('contact_phone', phone)
+    .maybeSingle()
+  if (existingConv?.id) return { conversationId: existingConv.id as string, remoteJid: existingConv.wa_id as string }
+
+  const remoteJid = `${phone}@s.whatsapp.net`
+  const { data: created, error } = await supabaseAdmin
+    .from('conversations')
+    .upsert(
+      { wa_id: remoteJid, instance_name: instanceName, contact_phone: phone, contact_name: customerName },
+      { onConflict: 'wa_id, instance_name' }
+    )
+    .select('id')
+    .single()
+  if (error || !created) throw new Error(error?.message ?? 'Falha ao criar conversa para o pedido')
+  return { conversationId: created.id as string, remoteJid }
+}
+
+// Runs the "Pedido Shopify criado" flow trigger configured for the order's
+// account. Replaces the old fixed-template confirmation message — there is
+// no static fallback: if no trigger is configured, nothing is sent, by design.
+export async function runShopifyOrderTrigger(orderId: string) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, order_number, shopify_order_name, customer_name, contact_phone, assigned_instance_name, instance_name, total, currency, is_simulation, shopify_integration_id')
+    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation')
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
@@ -479,25 +506,31 @@ export async function sendOrderConfirmationMessage(orderId: string) {
   if (!instanceName) throw new Error('Pedido sem conta WhatsApp atribuída')
   if (!phone) throw new Error('Pedido sem telefone para confirmação')
 
-  let templateText: string | null = null
-  if (order.shopify_integration_id) {
-    const { data: integration } = await supabaseAdmin
-      .from('shopify_integrations')
-      .select('confirmation_message_template')
-      .eq('id', order.shopify_integration_id)
-      .maybeSingle()
-    templateText = integration?.confirmation_message_template ?? null
-  }
-
-  const message = interpolateTemplate(templateText || DEFAULT_CONFIRMATION_TEMPLATE, {
-    nome: String(order.customer_name || ''),
-    pedido: String(order.shopify_order_name || order.order_number),
-    total: Number(order.total ?? 0).toFixed(2),
-    currency: String(order.currency),
-  })
-
   try {
-    const sent = await sendWhatsAppText({ instanceName, number: phone, text: message })
+    const { data: trigger } = await supabaseAdmin
+      .from('triggers')
+      .select('action_payload')
+      .eq('instance_name', instanceName)
+      .eq('source', 'shopify_order')
+      .eq('action', 'flow')
+      .limit(1)
+      .maybeSingle()
+
+    const flowId = trigger?.action_payload?.flow_id as string | undefined
+    if (!flowId) throw new Error('Nenhum gatilho "Pedido Shopify criado" configurado para esta conta')
+
+    const { conversationId, remoteJid } = await resolveConversationForOrder(
+      instanceName, phone, String(order.customer_name || '')
+    )
+
+    await executeFlow(flowId, {
+      instanceName,
+      remoteJid,
+      conversationId,
+      incomingMessage: '',
+      isSandbox: isSandboxOrder,
+    })
+
     const { data: updated, error: updateError } = await supabaseAdmin
       .from('fulfillment_orders')
       .update({
@@ -509,9 +542,9 @@ export async function sendOrderConfirmationMessage(orderId: string) {
       .select()
       .single()
     if (updateError) throw new Error(updateError.message)
-    return { order: updated, messageId: sent.messageId }
+    return { order: updated }
   } catch (error) {
-    const messageText = error instanceof Error ? error.message : 'Falha ao enviar confirmação'
+    const messageText = error instanceof Error ? error.message : 'Falha ao disparar gatilho de confirmação'
     await supabaseAdmin
       .from('fulfillment_orders')
       .update({

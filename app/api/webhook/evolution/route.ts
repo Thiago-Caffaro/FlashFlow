@@ -96,6 +96,7 @@ async function executeTriggers(
     .from('triggers')
     .select('*')
     .eq('instance_name', instanceName)
+    .eq('source', 'message')
 
   if (error || !triggers || triggers.length === 0) return
 

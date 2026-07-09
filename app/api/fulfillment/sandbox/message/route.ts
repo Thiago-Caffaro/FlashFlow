@@ -6,11 +6,14 @@ import { SANDBOX_INSTANCE_NAME, SANDBOX_REMOTE_JID } from '@/lib/sandbox'
 
 export const dynamic = 'force-dynamic'
 
-// Fetches (creating if needed) the sandbox conversation and its history.
+// Fetches (creating if needed) a sandbox conversation and its history.
+// `conversationId` selects one of possibly several test contacts; omitted,
+// it falls back to the original fixed test conversation.
 export async function GET(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   try {
-    const conversation = await ensureSandboxConversation()
+    const conversationId = req.nextUrl.searchParams.get('conversationId') ?? undefined
+    const conversation = await resolveSandboxConversation(conversationId)
     const { data: messages, error } = await supabaseAdmin
       .from('messages')
       .select('*')
@@ -44,11 +47,27 @@ async function ensureSandboxConversation() {
   return data
 }
 
+// Resolves a specific test contact's conversation when `conversationId` is
+// given (must belong to the sandbox instance); otherwise falls back to the
+// original fixed test conversation, preserving pre-multi-contact behavior.
+async function resolveSandboxConversation(conversationId?: string) {
+  if (!conversationId) return ensureSandboxConversation()
+  const { data, error } = await supabaseAdmin
+    .from('conversations')
+    .select('*')
+    .eq('id', conversationId)
+    .eq('instance_name', SANDBOX_INSTANCE_NAME)
+    .maybeSingle()
+  if (error || !data) throw new Error('Contato de teste não encontrado')
+  return data
+}
+
 async function matchAndRunTrigger(ctx: FlowContext) {
   const { data: triggers } = await supabaseAdmin
     .from('triggers')
     .select('*')
     .eq('instance_name', SANDBOX_INSTANCE_NAME)
+    .eq('source', 'message')
   if (!triggers?.length) return
 
   const content = ctx.incomingMessage.toLowerCase()
@@ -72,7 +91,7 @@ async function matchAndRunTrigger(ctx: FlowContext) {
 
 // Feeds a message into the real trigger/flow/AI dispatch logic
 // (same functions the real Evolution webhook uses) as if it came from a
-// customer on WhatsApp, but bound to the fixed sandbox conversation. The
+// customer on WhatsApp, but bound to a sandbox test conversation. The
 // only thing intercepted downstream is the real outbound WhatsApp send.
 export async function POST(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
@@ -82,7 +101,10 @@ export async function POST(req: NextRequest) {
     const text = String(body.text ?? '').trim()
     if (!text) return NextResponse.json({ ok: false, error: 'Mensagem vazia' }, { status: 400 })
 
-    const conversation = await ensureSandboxConversation()
+    const conversation = await resolveSandboxConversation(
+      typeof body.conversationId === 'string' ? body.conversationId : undefined
+    )
+    const remoteJid = String(conversation.wa_id)
 
     const { error: insertError } = await supabaseAdmin.from('messages').insert({
       conversation_id: conversation.id,
@@ -102,17 +124,17 @@ export async function POST(req: NextRequest) {
 
     const ctx: FlowContext = {
       instanceName: SANDBOX_INSTANCE_NAME,
-      remoteJid: SANDBOX_REMOTE_JID,
+      remoteJid,
       conversationId: conversation.id,
       incomingMessage: text,
       isSandbox: true,
     }
 
-    const flowRun = await checkActiveFlowRun(SANDBOX_INSTANCE_NAME, SANDBOX_REMOTE_JID)
+    const flowRun = await checkActiveFlowRun(SANDBOX_INSTANCE_NAME, remoteJid)
     if (flowRun) {
       await executeFlow(flowRun.flow_id, ctx, flowRun.node_id)
     } else {
-      const session = await checkActiveSession(SANDBOX_INSTANCE_NAME, SANDBOX_REMOTE_JID)
+      const session = await checkActiveSession(SANDBOX_INSTANCE_NAME, remoteJid)
       if (session) {
         await handleActiveSession(session, ctx)
       } else {

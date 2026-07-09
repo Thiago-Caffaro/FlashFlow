@@ -15,13 +15,30 @@ export interface SendWhatsAppTextResult {
   response: unknown
 }
 
-async function persistSandboxOutboundMessage(text: string) {
-  const { data: conversation } = await supabaseAdmin
-    .from('conversations')
-    .select('id')
-    .eq('instance_name', SANDBOX_INSTANCE_NAME)
-    .eq('wa_id', SANDBOX_REMOTE_JID)
-    .maybeSingle()
+async function persistSandboxOutboundMessage(text: string, phone: string) {
+  // Multiple sandbox test contacts can exist — resolve by the target phone
+  // first so the message lands in the right contact's conversation, falling
+  // back to the original fixed test conversation when there's no phone match
+  // (e.g. calls that aren't tied to a specific contact).
+  let conversation: { id: string } | null = null
+  if (phone) {
+    const { data } = await supabaseAdmin
+      .from('conversations')
+      .select('id')
+      .eq('instance_name', SANDBOX_INSTANCE_NAME)
+      .eq('contact_phone', phone)
+      .maybeSingle()
+    conversation = data
+  }
+  if (!conversation) {
+    const { data } = await supabaseAdmin
+      .from('conversations')
+      .select('id')
+      .eq('instance_name', SANDBOX_INSTANCE_NAME)
+      .eq('wa_id', SANDBOX_REMOTE_JID)
+      .maybeSingle()
+    conversation = data
+  }
   if (!conversation) return
 
   await supabaseAdmin.from('messages').insert({
@@ -46,7 +63,7 @@ export async function sendWhatsAppText({
   timeoutMs = 8000,
 }: SendWhatsAppTextInput): Promise<SendWhatsAppTextResult> {
   if (instanceName === SANDBOX_INSTANCE_NAME) {
-    await persistSandboxOutboundMessage(text)
+    await persistSandboxOutboundMessage(text, number)
     return { messageId: null, response: { sandbox: true, number, text } }
   }
 

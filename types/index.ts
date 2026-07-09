@@ -41,6 +41,7 @@ export interface Message {
 
 export type TriggerTipo = 'contains' | 'exact'
 export type TriggerAction = 'send_message' | 'flow'
+export type TriggerSource = 'message' | 'shopify_order'
 
 export interface Trigger {
   id: string
@@ -51,6 +52,7 @@ export interface Trigger {
   delay_ms: number
   action: TriggerAction
   action_payload: { message?: string; flow_id?: string }
+  source: TriggerSource
   created_at: string
   updated_at: string
 }

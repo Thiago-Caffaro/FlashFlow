@@ -1,8 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, KeyboardEvent } from 'react'
-import { Plus, Search, Trash2, MessageSquare, GitBranch, Zap, Download, Upload, X } from 'lucide-react'
-import { Trigger, TriggerCreate, TriggerTipo, TriggerAction } from '@/types'
+import { Plus, Search, Trash2, MessageSquare, GitBranch, Zap, Download, Upload, X, ShoppingBag } from 'lucide-react'
+import { Trigger, TriggerCreate, TriggerTipo, TriggerAction, TriggerSource } from '@/types'
 import FlowPickerModal from '@/components/flows/flow-picker-modal'
 
 function downloadJson(data: unknown, filename: string) {
@@ -125,62 +125,104 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
           />
         </div>
 
-        {/* Tipo de detecção */}
+        {/* Origem do gatilho */}
         <div>
-          <label className={labelClass}>Tipo de detecção</label>
-          <select
-            value={trigger.tipo}
-            onChange={(e) => onUpdate(trigger.id, { tipo: e.target.value as TriggerTipo })}
-            className={inputClass + ' cursor-pointer'}
-          >
-            <option value="contains">Contém</option>
-            <option value="exact">Igual a</option>
-          </select>
-        </div>
-
-        {/* Palavras de ativação */}
-        <div>
-          <label className={labelClass}>Palavras de ativação</label>
-          {valorTags.includes('*') && (
-            <p className="text-xs text-amber-500 dark:text-amber-400 mb-1.5">
-              Qualquer mensagem ativa este gatilho
-            </p>
-          )}
-          <div
-            className="min-h-[46px] w-full bg-[#f0f2f5] dark:bg-[#2a3942] border border-transparent focus-within:border-[#00a884] rounded-xl px-3 py-2 flex flex-wrap gap-1.5 cursor-text transition-colors"
-            onClick={() => (document.getElementById(`valor-input-${trigger.id}`) as HTMLInputElement | null)?.focus()}
-          >
-            {valorTags.map(tag => (
-              <span
-                key={tag}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-medium ${
-                  tag === '*'
-                    ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
-                    : 'bg-[#00a884]/15 text-[#00a884]'
-                }`}
-              >
-                {tag}
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); removeValorTag(tag) }}
-                  className="hover:text-red-500 transition-colors"
-                >
-                  <X size={10} />
-                </button>
-              </span>
-            ))}
-            <input
-              id={`valor-input-${trigger.id}`}
-              type="text"
-              value={valorInput}
-              onChange={(e) => setValorInput(e.target.value)}
-              onKeyDown={handleValorKeyDown}
-              onBlur={() => { if (valorInput.trim()) addValorTag(valorInput) }}
-              placeholder={valorTags.length === 0 ? 'Digite e pressione Enter...' : ''}
-              className="flex-1 min-w-[100px] bg-transparent text-sm text-[#111b21] dark:text-[#e9edef] outline-none placeholder:text-[#aebac1] dark:placeholder:text-[#667781] font-mono"
-            />
+          <label className={labelClass}>Origem</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => onUpdate(trigger.id, { source: 'message' })}
+              className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium border-2 transition-colors ${
+                trigger.source !== 'shopify_order'
+                  ? 'border-[#00a884] bg-[#e7f8f4] dark:bg-[#0d2e27] text-[#00a884]'
+                  : 'border-dashed border-[#d1d7db] dark:border-[#3d4f5a] text-[#aebac1] dark:text-[#667781]'
+              }`}
+            >
+              <MessageSquare size={14} />
+              Mensagem recebida
+            </button>
+            <button
+              type="button"
+              onClick={() => onUpdate(trigger.id, { source: 'shopify_order', action: 'flow' })}
+              className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium border-2 transition-colors ${
+                trigger.source === 'shopify_order'
+                  ? 'border-[#00a884] bg-[#e7f8f4] dark:bg-[#0d2e27] text-[#00a884]'
+                  : 'border-dashed border-[#d1d7db] dark:border-[#3d4f5a] text-[#aebac1] dark:text-[#667781]'
+              }`}
+            >
+              <ShoppingBag size={14} />
+              Pedido Shopify criado
+            </button>
           </div>
         </div>
+
+        {trigger.source === 'shopify_order' ? (
+          <div className="flex items-start gap-2 p-3 rounded-xl bg-[#f0f2f5] dark:bg-[#2a3942]">
+            <ShoppingBag size={13} className="text-[#667781] mt-0.5 shrink-0" />
+            <p className="text-xs text-[#667781] leading-relaxed">
+              Este gatilho roda o fluxo abaixo assim que um pedido Shopify for criado para esta conta — em vez de uma mensagem de confirmação fixa. Se nenhum fluxo estiver vinculado, nenhuma mensagem automática é enviada.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Tipo de detecção */}
+            <div>
+              <label className={labelClass}>Tipo de detecção</label>
+              <select
+                value={trigger.tipo}
+                onChange={(e) => onUpdate(trigger.id, { tipo: e.target.value as TriggerTipo })}
+                className={inputClass + ' cursor-pointer'}
+              >
+                <option value="contains">Contém</option>
+                <option value="exact">Igual a</option>
+              </select>
+            </div>
+
+            {/* Palavras de ativação */}
+            <div>
+              <label className={labelClass}>Palavras de ativação</label>
+              {valorTags.includes('*') && (
+                <p className="text-xs text-amber-500 dark:text-amber-400 mb-1.5">
+                  Qualquer mensagem ativa este gatilho
+                </p>
+              )}
+              <div
+                className="min-h-[46px] w-full bg-[#f0f2f5] dark:bg-[#2a3942] border border-transparent focus-within:border-[#00a884] rounded-xl px-3 py-2 flex flex-wrap gap-1.5 cursor-text transition-colors"
+                onClick={() => (document.getElementById(`valor-input-${trigger.id}`) as HTMLInputElement | null)?.focus()}
+              >
+                {valorTags.map(tag => (
+                  <span
+                    key={tag}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-medium ${
+                      tag === '*'
+                        ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                        : 'bg-[#00a884]/15 text-[#00a884]'
+                    }`}
+                  >
+                    {tag}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); removeValorTag(tag) }}
+                      className="hover:text-red-500 transition-colors"
+                    >
+                      <X size={10} />
+                    </button>
+                  </span>
+                ))}
+                <input
+                  id={`valor-input-${trigger.id}`}
+                  type="text"
+                  value={valorInput}
+                  onChange={(e) => setValorInput(e.target.value)}
+                  onKeyDown={handleValorKeyDown}
+                  onBlur={() => { if (valorInput.trim()) addValorTag(valorInput) }}
+                  placeholder={valorTags.length === 0 ? 'Digite e pressione Enter...' : ''}
+                  className="flex-1 min-w-[100px] bg-transparent text-sm text-[#111b21] dark:text-[#e9edef] outline-none placeholder:text-[#aebac1] dark:placeholder:text-[#667781] font-mono"
+                />
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Delay */}
         <div>
@@ -300,6 +342,7 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
       delay_ms: 0,
       action: 'flow',
       action_payload: {},
+      source: 'message',
     }
     const res = await fetch('/api/triggers', {
       method: 'POST',
@@ -483,13 +526,16 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
                       {t.alias || <em className="not-italic text-[#aebac1] dark:text-[#667781] font-normal">Sem nome</em>}
                     </p>
                     <p className="text-xs text-[#aebac1] dark:text-[#667781] font-mono truncate mt-0.5">
-                      {t.valor
-                        ? t.valor.split(',').map(v => v.trim()).filter(Boolean).join(', ')
-                        : <em className="not-italic font-sans">—</em>}
+                      {t.source === 'shopify_order'
+                        ? <em className="not-italic font-sans">Pedido Shopify criado</em>
+                        : (t.valor
+                          ? t.valor.split(',').map(v => v.trim()).filter(Boolean).join(', ')
+                          : <em className="not-italic font-sans">—</em>)}
                     </p>
                   </div>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-[#f0f2f5] dark:bg-[#2a3942] text-[#667781] dark:text-[#8696a0] shrink-0">
-                    {tipoLabel(t.tipo)}
+                  <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-[#f0f2f5] dark:bg-[#2a3942] text-[#667781] dark:text-[#8696a0] shrink-0">
+                    {t.source === 'shopify_order' ? <ShoppingBag size={10} /> : null}
+                    {t.source === 'shopify_order' ? 'Pedido' : tipoLabel(t.tipo)}
                   </span>
                   <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full shrink-0 ${
                     t.action === 'flow'

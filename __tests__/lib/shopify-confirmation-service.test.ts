@@ -4,9 +4,14 @@ const mockFrom = jest.fn()
 const mockSubmitFulfillmentOrder = jest.fn()
 const mockSendWhatsAppText = jest.fn()
 const mockDecryptSecret = jest.fn(() => 'decoded-secret')
+const mockExecuteFlow = jest.fn()
 
 jest.mock('@/lib/supabase-admin', () => ({
   supabaseAdmin: { from: mockFrom },
+}))
+
+jest.mock('@/lib/flow-engine', () => ({
+  executeFlow: mockExecuteFlow,
 }))
 
 jest.mock('@/lib/fulfillment-service', () => ({

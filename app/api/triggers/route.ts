@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
         delay_ms: body.delay_ms ?? 0,
         action,
         action_payload: body.action_payload ?? {},
+        source: body.source ?? 'message',
       })
       .select()
       .single()

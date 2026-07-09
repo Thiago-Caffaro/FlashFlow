@@ -401,23 +401,10 @@ export default function ShopifyConfig({
 
             {activeStep === 3 && (
               <>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-[#667781]">Mensagem de confirmação de pedido</label>
-                  <p className="mb-2 text-xs text-[#667781]">
-                    Variáveis:
-                    {' '}<span className={VAR_HINT_CLASSES}>{'{{nome}}'}</span>
-                    {' '}<span className={VAR_HINT_CLASSES}>{'{{pedido}}'}</span>
-                    {' '}<span className={VAR_HINT_CLASSES}>{'{{total}}'}</span>
-                    {' '}<span className={VAR_HINT_CLASSES}>{'{{currency}}'}</span>
+                <div className="rounded-lg border border-[#f0f2f5] bg-[#f8f9fa] p-3 dark:border-[#2a3942] dark:bg-[#182229]">
+                  <p className="text-xs text-[#667781]">
+                    A mensagem de confirmação de pedido agora é configurada em <strong>Gatilhos</strong>, criando um gatilho do tipo <strong>&quot;Pedido Shopify criado&quot;</strong> apontando para um fluxo. Sem esse gatilho configurado, nenhuma mensagem automática é enviada.
                   </p>
-                  <textarea
-                    className={`${inputClass} resize-y`}
-                    rows={4}
-                    placeholder={'Olá, {{nome}}!\nRecebemos seu pedido {{pedido}} no valor de {{currency}} {{total}}.\nResponda esta mensagem para confirmar a entrega.'}
-                    value={form.confirmation_message_template}
-                    onChange={(e) => setForm((f) => ({ ...f, confirmation_message_template: e.target.value }))}
-                  />
-                  <p className="mt-1 text-xs text-[#667781]">Deixe em branco para usar o modelo padrão.</p>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-[#667781]">Mensagem de recuperação de carrinho</label>

@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
     const country = String(body.country ?? '').trim().toUpperCase()
     const paymentType = body.paymentType === 'PREPAID' ? 'PREPAID' : 'COD'
     const items = Array.isArray(body.items) ? body.items as SandboxOrderItem[] : []
+    const conversationId = typeof body.conversationId === 'string' ? body.conversationId : undefined
 
     if (!customerName || !phone || !address || !city || !province || !zipcode || !country) {
       return NextResponse.json({ ok: false, error: 'Preencha todos os campos do cliente/endereço' }, { status: 400 })
@@ -113,6 +114,7 @@ export async function POST(req: NextRequest) {
     const order = await upsertShopifyOrder(integrationRow, payload, {
       isSimulation: true,
       forceInstanceName: SANDBOX_INSTANCE_NAME,
+      forceConversationId: conversationId,
     })
 
     return NextResponse.json({ ok: true, order })
