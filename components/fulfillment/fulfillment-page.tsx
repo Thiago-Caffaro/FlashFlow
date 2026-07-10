@@ -38,7 +38,6 @@ export default function FulfillmentPage() {
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [syncBusy, setSyncBusy] = useState(false)
-  const [simulationBusy, setSimulationBusy] = useState(false)
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
 
   const load = useCallback(async () => {
@@ -142,19 +141,6 @@ export default function FulfillmentPage() {
     )
     await load()
     setSyncBusy(false)
-  }
-
-  async function createSimulation() {
-    setSimulationBusy(true)
-    const firstCountry = integrations.find((i) => i.active)?.country ?? 'PORTUGAL'
-    const json = await fetch('/api/fulfillment/simulation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ country: firstCountry }),
-    }).then(getJson)
-    showResult(json, 'Simulação criada. Verifique a aba Pedidos.')
-    await load()
-    setSimulationBusy(false)
   }
 
   const queueCount = orders.filter((o) => o.commercial_status === 'Não responde' && !o.is_simulation).length
@@ -281,8 +267,7 @@ export default function FulfillmentPage() {
         {!loading && tab === 'sandbox' && (
           <SandboxPanel
             products={products}
-            simulationBusy={simulationBusy}
-            onCreateSimulation={createSimulation}
+            accounts={accounts}
             onRefresh={load}
           />
         )}

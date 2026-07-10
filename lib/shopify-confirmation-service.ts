@@ -470,11 +470,19 @@ const DEFAULT_RECOVERY_TEMPLATE =
 async function resolveConversationForOrder(instanceName: string, phone: string, customerName: string) {
   const { data: existingConv } = await supabaseAdmin
     .from('conversations')
-    .select('id, wa_id')
+    .select('id, wa_id, sandbox_source_instance, sandbox_real_send_enabled')
     .eq('instance_name', instanceName)
     .eq('contact_phone', phone)
     .maybeSingle()
-  if (existingConv?.id) return { conversationId: existingConv.id as string, remoteJid: existingConv.wa_id as string }
+  if (existingConv?.id) {
+    return {
+      conversationId: existingConv.id as string,
+      remoteJid: existingConv.wa_id as string,
+      realSendInstanceName: existingConv.sandbox_real_send_enabled && existingConv.sandbox_source_instance
+        ? existingConv.sandbox_source_instance as string
+        : undefined,
+    }
+  }
 
   const remoteJid = `${phone}@s.whatsapp.net`
   const { data: created, error } = await supabaseAdmin
@@ -486,7 +494,7 @@ async function resolveConversationForOrder(instanceName: string, phone: string, 
     .select('id')
     .single()
   if (error || !created) throw new Error(error?.message ?? 'Falha ao criar conversa para o pedido')
-  return { conversationId: created.id as string, remoteJid }
+  return { conversationId: created.id as string, remoteJid, realSendInstanceName: undefined }
 }
 
 // Runs the "Pedido Shopify criado" flow trigger configured for the order's
@@ -519,7 +527,7 @@ export async function runShopifyOrderTrigger(orderId: string) {
     const flowId = trigger?.action_payload?.flow_id as string | undefined
     if (!flowId) throw new Error('Nenhum gatilho "Pedido Shopify criado" configurado para esta conta')
 
-    const { conversationId, remoteJid } = await resolveConversationForOrder(
+    const { conversationId, remoteJid, realSendInstanceName } = await resolveConversationForOrder(
       instanceName, phone, String(order.customer_name || '')
     )
 
@@ -529,6 +537,7 @@ export async function runShopifyOrderTrigger(orderId: string) {
       conversationId,
       incomingMessage: '',
       isSandbox: isSandboxOrder,
+      realSendInstanceName: isSandboxOrder ? realSendInstanceName : undefined,
     })
 
     const { data: updated, error: updateError } = await supabaseAdmin
@@ -749,92 +758,3 @@ export async function syncShopifyData(options: {
   }
 }
 
-export async function createSimulationData(body: Record<string, unknown> = {}) {
-  const country = normalizeCountry(body.country, 'PORTUGAL')
-  const assigned = await assignConfirmationAccount(country)
-  const marker = `simulation-${Date.now()}`
-  const now = new Date().toISOString()
-  const orderId = `sim-${Date.now()}`
-  const total = Math.max(1, numberValue(body.total, 39.9))
-  const orderPayload = {
-    id: orderId,
-    name: `SIM-${orderId}`,
-    order_number: orderId,
-    email: nullableString(body.email) ?? 'cliente.simulado@example.com',
-    phone: nullableString(body.phone) ?? '+351900000000',
-    currency: 'EUR',
-    total_price: String(total),
-    shipping_address: {
-      name: nullableString(body.customer_name) ?? 'Cliente Simulado',
-      address1: 'Rua de Teste 123',
-      city: 'Lisboa',
-      province: 'Lisboa',
-      zip: '1000-001',
-      country_code: country,
-      phone: nullableString(body.phone) ?? '+351900000000',
-    },
-    line_items: [{
-      product_id: 'simulation-product',
-      sku: nullableString(body.sku) ?? 'SIM-SKU',
-      name: 'Produto Simulado',
-      quantity: 1,
-      price: String(total),
-    }],
-  }
-
-  const mappedOrder = await mapShopifyOrderPayload(orderPayload, {
-    id: '',
-    shopDomain: 'simulation.local',
-    defaultCountry: country,
-  }, assigned)
-
-  const { data: order, error: orderError } = await supabaseAdmin
-    .from('fulfillment_orders')
-    .insert({
-      ...mappedOrder,
-      shopify_integration_id: null,
-      status: 'pending_operator',
-      commercial_status: 'Não responde',
-      send_status: 'Pendente',
-      delivery_status: 'Não enviado',
-      is_simulation: true,
-      simulation_marker: marker,
-      created_at: now,
-      updated_at: now,
-    })
-    .select()
-    .single()
-  if (orderError || !order) throw new Error(orderError?.message ?? 'Falha ao criar pedido de simulação')
-
-  const checkoutPayload = {
-    id: `${orderId}-checkout`,
-    token: `${orderId}-token`,
-    email: orderPayload.email,
-    phone: orderPayload.phone,
-    currency: 'EUR',
-    total_price: String(total),
-    abandoned_checkout_url: 'https://simulation.local/checkouts/test',
-    shipping_address: orderPayload.shipping_address,
-  }
-  const checkoutMapped = mapShopifyAbandonedCheckoutPayload(checkoutPayload, {
-    id: '',
-    shopDomain: 'simulation.local',
-    defaultCountry: country,
-  }, assigned)
-  const { data: checkout, error: checkoutError } = await supabaseAdmin
-    .from('shopify_abandoned_checkouts')
-    .insert({
-      ...checkoutMapped,
-      shopify_integration_id: null,
-      recovery_status: 'Pendente',
-      is_simulation: true,
-      simulation_marker: marker,
-      created_at: now,
-      updated_at: now,
-    })
-    .select()
-    .single()
-  if (checkoutError || !checkout) throw new Error(checkoutError?.message ?? 'Falha ao criar checkout de simulação')
-
-  return { order, checkout, marker }
-}

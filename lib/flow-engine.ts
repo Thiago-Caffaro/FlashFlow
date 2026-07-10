@@ -21,6 +21,11 @@ export interface FlowContext {
   // intercepted for sandbox conversations; everything else (AI calls,
   // node traversal, order creation) runs for real.
   isSandbox?: boolean
+  // Set only for sandbox conversations tied to a contact imported from a
+  // real connected account with real-send explicitly enabled. When set,
+  // outbound WhatsApp sends for this conversation go out for real through
+  // this instance instead of being intercepted.
+  realSendInstanceName?: string
 }
 
 
@@ -40,8 +45,9 @@ function logError(tag: string, ...args: unknown[]) {
 
 async function sendWhatsApp(ctx: FlowContext, text: string) {
   let waMessageId: string | null = null
-  if (!ctx.isSandbox) {
-    const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${ctx.instanceName}`, {
+  const realSendTarget = ctx.isSandbox ? ctx.realSendInstanceName : ctx.instanceName
+  if (realSendTarget) {
+    const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${realSendTarget}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
       body: JSON.stringify({ number: ctx.remoteJid, text }),
@@ -68,8 +74,9 @@ async function sendWhatsApp(ctx: FlowContext, text: string) {
 
 async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
   let waMessageId: string | null = null
-  if (!ctx.isSandbox) {
-    const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${ctx.instanceName}`, {
+  const realSendTarget = ctx.isSandbox ? ctx.realSendInstanceName : ctx.instanceName
+  if (realSendTarget) {
+    const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${realSendTarget}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
       body: JSON.stringify({ number: ctx.remoteJid, mediatype: 'image', media: imageUrl }),

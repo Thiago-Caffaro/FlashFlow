@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   const { data: contacts, error } = await supabaseAdmin
     .from('conversations')
-    .select('id, wa_id, contact_name, contact_phone, last_message, last_message_at')
+    .select('id, wa_id, contact_name, contact_phone, last_message, last_message_at, sandbox_source_instance, sandbox_real_send_enabled')
     .eq('instance_name', SANDBOX_INSTANCE_NAME)
     .order('created_at', { ascending: true })
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 400 })
@@ -21,13 +21,16 @@ export async function GET(req: NextRequest) {
 // Adds a new test contact — either typed manually or pre-filled from a real
 // contact picked via /contacts/search. Its wa_id is derived from the phone;
 // no collision with a real account's conversations is possible since those
-// live under a different instance_name.
+// live under a different instance_name. When `sourceInstanceName` is given
+// (import from a real account), real-send is enabled automatically — that's
+// the whole point of importing a real contact instead of typing one.
 export async function POST(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   try {
     const body = await req.json() as Record<string, unknown>
     const contactName = String(body.contactName ?? '').trim()
     const contactPhone = String(body.contactPhone ?? '').trim()
+    const sourceInstanceName = typeof body.sourceInstanceName === 'string' ? body.sourceInstanceName.trim() : ''
     if (!contactName || !contactPhone) {
       return NextResponse.json({ ok: false, error: 'Nome e telefone são obrigatórios' }, { status: 400 })
     }
@@ -40,10 +43,12 @@ export async function POST(req: NextRequest) {
           instance_name: SANDBOX_INSTANCE_NAME,
           contact_name: contactName,
           contact_phone: contactPhone,
+          sandbox_source_instance: sourceInstanceName || null,
+          sandbox_real_send_enabled: Boolean(sourceInstanceName),
         },
         { onConflict: 'wa_id, instance_name' }
       )
-      .select('id, wa_id, contact_name, contact_phone')
+      .select('id, wa_id, contact_name, contact_phone, sandbox_source_instance, sandbox_real_send_enabled')
       .single()
     if (error || !data) throw new Error(error?.message ?? 'Falha ao criar contato de teste')
 

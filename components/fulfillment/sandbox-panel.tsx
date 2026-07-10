@@ -1,15 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FlaskConical, GitBranch, Loader2, Plus, RotateCcw, Search, Send, ShoppingCart, Trash2, User, X } from 'lucide-react'
-import { FulfillmentProduct, Message } from '@/types'
+import { FlaskConical, GitBranch, Loader2, Plus, Radio, RotateCcw, Search, Send, ShoppingCart, Trash2, User, X } from 'lucide-react'
+import { Account, FulfillmentProduct, Message } from '@/types'
 import MessageBubble from '@/components/chat/message-bubble'
-import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
+import { SANDBOX_INSTANCE_NAME, SANDBOX_REMOTE_JID } from '@/lib/sandbox'
 
 interface SandboxPanelProps {
   products: FulfillmentProduct[]
-  simulationBusy: boolean
-  onCreateSimulation: () => Promise<void>
+  accounts: Account[]
   onRefresh: () => Promise<void>
 }
 
@@ -18,6 +17,8 @@ interface SandboxContact {
   wa_id: string
   contact_name: string | null
   contact_phone: string | null
+  sandbox_source_instance: string | null
+  sandbox_real_send_enabled: boolean
 }
 
 interface RealContactResult {
@@ -43,6 +44,8 @@ const emptyOrderForm = {
   paymentType: 'COD' as 'COD' | 'PREPAID',
 }
 
+const PLACEHOLDER_PHONE = '351900000000'
+
 const inputClass = 'w-full rounded-lg border border-transparent bg-[#f0f2f5] px-3 py-2.5 text-sm outline-none focus:border-[#00a884] dark:bg-[#2a3942] dark:text-[#e9edef]'
 const btnPrimary = 'flex items-center gap-2 rounded-lg bg-[#00a884] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#008f72] disabled:opacity-50'
 const btnSecondary = 'flex items-center gap-2 rounded-lg bg-[#f0f2f5] px-3 py-2.5 text-sm font-semibold text-[#667781] hover:bg-[#e6e9ec] disabled:opacity-40 dark:bg-[#2a3942] dark:text-[#e9edef] dark:hover:bg-[#334650]'
@@ -51,7 +54,7 @@ async function getJson(res: Response) {
   return res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))
 }
 
-export default function SandboxPanel({ products, simulationBusy, onCreateSimulation, onRefresh }: SandboxPanelProps) {
+export default function SandboxPanel({ products, accounts, onRefresh }: SandboxPanelProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
@@ -74,6 +77,11 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
   const [manualPhone, setManualPhone] = useState('')
   const [addContactBusy, setAddContactBusy] = useState(false)
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null)
+
+  function accountLabel(instanceName: string | null) {
+    if (!instanceName) return ''
+    return accounts.find((a) => a.instanceName === instanceName)?.label ?? instanceName
+  }
 
   const loadContacts = useCallback(async () => {
     const json = await fetch('/api/fulfillment/sandbox/contacts', { cache: 'no-store' }).then(getJson)
@@ -156,12 +164,12 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
     setSearchBusy(false)
   }
 
-  async function createContact(contactName: string, contactPhone: string) {
+  async function createContact(contactName: string, contactPhone: string, sourceInstanceName?: string) {
     setAddContactBusy(true)
     const json = await fetch('/api/fulfillment/sandbox/contacts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contactName, contactPhone }),
+      body: JSON.stringify({ contactName, contactPhone, sourceInstanceName }),
     }).then(getJson)
     if (json.ok) {
       setShowAddContact(false)
@@ -190,6 +198,16 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
     setRemoveBusyId(null)
   }
 
+  async function toggleRealSend(contact: SandboxContact) {
+    const json = await fetch(`/api/fulfillment/sandbox/contacts/${contact.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ realSendEnabled: !contact.sandbox_real_send_enabled }),
+    }).then(getJson)
+    if (json.ok) await loadContacts()
+    else showMsg(json.error ?? 'Erro ao atualizar contato', true)
+  }
+
   function selectOrderContact(id: string) {
     setOrderContactId(id || null)
     const contact = contacts.find((c) => c.id === id)
@@ -212,6 +230,29 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
 
   function setOrderItemQuantity(productId: string, quantity: number) {
     setOrderItems((items) => items.map((item) => item.productId === productId ? { ...item, quantity: Math.max(1, quantity) } : item))
+  }
+
+  // Fills the form with placeholder data for a quick test, using the real
+  // phone of whichever contact is currently active — unless that's the
+  // fixed default "Sandbox" contact, which has no real number behind it.
+  function fillPlaceholderOrder() {
+    const activeContact = contacts.find((c) => c.id === activeContactId) ?? null
+    const isRealContact = activeContact && activeContact.wa_id !== SANDBOX_REMOTE_JID
+    const phone = (isRealContact ? activeContact?.contact_phone : null) || PLACEHOLDER_PHONE
+    setOrderForm({
+      customerName: 'Cliente Simulado',
+      phone,
+      email: '',
+      address: 'Rua Exemplo, 123',
+      city: 'Cidade Exemplo',
+      province: 'Província Exemplo',
+      zipcode: '0000-000',
+      country: products[0]?.country ?? 'PORTUGAL',
+      paymentType: 'COD',
+    })
+    const firstProduct = products.find((p) => p.active)
+    setOrderItems(firstProduct ? [{ productId: firstProduct.id, quantity: 1 }] : [])
+    setOrderContactId(activeContactId)
   }
 
   async function submitShopifyOrder() {
@@ -262,7 +303,7 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
         <div className="flex-1">
           <h2 className="font-bold dark:text-[#e9edef]">Sandbox de testes</h2>
           <p className="text-xs text-[#667781]">
-            Ambiente isolado: nenhuma mensagem chega a um WhatsApp real, nenhum pedido é enviado ao FenixCOD, nenhuma loja Shopify real é tocada.
+            Pedidos nunca são enviados ao FenixCOD real e a loja Shopify real nunca é tocada. Mensagens de WhatsApp só saem de verdade para contatos com envio real ativado (veja o indicador em cada contato abaixo).
           </p>
         </div>
         <button onClick={resetSandbox} disabled={resetBusy} className={btnSecondary} title="Reinicia a conversa e o histórico do contato selecionado">
@@ -286,16 +327,34 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
           {contacts.map((c) => (
             <div
               key={c.id}
-              className={`flex items-center gap-2 rounded-full py-1.5 pl-3 pr-2 text-xs font-semibold transition-colors ${
+              className={`flex items-center gap-1.5 rounded-full py-1.5 pl-3 pr-2 text-xs font-semibold transition-colors ${
                 activeContactId === c.id
                   ? 'bg-[#00a884] text-white'
                   : 'bg-[#f0f2f5] text-[#667781] dark:bg-[#2a3942] dark:text-[#e9edef]'
               }`}
             >
-              <button onClick={() => setActiveContactId(c.id)} className="flex items-center gap-1.5">
+              <button
+                onClick={() => setActiveContactId(c.id)}
+                className="flex items-center gap-1.5"
+                title={c.sandbox_source_instance ? `Importado da conta: ${accountLabel(c.sandbox_source_instance)}` : 'Contato de teste manual (sem conta real associada)'}
+              >
                 <User size={12} />
                 {c.contact_name || c.contact_phone || 'Sem nome'}
               </button>
+              {c.sandbox_source_instance && (
+                <button
+                  onClick={() => toggleRealSend(c)}
+                  title={`Conta: ${accountLabel(c.sandbox_source_instance)} — ${c.sandbox_real_send_enabled ? 'envio real ligado, clique para desligar' : 'envio real desligado, clique para ligar'}`}
+                  className={`flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                    c.sandbox_real_send_enabled
+                      ? 'bg-emerald-500 text-white'
+                      : activeContactId === c.id ? 'bg-white/20 text-white' : 'bg-[#e6e9ec] text-[#667781] dark:bg-[#334650]'
+                  }`}
+                >
+                  <Radio size={9} />
+                  {c.sandbox_real_send_enabled ? 'real' : 'seguro'}
+                </button>
+              )}
               <button
                 onClick={() => removeContact(c.id)}
                 disabled={removeBusyId === c.id}
@@ -336,6 +395,9 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
                     onChange={(e) => searchRealContacts(e.target.value)}
                   />
                 </div>
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Contatos importados aqui já entram com envio real de WhatsApp ligado — desligue no indicador do contato se quiser só testar a lógica sem notificar a pessoa de verdade.
+                </p>
                 {searchBusy && <p className="text-xs text-[#667781]">Buscando...</p>}
                 {!searchBusy && searchQuery.trim().length >= 2 && searchResults.length === 0 && (
                   <p className="text-xs text-[#667781]">Nenhum contato encontrado em contas conectadas.</p>
@@ -345,7 +407,7 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
                     <button
                       key={c.id}
                       disabled={addContactBusy}
-                      onClick={() => createContact(c.contact_name || c.contact_phone || 'Sem nome', c.contact_phone || '')}
+                      onClick={() => createContact(c.contact_name || c.contact_phone || 'Sem nome', c.contact_phone || '', c.instance_name)}
                       className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]"
                     >
                       <span className="dark:text-[#e9edef]">{c.contact_name || 'Sem nome'} · {c.contact_phone}</span>
@@ -380,7 +442,7 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
               <p className="text-sm font-bold dark:text-[#e9edef]">
                 Conversa de teste {activeContact && <span className="font-normal text-[#667781]">· {activeContact.contact_name || activeContact.contact_phone}</span>}
               </p>
-              <p className="text-xs text-[#667781]">Fale com o bot como se fosse o cliente. A IA responde de verdade; nada sai para o WhatsApp real.</p>
+              <p className="text-xs text-[#667781]">Fale com o bot como se fosse o cliente. A IA responde de verdade.</p>
             </div>
             <button
               onClick={() => {
@@ -394,9 +456,16 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
               Configurar gatilho
             </button>
           </div>
-          <div className="border-b border-[#f0f2f5] bg-amber-50 px-5 py-2 text-xs text-amber-700 dark:border-[#2a3942] dark:bg-amber-900/20 dark:text-amber-400">
-            O bot só responde se a conta <b>Sandbox de testes</b> tiver um gatilho configurado apontando para um fluxo — igual a qualquer conta WhatsApp real.
-          </div>
+          {activeContact?.sandbox_real_send_enabled ? (
+            <div className="flex items-center gap-2 border-b border-[#f0f2f5] bg-red-50 px-5 py-2 text-xs font-semibold text-red-700 dark:border-[#2a3942] dark:bg-red-900/20 dark:text-red-400">
+              <Radio size={12} />
+              Envio real ligado — as mensagens desta conversa chegam de verdade no WhatsApp de {activeContact.contact_name || activeContact.contact_phone}, pela conta {accountLabel(activeContact.sandbox_source_instance)}.
+            </div>
+          ) : (
+            <div className="border-b border-[#f0f2f5] bg-amber-50 px-5 py-2 text-xs text-amber-700 dark:border-[#2a3942] dark:bg-amber-900/20 dark:text-amber-400">
+              O bot só responde se a conta <b>Sandbox de testes</b> tiver um gatilho configurado apontando para um fluxo — igual a qualquer conta WhatsApp real. Envio real desligado — nada sai pro WhatsApp de verdade nesta conversa.
+            </div>
+          )}
           <div className="flex-1 space-y-1 overflow-y-auto p-4">
             {messages.length === 0 && (
               <p className="py-8 text-center text-sm text-[#667781]">Nenhuma mensagem ainda. Envie algo abaixo para começar.</p>
@@ -489,26 +558,21 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
                 )}
               </div>
 
-              <button
-                onClick={submitShopifyOrder}
-                disabled={orderBusy || !orderForm.customerName || !orderForm.phone || !orderForm.address || !orderForm.country || !orderItems.length}
-                className={btnPrimary}
-              >
-                {orderBusy ? <Loader2 size={14} className="animate-spin" /> : <ShoppingCart size={14} />}
-                Simular pedido
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={submitShopifyOrder}
+                  disabled={orderBusy || !orderForm.customerName || !orderForm.phone || !orderForm.address || !orderForm.country || !orderItems.length}
+                  className={btnPrimary}
+                >
+                  {orderBusy ? <Loader2 size={14} className="animate-spin" /> : <ShoppingCart size={14} />}
+                  Simular pedido
+                </button>
+                <button onClick={fillPlaceholderOrder} disabled={orderBusy} className={btnSecondary} title="Preenche o formulário com dados de teste, usando o telefone do contato selecionado">
+                  <FlaskConical size={14} />
+                  Preencher com dados de teste
+                </button>
+              </div>
             </div>
-          </div>
-
-          <div className="rounded-xl bg-white p-5 shadow-sm dark:bg-[#111b21]">
-            <h4 className="mb-2 text-sm font-semibold dark:text-[#e9edef]">Simulação rápida</h4>
-            <p className="mb-3 text-xs text-[#667781]">
-              Cria um pedido e carrinho de teste com dados genéricos, sem formulário. Útil para testar rapidamente a fila de Pedidos.
-            </p>
-            <button onClick={onCreateSimulation} disabled={simulationBusy} className={btnSecondary}>
-              {simulationBusy ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />}
-              Criar simulação
-            </button>
           </div>
         </div>
       </div>

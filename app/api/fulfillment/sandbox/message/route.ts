@@ -105,6 +105,9 @@ export async function POST(req: NextRequest) {
       typeof body.conversationId === 'string' ? body.conversationId : undefined
     )
     const remoteJid = String(conversation.wa_id)
+    const realSendInstanceName = conversation.sandbox_real_send_enabled && conversation.sandbox_source_instance
+      ? String(conversation.sandbox_source_instance)
+      : undefined
 
     const { error: insertError } = await supabaseAdmin.from('messages').insert({
       conversation_id: conversation.id,
@@ -128,6 +131,7 @@ export async function POST(req: NextRequest) {
       conversationId: conversation.id,
       incomingMessage: text,
       isSandbox: true,
+      realSendInstanceName,
     }
 
     const flowRun = await checkActiveFlowRun(SANDBOX_INSTANCE_NAME, remoteJid)
