@@ -18,6 +18,7 @@ import {
   type SendStatus,
 } from '@/types'
 import OrderEditModal from './order-edit-modal'
+import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
@@ -202,6 +203,10 @@ export default function OrdersSection({
           const canSubmit = !hasLead && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
           const isBusy = busyId === order.id
           const accountLabel = accounts.find((a) => a.instanceName === (order.assigned_instance_name || order.instance_name))?.label
+          const isSandboxOrder = (order.assigned_instance_name || order.instance_name) === SANDBOX_INSTANCE_NAME
+          // Sandbox test orders can re-run the confirmation trigger repeatedly; real
+          // simulations (not tied to the sandbox) stay blocked from ever sending.
+          const canResend = order.source === 'shopify' && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
 
           return (
             <div
@@ -232,12 +237,12 @@ export default function OrdersSection({
               </div>
               {/* Quick actions — stop propagation so they don't open the modal */}
               <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                {order.source === 'shopify' && !order.confirmation_message_sent_at && (
+                {canResend && (
                   <button
                     onClick={() => onResendConfirmation(order.id)}
-                    disabled={isBusy || order.is_simulation}
+                    disabled={isBusy || (order.is_simulation && !isSandboxOrder)}
                     className="rounded-lg p-2 text-[#667781] hover:bg-[#f0f2f5] disabled:opacity-40 dark:hover:bg-[#2a3942]"
-                    title="Enviar confirmação WA"
+                    title="Rodar gatilho de confirmação"
                   >
                     {isBusy ? <Loader2 size={14} className="animate-spin" /> : <MessageCircle size={14} />}
                   </button>

@@ -12,6 +12,7 @@ import {
   type DeliveryStatus,
   type SendStatus,
 } from '@/types'
+import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
@@ -52,6 +53,10 @@ export default function OrderEditModal({
   const canSubmit = !hasLead && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
   const canCancelLocal = !hasLead && order.status === 'pending_operator' && order.source === 'manual'
   const accountLabel = accounts.find((a) => a.instanceName === (order.assigned_instance_name || order.instance_name))?.label
+  const isSandboxOrder = (order.assigned_instance_name || order.instance_name) === SANDBOX_INSTANCE_NAME
+  // Sandbox test orders can re-run the confirmation trigger repeatedly; real
+  // simulations (not tied to the sandbox) stay blocked from ever sending.
+  const canResend = order.source === 'shopify' && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
 
   async function handleUpdate(patch: Parameters<typeof onUpdateStatus>[1]) {
     setBusy(true)
@@ -210,17 +215,17 @@ export default function OrderEditModal({
             </div>
             {order.source === 'shopify' && (
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">WhatsApp</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">Gatilho de confirmação</p>
                 {order.confirmation_message_sent_at ? (
                   <>
-                    <p className="text-sm text-[#00a884]">✓ Confirmação enviada</p>
+                    <p className="text-sm text-[#00a884]">✓ Disparado</p>
                     <p className="mt-0.5 text-xs text-[#667781]">
                       {new Date(order.confirmation_message_sent_at).toLocaleString('pt-BR')}
                     </p>
                   </>
                 ) : order.confirmation_message_error ? (
                   <p className="text-sm text-red-500" title={order.confirmation_message_error ?? undefined}>
-                    Falhou ao enviar
+                    {order.confirmation_message_error}
                   </p>
                 ) : (
                   <p className="text-sm text-[#667781]">Pendente</p>
@@ -232,14 +237,14 @@ export default function OrderEditModal({
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-2 px-6 py-4">
             {busy && <Loader2 size={16} className="animate-spin text-[#00a884]" />}
-            {order.source === 'shopify' && (
+            {canResend && (
               <button
                 onClick={handleResend}
-                disabled={busy || order.is_simulation}
+                disabled={busy || (order.is_simulation && !isSandboxOrder)}
                 className={btnSecondary}
-                title="Reenviar confirmação por WhatsApp"
+                title="Roda o gatilho 'Pedido Shopify criado' novamente para este pedido"
               >
-                <MessageCircle size={14} />Confirmação WA
+                <MessageCircle size={14} />Rodar gatilho
               </button>
             )}
             {canSubmit && (

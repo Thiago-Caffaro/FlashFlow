@@ -227,13 +227,19 @@ export default function SandboxPanel({ products, simulationBusy, onCreateSimulat
       body: JSON.stringify({ ...orderForm, items, conversationId: orderContactId }),
     }).then(getJson)
     showMsg(
-      json.ok ? 'Pedido Shopify simulado criado. Verifique a aba Pedidos e o chat sandbox.' : (json.error ?? 'Erro ao simular pedido'),
+      json.ok
+        ? (orderContactId ? 'Pedido Shopify simulado criado — abrindo a conversa do contato.' : 'Pedido Shopify simulado criado. Verifique a aba Pedidos.')
+        : (json.error ?? 'Erro ao simular pedido'),
       !json.ok,
     )
     if (json.ok) {
       setOrderForm(emptyOrderForm)
       setOrderItems([])
-      await loadChat()
+      // Switch the chat panel to the order's contact so the confirmation
+      // triggered by the flow is immediately visible, instead of silently
+      // landing in whichever contact happened to be selected before.
+      if (orderContactId) setActiveContactId(orderContactId)
+      else await loadChat()
       await onRefresh()
     }
     setOrderBusy(false)
