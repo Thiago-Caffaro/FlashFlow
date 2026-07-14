@@ -185,7 +185,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
       await fetch(`/api/accounts/${account.instanceName}`, { method: 'DELETE' })
       await refreshAccounts()
       if (activeAccount?.instanceName === account.instanceName) {
-        const remaining = accounts.filter((a) => a.instanceName !== account.instanceName)
+        const remaining = accounts.filter((a) => a.instanceName !== account.instanceName && !a.isSandbox)
         if (remaining[0]) setActiveAccount(remaining[0])
       }
     } finally {
@@ -414,7 +414,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
 
         {activeAccount && open && (
           <div className="absolute right-0 top-full mt-1 z-50 min-w-[180px] rounded-xl bg-white dark:bg-[#233138] border border-[#d1d7db] dark:border-[#2a3942] shadow-lg overflow-hidden">
-            {accounts.map((acc) => (
+            {accounts.filter((acc) => !acc.isSandbox).map((acc) => (
               <div
                 key={acc.instanceName}
                 onMouseEnter={() => setHoveredName(acc.instanceName)}

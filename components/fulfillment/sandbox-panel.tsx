@@ -287,6 +287,7 @@ export default function SandboxPanel({ products, accounts, onRefresh }: SandboxP
   }
 
   const activeContact = contacts.find((c) => c.id === activeContactId) ?? null
+  const sandboxAccount = accounts.find((a) => a.isSandbox) ?? null
 
   return (
     <div className="space-y-6">
@@ -485,6 +486,12 @@ export default function SandboxPanel({ products, accounts, onRefresh }: SandboxP
               {chatBusy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
             </button>
           </div>
+          {sandboxAccount && (
+            <div className="flex items-center gap-1.5 border-t border-[#f0f2f5] px-4 py-2 text-xs text-[#667781] dark:border-[#2a3942] dark:text-[#8696a0]">
+              <FlaskConical size={12} className="shrink-0 text-[#00a884]" />
+              Conta de teste: <span className="font-semibold text-[#111b21] dark:text-[#e9edef]">{sandboxAccount.label}</span>
+            </div>
+          )}
         </div>
 
         {/* Simular pedido Shopify */}

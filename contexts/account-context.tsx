@@ -42,8 +42,12 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           const found = fetched.find((a) => a.instanceName === savedName)
           if (found) return found
         }
-        // Fallback to first open account, then first account
-        return fetched.find((a) => a.state === 'open') ?? fetched[0] ?? null
+        // Fallback to first open account, then first account. The sandbox
+        // account always reports state 'open' but must never be auto-picked
+        // as if it were a normal account — it's only reachable explicitly
+        // (e.g. via the sandbox screen's "Configurar gatilho" shortcut).
+        const selectable = fetched.filter((a) => !a.isSandbox)
+        return selectable.find((a) => a.state === 'open') ?? selectable[0] ?? null
       })
 
       return fetched

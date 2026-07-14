@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -50,6 +51,9 @@ export async function DELETE(
   { params }: { params: Promise<{ name: string }> }
 ) {
   const { name } = await params
+  if (name === SANDBOX_INSTANCE_NAME) {
+    return NextResponse.json({ ok: false, error: 'A conta de sandbox não pode ser removida' }, { status: 403 })
+  }
   console.log(`[DELETE accounts] iniciando remoção de "${name}"`)
 
   try {
@@ -135,11 +139,38 @@ export async function DELETE(
       console.log(`[DELETE accounts] ${conversations.length} conversa(s) e mensagens removidos`)
     }
 
-    // ── 9. ai_provider_keys (somente se for a última conta) ────────────────────
+    // ── 9. fulfillment_orders / shopify_abandoned_checkouts ─────────────────────
+    // These are Shopify/FenixCOD business records, not chat data — deleting the
+    // account must not destroy order history. Just clear the routing so they
+    // fall back to unassigned, same as conversation_id ON DELETE SET NULL above,
+    // instead of being left pointing at an account that no longer exists.
+    const { error: ordersInstanceErr } = await supabaseAdmin
+      .from('fulfillment_orders')
+      .update({ assigned_instance_name: null, instance_name: '' })
+      .eq('instance_name', name)
+    if (ordersInstanceErr) console.error('[DELETE accounts] fulfillment_orders (instance_name):', ordersInstanceErr.message)
+    const { error: ordersAssignedErr } = await supabaseAdmin
+      .from('fulfillment_orders')
+      .update({ assigned_instance_name: null, instance_name: '' })
+      .eq('assigned_instance_name', name)
+    if (ordersAssignedErr) console.error('[DELETE accounts] fulfillment_orders (assigned_instance_name):', ordersAssignedErr.message)
+    if (!ordersInstanceErr && !ordersAssignedErr) console.log('[DELETE accounts] fulfillment_orders desvinculados')
+
+    const { error: checkoutsErr } = await supabaseAdmin
+      .from('shopify_abandoned_checkouts')
+      .update({ assigned_instance_name: null })
+      .eq('assigned_instance_name', name)
+    if (checkoutsErr) console.error('[DELETE accounts] shopify_abandoned_checkouts:', checkoutsErr.message)
+    else console.log('[DELETE accounts] shopify_abandoned_checkouts desvinculados')
+
+    // ── 10. ai_provider_keys (somente se for a última conta real) ───────────────
+    // Sandbox never counts here — it's a permanent fixture, not a real account,
+    // so its presence must not block cleanup when the last real account goes.
     const { count: remainingAccounts } = await supabaseAdmin
       .from('accounts')
       .select('*', { count: 'exact', head: true })
       .neq('instance_name', name)
+      .eq('is_sandbox', false)
     if (remainingAccounts === 0) {
       const { error: keysErr } = await supabaseAdmin.from('ai_provider_keys').delete().neq('provider', '')
       if (keysErr) console.error('[DELETE accounts] ai_provider_keys:', keysErr.message)
@@ -148,7 +179,7 @@ export async function DELETE(
       console.log(`[DELETE accounts] ai_provider_keys mantidas (${remainingAccounts} conta(s) restante(s))`)
     }
 
-    // ── 10. accounts ───────────────────────────────────────────────────────────
+    // ── 11. accounts ───────────────────────────────────────────────────────────
     const { error: accErr } = await supabaseAdmin.from('accounts').delete().eq('instance_name', name)
     if (accErr) console.error('[DELETE accounts] accounts:', accErr.message)
     else console.log(`[DELETE accounts] conta "${name}" removida com sucesso`)
