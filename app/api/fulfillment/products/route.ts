@@ -74,10 +74,23 @@ export async function PUT(req: NextRequest) {
   const body = await req.json()
   const id = String(body.id ?? '')
   if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
+
   const parsed = parseProductPatch(body, true)
   if ('error' in parsed) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 })
   if (!Object.keys(parsed.patch).length) {
     return NextResponse.json({ ok: false, error: 'Nenhum campo para atualizar' }, { status: 400 })
+  }
+
+  const { data: mirror } = await supabaseAdmin
+    .from('shopify_products')
+    .select('id')
+    .eq('local_product_id', id)
+    .maybeSingle()
+  if (mirror) {
+    return NextResponse.json({
+      ok: false,
+      error: 'Este produto é espelhado do catálogo Shopify; edite pela tela de produtos reais.',
+    }, { status: 409 })
   }
   const { data, error } = await supabaseAdmin
     .from('fulfillment_products')

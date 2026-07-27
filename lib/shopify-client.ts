@@ -42,6 +42,22 @@ export function verifyShopifyWebhookHmac(rawBody: string, hmacHeader: string | n
   return actual.length === expected.length && timingSafeEqual(actual, expected)
 }
 
+function parseNextPageInfo(linkHeader: string | null): string | null {
+  if (!linkHeader) return null
+  const match = linkHeader
+    .split(',')
+    .map((part) => part.trim())
+    .find((part) => part.endsWith('rel="next"'))
+  if (!match) return null
+  const urlMatch = match.match(/<([^>]+)>/)
+  if (!urlMatch) return null
+  try {
+    return new URL(urlMatch[1]).searchParams.get('page_info')
+  } catch {
+    return null
+  }
+}
+
 function parseBody(raw: string): unknown {
   if (!raw) return null
   try {
@@ -62,7 +78,10 @@ export class ShopifyClient {
     this.apiVersion = credentials.apiVersion ?? process.env.SHOPIFY_ADMIN_API_VERSION ?? DEFAULT_API_VERSION
   }
 
-  private async request<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
+  private async requestRaw<T>(
+    path: string,
+    params: Record<string, string | number | undefined> = {}
+  ): Promise<{ body: T; response: Response }> {
     const url = new URL(`https://${this.shopDomain}/admin/api/${this.apiVersion}${path}`)
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== '') url.searchParams.set(key, String(value))
@@ -79,7 +98,12 @@ export class ShopifyClient {
     if (!response.ok) {
       throw new ShopifyApiError(`Shopify respondeu HTTP ${response.status}`, response.status, body)
     }
-    return body as T
+    return { body: body as T, response }
+  }
+
+  private async request<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
+    const { body } = await this.requestRaw<T>(path, params)
+    return body
   }
 
   getRecentOrders(options: ShopifyRequestOptions = {}) {
@@ -97,6 +121,23 @@ export class ShopifyClient {
       limit: options.limit ?? 50,
       updated_at_min: options.updatedAtMin,
     })
+  }
+
+  // Cursor-based pagination for /products.json — once page_info is used, it
+  // cannot be combined with other filters (Shopify Admin REST API rule), so
+  // subsequent pages only pass limit + page_info.
+  async getProductsPage(options: { limit?: number; pageInfo?: string } = {}): Promise<{
+    products: unknown[]
+    nextPageInfo: string | null
+  }> {
+    const params = options.pageInfo
+      ? { limit: options.limit ?? 50, page_info: options.pageInfo }
+      : { limit: options.limit ?? 50 }
+    const { body, response } = await this.requestRaw<{ products?: unknown[] }>('/products.json', params)
+    return {
+      products: body.products ?? [],
+      nextPageInfo: parseNextPageInfo(response.headers.get('Link')),
+    }
   }
 
   getInventoryLevels(inventoryItemIds: string[]) {

@@ -1,11 +1,21 @@
 import 'server-only'
-import { decryptSecret } from './ai-crypto'
 import { sendWhatsAppText } from './whatsapp-text'
-import { ShopifyClient, normalizeShopDomain } from './shopify-client'
-import { submitFulfillmentOrder, FulfillmentOrderSubmissionError } from './fulfillment-service'
+import { normalizeShopDomain } from './shopify-client'
+import { submitFulfillmentOrder, FulfillmentOrderSubmissionError, recordOrderEvent } from './fulfillment-service'
 import { executeFlow } from './flow-engine'
 import { supabaseAdmin } from './supabase-admin'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
+import { normalizePhone } from './phone'
+import { syncShopifyProductsForIntegration } from './shopify-products-service'
+import {
+  SHOPIFY_INTEGRATION_PUBLIC_SELECT,
+  decodeShopifyAdminToken,
+  decodeShopifyWebhookSecret,
+  shopifyClientFromIntegration,
+  loadShopifyIntegrationForWebhook,
+  listActiveShopifyIntegrations,
+  type ShopifyIntegrationCredentialRow,
+} from './shopify-integration-store'
 import {
   ABANDONED_CHECKOUT_STATUSES,
   COMMERCIAL_STATUSES,
@@ -14,28 +24,19 @@ import {
   type AbandonedCheckoutStatus,
   type CommercialStatus,
   type DeliveryStatus,
+  type FulfillmentOrder,
   type SendStatus,
 } from '@/types'
 
-export const SHOPIFY_INTEGRATION_PUBLIC_SELECT =
-  'id, shop_name, shop_domain, default_country, active, oauth_connected, confirmation_message_template, recovery_message_template, created_at, updated_at'
-
-export type ShopifyIntegrationCredentialRow = {
-  id: string
-  shop_name: string
-  shop_domain: string
-  encrypted_admin_token: string
-  admin_token_iv: string
-  admin_token_auth_tag: string
-  encrypted_webhook_secret: string | null
-  webhook_secret_iv: string | null
-  webhook_secret_auth_tag: string | null
-  default_country: string
-  active: boolean
-  oauth_connected: boolean
-  confirmation_message_template: string | null
-  recovery_message_template: string | null
+export {
+  SHOPIFY_INTEGRATION_PUBLIC_SELECT,
+  decodeShopifyAdminToken,
+  decodeShopifyWebhookSecret,
+  shopifyClientFromIntegration,
+  loadShopifyIntegrationForWebhook,
+  listActiveShopifyIntegrations,
 }
+export type { ShopifyIntegrationCredentialRow }
 
 type ShopifyIntegrationContext = {
   id: string
@@ -150,13 +151,6 @@ function interpolateTemplate(template: string, vars: Record<string, string>): st
   return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? '')
 }
 
-function normalizePhone(value: unknown): string {
-  const raw = stringValue(value)
-  if (!raw) return ''
-  const digits = raw.replace(/\D/g, '')
-  return digits.length >= 8 ? digits : raw
-}
-
 function customerName(order: Record<string, unknown>, shipping: Record<string, unknown>, billing: Record<string, unknown>) {
   const customer = asRecord(order.customer)
   const firstLast = [customer.first_name, customer.last_name].map((value) => stringValue(value)).filter(Boolean).join(' ')
@@ -198,50 +192,6 @@ export async function assignConfirmationAccount(country: string): Promise<string
 
   if (error) throw new Error(`Falha ao selecionar conta WhatsApp: ${error.message}`)
   return typeof data?.instance_name === 'string' ? data.instance_name : null
-}
-
-export function decodeShopifyAdminToken(row: ShopifyIntegrationCredentialRow): string {
-  return decryptSecret(row.encrypted_admin_token, row.admin_token_iv, row.admin_token_auth_tag)
-}
-
-export function decodeShopifyWebhookSecret(row: ShopifyIntegrationCredentialRow): string {
-  if (row.oauth_connected || !row.encrypted_webhook_secret) {
-    const secret = process.env.SHOPIFY_CLIENT_SECRET
-    if (!secret) throw new Error('SHOPIFY_CLIENT_SECRET not configured — add it in Settings → Shopify or set the env var')
-    return secret
-  }
-  return decryptSecret(row.encrypted_webhook_secret, row.webhook_secret_iv!, row.webhook_secret_auth_tag!)
-}
-
-export function shopifyClientFromIntegration(row: ShopifyIntegrationCredentialRow): ShopifyClient {
-  return new ShopifyClient({
-    shopDomain: row.shop_domain,
-    adminToken: decodeShopifyAdminToken(row),
-  })
-}
-
-export async function loadShopifyIntegrationForWebhook(shopDomain: string): Promise<ShopifyIntegrationCredentialRow | null> {
-  const normalizedDomain = normalizeShopDomain(shopDomain)
-  const { data, error } = await supabaseAdmin
-    .from('shopify_integrations')
-    .select('*')
-    .eq('shop_domain', normalizedDomain)
-    .eq('active', true)
-    .maybeSingle()
-  if (error) throw new Error(`Falha ao carregar integração Shopify: ${error.message}`)
-  return data as ShopifyIntegrationCredentialRow | null
-}
-
-export async function listActiveShopifyIntegrations(id?: string): Promise<ShopifyIntegrationCredentialRow[]> {
-  let query = supabaseAdmin
-    .from('shopify_integrations')
-    .select('*')
-    .eq('active', true)
-    .order('shop_domain')
-  if (id) query = query.eq('id', id)
-  const { data, error } = await query
-  if (error) throw new Error(`Falha ao listar integrações Shopify: ${error.message}`)
-  return (data ?? []) as ShopifyIntegrationCredentialRow[]
 }
 
 export async function mapShopifyOrderPayload(
@@ -595,8 +545,34 @@ export async function maybeAutoSubmitConfirmedOrder(orderId: string) {
   }
 }
 
+function normalizeAndValidateItems(value: unknown): FulfillmentOrder['items'] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error('Pedido precisa ter ao menos 1 item')
+  return value.map((raw) => {
+    if (!raw || typeof raw !== 'object') throw new Error('Item de pedido inválido')
+    const record = raw as Record<string, unknown>
+    const sku = String(record.sku ?? '').trim()
+    const name = String(record.name ?? '').trim()
+    const quantity = Number(record.quantity)
+    const unitPrice = Number(record.unit_price)
+    if (!sku) throw new Error('Item de pedido sem SKU')
+    if (!name) throw new Error('Item de pedido sem nome')
+    if (!Number.isFinite(quantity) || quantity < 1) throw new Error('Quantidade do item inválida')
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Preço unitário do item inválido')
+    const normalizedQuantity = Math.max(1, Math.trunc(quantity))
+    return {
+      product_id: String(record.product_id ?? ''),
+      sku,
+      name,
+      quantity: normalizedQuantity,
+      unit_price: unitPrice,
+      total: normalizedQuantity * unitPrice,
+    }
+  })
+}
+
 export async function updateConfirmationOrder(orderId: string, body: Record<string, unknown>) {
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  let previousTotal: number | null = null
 
   if (body.commercial_status !== undefined) {
     if (!isCommercialStatus(body.commercial_status)) throw new Error('Status comercial inválido')
@@ -617,6 +593,20 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
     patch.assigned_instance_name = assigned || null
     patch.instance_name = assigned
   }
+  if (body.items !== undefined) {
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from('fulfillment_orders')
+      .select('lead_number, total')
+      .eq('id', orderId)
+      .single()
+    if (existingError || !existing) throw new Error('Pedido não encontrado')
+    if (existing.lead_number) throw new Error('Pedido já foi enviado para o FenixCOD — itens não podem mais ser alterados')
+
+    const items = normalizeAndValidateItems(body.items)
+    previousTotal = Number(existing.total)
+    patch.items = items
+    patch.total = items.reduce((sum, item) => sum + item.total, 0)
+  }
 
   if (Object.keys(patch).length === 1) throw new Error('Nenhuma alteração válida informada')
 
@@ -627,6 +617,14 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
     .select()
     .single()
   if (error || !data) throw new Error(error?.message ?? 'Falha ao atualizar pedido')
+
+  if (patch.items !== undefined) {
+    await recordOrderEvent(orderId, 'items_updated', {
+      previous_total: previousTotal,
+      new_total: patch.total,
+      item_count: (patch.items as unknown[]).length,
+    })
+  }
 
   const autoSubmit = await maybeAutoSubmitConfirmedOrder(orderId)
   return { order: autoSubmit.order ?? data, autoSubmit }
@@ -716,10 +714,12 @@ export async function syncShopifyData(options: {
   integrationId?: string
   limit?: number
   sendConfirmation?: boolean
+  syncProducts?: boolean
 } = {}) {
   const integrations = await listActiveShopifyIntegrations(options.integrationId)
   let importedOrders = 0
   let importedCheckouts = 0
+  let importedProducts = 0
   const errors: Array<{ shopDomain: string; error: string }> = []
 
   for (const integration of integrations) {
@@ -748,12 +748,24 @@ export async function syncShopifyData(options: {
         error: `checkouts: ${error instanceof Error ? error.message : 'Erro inesperado'}`,
       })
     }
+    if (options.syncProducts ?? true) {
+      try {
+        const result = await syncShopifyProductsForIntegration(integration)
+        importedProducts += result.imported
+      } catch (error) {
+        errors.push({
+          shopDomain: integration.shop_domain,
+          error: `products: ${error instanceof Error ? error.message : 'Erro inesperado'}`,
+        })
+      }
+    }
   }
 
   return {
     integrations: integrations.length,
     importedOrders,
     importedCheckouts,
+    importedProducts,
     errors,
   }
 }

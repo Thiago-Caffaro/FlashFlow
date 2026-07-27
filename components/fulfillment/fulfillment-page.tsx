@@ -9,6 +9,7 @@ import {
   FulfillmentProduct,
   ShopifyAbandonedCheckout,
   ShopifyIntegration,
+  ShopifyProduct,
   type AbandonedCheckoutStatus,
   type CommercialStatus,
   type DeliveryStatus,
@@ -19,6 +20,8 @@ import QueuePanel from '@/components/fulfillment/queue-panel'
 import ShopifyConfig from '@/components/fulfillment/shopify-config'
 import FenixCODConfig, { Integration } from '@/components/fulfillment/fenixcod-config'
 import SandboxPanel from '@/components/fulfillment/sandbox-panel'
+import ShopifyProductsModal from '@/components/fulfillment/shopify-products-modal'
+import { ShopifyProductFormValues } from '@/components/fulfillment/shopify-product-form'
 
 type Tab = 'queue' | 'orders' | 'settings' | 'sandbox'
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
@@ -35,19 +38,24 @@ export default function FulfillmentPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [shopifyIntegrations, setShopifyIntegrations] = useState<ShopifyIntegration[]>([])
   const [abandonedCheckouts, setAbandonedCheckouts] = useState<ShopifyAbandonedCheckout[]>([])
+  const [shopifyProducts, setShopifyProducts] = useState<ShopifyProduct[]>([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [syncBusy, setSyncBusy] = useState(false)
+  const [shopifyProductsBusyId, setShopifyProductsBusyId] = useState<string | null>(null)
+  const [shopifyProductsSyncBusy, setShopifyProductsSyncBusy] = useState(false)
+  const [showShopifyProducts, setShowShopifyProducts] = useState(false)
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
 
   const load = useCallback(async () => {
-    const [accountRes, orderRes, productRes, integrationRes, shopifyIntRes, checkoutRes] = await Promise.all([
+    const [accountRes, orderRes, productRes, integrationRes, shopifyIntRes, checkoutRes, shopifyProductRes] = await Promise.all([
       fetch('/api/accounts', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/orders', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/products', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/integrations', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/shopify/integrations', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/shopify/abandoned-checkouts', { cache: 'no-store' }).then(getJson),
+      fetch('/api/fulfillment/shopify/products', { cache: 'no-store' }).then(getJson),
     ])
     setAccounts(accountRes.accounts ?? [])
     if (orderRes.ok) setOrders(orderRes.orders ?? [])
@@ -55,6 +63,7 @@ export default function FulfillmentPage() {
     if (integrationRes.ok) setIntegrations(integrationRes.integrations ?? [])
     if (shopifyIntRes.ok) setShopifyIntegrations(shopifyIntRes.integrations ?? [])
     if (checkoutRes.ok) setAbandonedCheckouts(checkoutRes.checkouts ?? [])
+    if (shopifyProductRes.ok) setShopifyProducts(shopifyProductRes.products ?? [])
     setLoading(false)
   }, [])
 
@@ -82,6 +91,35 @@ export default function FulfillmentPage() {
         ? ` FenixCOD: ${json.autoSubmit.error}`
         : ''
     showResult(json, `Pedido atualizado.${autoMsg}`)
+    await load()
+    setBusyId(null)
+  }
+
+  async function bulkUpdateOrderStatus(ids: string[], status: CommercialStatus) {
+    setBusyId('bulk')
+    const json = await fetch('/api/fulfillment/orders/bulk-status', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, commercial_status: status }),
+    }).then(getJson)
+    showResult(
+      json,
+      json.ok
+        ? `${json.succeeded ?? 0} pedido(s) atualizado(s).${json.failed ? ` ${json.failed} falharam.` : ''}`
+        : 'Falha ao atualizar pedidos selecionados.',
+    )
+    await load()
+    setBusyId(null)
+  }
+
+  async function updateOrderItems(id: string, items: FulfillmentOrder['items']) {
+    setBusyId(id)
+    const json = await fetch(`/api/fulfillment/orders/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    }).then(getJson)
+    showResult(json, 'Itens do pedido atualizados.')
     await load()
     setBusyId(null)
   }
@@ -141,6 +179,49 @@ export default function FulfillmentPage() {
     )
     await load()
     setSyncBusy(false)
+  }
+
+  async function toggleKeepLocalCopy(product: ShopifyProduct, enabled: boolean) {
+    setShopifyProductsBusyId(product.id)
+    const json = await fetch('/api/fulfillment/shopify/products', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: product.id, keep_local_copy: enabled }),
+    }).then(getJson)
+    showResult(json, enabled ? 'Cópia local ativada.' : 'Cópia local desativada.')
+    await load()
+    setShopifyProductsBusyId(null)
+  }
+
+  async function saveShopifyProduct(values: ShopifyProductFormValues, editingId: string | null) {
+    setShopifyProductsBusyId(editingId ?? 'new')
+    const json = await fetch('/api/fulfillment/shopify/products', {
+      method: editingId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...values, id: editingId ?? undefined, price: Number(values.price) }),
+    }).then(getJson)
+    showResult(json, editingId ? 'Produto atualizado.' : 'Produto adicionado.')
+    await load()
+    setShopifyProductsBusyId(null)
+  }
+
+  async function deleteShopifyProduct(product: ShopifyProduct) {
+    setShopifyProductsBusyId(product.id)
+    const json = await fetch(`/api/fulfillment/shopify/products?id=${encodeURIComponent(product.id)}`, { method: 'DELETE' }).then(getJson)
+    showResult(json, product.source === 'manual' ? 'Produto excluído.' : 'Produto ocultado.')
+    await load()
+    setShopifyProductsBusyId(null)
+  }
+
+  async function syncShopifyProducts() {
+    setShopifyProductsSyncBusy(true)
+    const json = await fetch('/api/fulfillment/shopify/products/sync', { method: 'POST' }).then(getJson)
+    showResult(
+      json,
+      json.ok ? `Produtos sincronizados: ${json.importedProducts ?? 0}.` : 'Falha ao sincronizar produtos.',
+    )
+    await load()
+    setShopifyProductsSyncBusy(false)
   }
 
   const queueCount = orders.filter((o) => o.commercial_status === 'Não responde' && !o.is_simulation).length
@@ -224,8 +305,10 @@ export default function FulfillmentPage() {
             orders={orders}
             accounts={accounts}
             onUpdateOrderStatus={updateOrderStatus}
+            onUpdateItems={updateOrderItems}
             onOrderAction={orderAction}
             onResendConfirmation={resendConfirmation}
+            onBulkUpdateStatus={bulkUpdateOrderStatus}
           />
         )}
 
@@ -240,10 +323,12 @@ export default function FulfillmentPage() {
             shopifyIntegrationsCount={shopifyIntegrations.length}
             onSyncShopify={syncShopify}
             onUpdateOrderStatus={updateOrderStatus}
+            onUpdateItems={updateOrderItems}
             onOrderAction={orderAction}
             onResendConfirmation={resendConfirmation}
             onUpdateCheckout={updateCheckout}
             onRecoverCheckout={recoverCheckout}
+            onOpenShopifyProducts={() => setShowShopifyProducts(true)}
           />
         )}
 
@@ -258,7 +343,6 @@ export default function FulfillmentPage() {
             />
             <FenixCODConfig
               integrations={integrations}
-              products={products}
               onRefresh={load}
             />
           </div>
@@ -269,9 +353,29 @@ export default function FulfillmentPage() {
             products={products}
             accounts={accounts}
             onRefresh={load}
+            shopifyProducts={shopifyProducts}
+            shopifyProductsBusyId={shopifyProductsBusyId}
+            shopifyProductsSyncBusy={shopifyProductsSyncBusy}
+            onSyncShopifyProducts={syncShopifyProducts}
+            onToggleKeepLocalCopy={toggleKeepLocalCopy}
+            onSaveShopifyProduct={saveShopifyProduct}
+            onDeleteShopifyProduct={deleteShopifyProduct}
           />
         )}
       </main>
+
+      {showShopifyProducts && (
+        <ShopifyProductsModal
+          products={shopifyProducts}
+          busyId={shopifyProductsBusyId}
+          syncBusy={shopifyProductsSyncBusy}
+          onClose={() => setShowShopifyProducts(false)}
+          onSync={syncShopifyProducts}
+          onToggleKeepLocalCopy={toggleKeepLocalCopy}
+          onSave={saveShopifyProduct}
+          onDelete={deleteShopifyProduct}
+        />
+      )}
     </div>
   )
 }

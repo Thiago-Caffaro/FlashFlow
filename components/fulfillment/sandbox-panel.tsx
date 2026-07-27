@@ -1,16 +1,38 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FlaskConical, GitBranch, Loader2, Plus, Radio, RotateCcw, Search, Send, ShoppingCart, Trash2, User, X } from 'lucide-react'
-import { Account, FulfillmentProduct, Message } from '@/types'
+import {
+  ChevronDown, ChevronUp, FlaskConical, GitBranch, Loader2, Package, Pencil, Plus,
+  Radio, RotateCcw, Save, Search, Send, ShoppingCart, Trash2, User, X,
+} from 'lucide-react'
+import { Account, FulfillmentProduct, Message, ShopifyProduct } from '@/types'
 import MessageBubble from '@/components/chat/message-bubble'
 import { SANDBOX_INSTANCE_NAME, SANDBOX_REMOTE_JID } from '@/lib/sandbox'
+import ShopifyProductsTable from './shopify-products-table'
+import ShopifyProductForm, { ShopifyProductFormValues } from './shopify-product-form'
 
 interface SandboxPanelProps {
   products: FulfillmentProduct[]
   accounts: Account[]
   onRefresh: () => Promise<void>
+  shopifyProducts: ShopifyProduct[]
+  shopifyProductsBusyId: string | null
+  shopifyProductsSyncBusy: boolean
+  onSyncShopifyProducts: () => Promise<void>
+  onToggleKeepLocalCopy: (product: ShopifyProduct, enabled: boolean) => Promise<void>
+  onSaveShopifyProduct: (values: ShopifyProductFormValues, editingId: string | null) => Promise<void>
+  onDeleteShopifyProduct: (product: ShopifyProduct) => Promise<void>
 }
+
+type FictitiousProductForm = {
+  country: string
+  sku: string
+  name: string
+  price: string
+  currency: string
+}
+
+const emptyFictitiousProductForm: FictitiousProductForm = { country: '', sku: '', name: '', price: '', currency: 'EUR' }
 
 interface SandboxContact {
   id: string
@@ -54,7 +76,11 @@ async function getJson(res: Response) {
   return res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))
 }
 
-export default function SandboxPanel({ products, accounts, onRefresh }: SandboxPanelProps) {
+export default function SandboxPanel({
+  products, accounts, onRefresh,
+  shopifyProducts, shopifyProductsBusyId, shopifyProductsSyncBusy,
+  onSyncShopifyProducts, onToggleKeepLocalCopy, onSaveShopifyProduct, onDeleteShopifyProduct,
+}: SandboxPanelProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
@@ -77,6 +103,74 @@ export default function SandboxPanel({ products, accounts, onRefresh }: SandboxP
   const [manualPhone, setManualPhone] = useState('')
   const [addContactBusy, setAddContactBusy] = useState(false)
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null)
+
+  const [showFictitiousForm, setShowFictitiousForm] = useState(false)
+  const [fictitiousForm, setFictitiousForm] = useState<FictitiousProductForm>(emptyFictitiousProductForm)
+  const [editingFictitiousId, setEditingFictitiousId] = useState<string | null>(null)
+  const [fictitiousBusy, setFictitiousBusy] = useState<string | null>(null)
+  const [fictitiousCountryFilter, setFictitiousCountryFilter] = useState('')
+  const [showRealProductForm, setShowRealProductForm] = useState(false)
+  const [editingRealProduct, setEditingRealProduct] = useState<ShopifyProduct | null>(null)
+  const [realProductFormBusy, setRealProductFormBusy] = useState(false)
+
+  // Products with keep_local_copy enabled already have a fulfillment_products
+  // mirror auto-maintained by the sync — hide those from the manual
+  // "fictícios" CRUD below so nobody edits a mirror through the wrong form.
+  const mirroredProductIds = new Set(
+    shopifyProducts.map((p) => p.local_product_id).filter((id): id is string => Boolean(id))
+  )
+  const fictitiousProducts = products.filter((p) => !mirroredProductIds.has(p.id))
+  const filteredFictitiousProducts = fictitiousCountryFilter
+    ? fictitiousProducts.filter((p) => p.country === fictitiousCountryFilter)
+    : fictitiousProducts
+  const fictitiousCountries = [...new Set(fictitiousProducts.map((p) => p.country))].sort()
+
+  async function saveFictitiousProduct() {
+    setFictitiousBusy('form')
+    const res = await fetch('/api/fulfillment/products', {
+      method: editingFictitiousId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...fictitiousForm, id: editingFictitiousId ?? undefined, price: Number(fictitiousForm.price) }),
+    })
+    const json = await getJson(res)
+    showMsg(
+      json.ok ? (editingFictitiousId ? 'Produto atualizado.' : 'Produto salvo.') : (json.error ?? 'Erro ao salvar produto.'),
+      !json.ok,
+    )
+    if (json.ok) {
+      setFictitiousForm(emptyFictitiousProductForm)
+      setEditingFictitiousId(null)
+      setShowFictitiousForm(false)
+      await onRefresh()
+    }
+    setFictitiousBusy(null)
+  }
+
+  async function toggleFictitiousProduct(product: FulfillmentProduct) {
+    setFictitiousBusy(product.id)
+    const res = product.active
+      ? await fetch(`/api/fulfillment/products?id=${encodeURIComponent(product.id)}`, { method: 'DELETE' })
+      : await fetch('/api/fulfillment/products', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: product.id, active: true }),
+      })
+    const json = await getJson(res)
+    showMsg(
+      json.ok ? (product.active ? 'Produto desativado.' : 'Produto reativado.') : (json.error ?? 'Erro.'),
+      !json.ok,
+    )
+    if (json.ok) await onRefresh()
+    setFictitiousBusy(null)
+  }
+
+  async function handleSaveRealProduct(values: ShopifyProductFormValues) {
+    setRealProductFormBusy(true)
+    await onSaveShopifyProduct(values, editingRealProduct?.id ?? null)
+    setRealProductFormBusy(false)
+    setShowRealProductForm(false)
+    setEditingRealProduct(null)
+  }
 
   function accountLabel(instanceName: string | null) {
     if (!instanceName) return ''
@@ -580,6 +674,202 @@ export default function SandboxPanel({ products, accounts, onRefresh }: SandboxP
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Produtos */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Produtos fictícios (manuais, só para uso no sandbox) */}
+        <div className="space-y-3">
+          <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
+            <button
+              onClick={() => setShowFictitiousForm((v) => !v)}
+              className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-[#f8f9fa] dark:hover:bg-[#1a2730]"
+            >
+              <FlaskConical size={16} className="shrink-0 text-[#00a884]" />
+              <div className="flex-1">
+                <p className="text-sm font-bold dark:text-[#e9edef]">
+                  {editingFictitiousId ? 'Editar produto fictício' : 'Produtos fictícios'}
+                </p>
+                <p className="text-xs text-[#667781]">
+                  {fictitiousProducts.length > 0
+                    ? `${fictitiousProducts.length} produto(s) fictício(s) — só usados aqui no sandbox`
+                    : 'Nenhum produto fictício ainda — clique para criar'}
+                </p>
+              </div>
+              {showFictitiousForm ? <ChevronUp size={16} className="text-[#667781]" /> : <ChevronDown size={16} className="text-[#667781]" />}
+            </button>
+
+            {showFictitiousForm && (
+              <div className="space-y-3 border-t border-[#f0f2f5] px-5 py-4 dark:border-[#2a3942]">
+                <input
+                  className={inputClass}
+                  placeholder="País, ex: SPAIN"
+                  value={fictitiousForm.country}
+                  onChange={(e) => setFictitiousForm((f) => ({ ...f, country: e.target.value.toUpperCase() }))}
+                />
+                <input
+                  className={inputClass}
+                  placeholder="SKU"
+                  value={fictitiousForm.sku}
+                  onChange={(e) => setFictitiousForm((f) => ({ ...f, sku: e.target.value }))}
+                />
+                <input
+                  className={inputClass}
+                  placeholder="Nome do produto"
+                  value={fictitiousForm.name}
+                  onChange={(e) => setFictitiousForm((f) => ({ ...f, name: e.target.value }))}
+                />
+                <div className="grid grid-cols-[1fr_80px] gap-2">
+                  <input
+                    className={inputClass}
+                    placeholder="Preço"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={fictitiousForm.price}
+                    onChange={(e) => setFictitiousForm((f) => ({ ...f, price: e.target.value }))}
+                  />
+                  <input
+                    className={inputClass}
+                    placeholder="EUR"
+                    value={fictitiousForm.currency}
+                    onChange={(e) => setFictitiousForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
+                  />
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={saveFictitiousProduct}
+                    disabled={fictitiousBusy === 'form' || !fictitiousForm.country || !fictitiousForm.sku || !fictitiousForm.name || !fictitiousForm.price}
+                    className={btnPrimary}
+                  >
+                    {fictitiousBusy === 'form' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    {editingFictitiousId ? 'Salvar' : 'Adicionar produto'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingFictitiousId(null)
+                      setFictitiousForm(emptyFictitiousProductForm)
+                      setShowFictitiousForm(false)
+                    }}
+                    className={btnSecondary}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl bg-white p-4 shadow-sm dark:bg-[#111b21]">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="flex-1 text-sm font-semibold dark:text-[#e9edef]">
+                Produtos fictícios ({fictitiousProducts.length})
+              </span>
+              {fictitiousCountries.length > 1 && (
+                <select
+                  value={fictitiousCountryFilter}
+                  onChange={(e) => setFictitiousCountryFilter(e.target.value)}
+                  className={`${inputClass} w-auto`}
+                >
+                  <option value="">Todos</option>
+                  {fictitiousCountries.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              )}
+            </div>
+            {filteredFictitiousProducts.length === 0 ? (
+              <p className="py-4 text-center text-sm text-[#667781]">Nenhum produto fictício cadastrado.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {filteredFictitiousProducts.map((product) => (
+                  <div key={product.id} className="flex items-center gap-2 rounded-lg border border-[#f0f2f5] px-3 py-2.5 dark:border-[#2a3942]">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold dark:text-[#e9edef]">{product.name}</p>
+                      <p className="text-xs text-[#667781]">{product.country} · {product.sku}</p>
+                    </div>
+                    <span className="shrink-0 text-sm font-semibold text-[#00a884]">
+                      {product.currency} {Number(product.price).toFixed(2)}
+                    </span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${product.active ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-[#f0f2f5] text-[#667781] dark:bg-[#2a3942] dark:text-[#aebac1]'}`}>
+                      {product.active ? 'ativo' : 'inativo'}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setEditingFictitiousId(product.id)
+                        setFictitiousForm({
+                          country: product.country,
+                          sku: product.sku,
+                          name: product.name,
+                          price: String(product.price),
+                          currency: product.currency,
+                        })
+                        setShowFictitiousForm(true)
+                      }}
+                      className="rounded-lg p-1.5 text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      onClick={() => toggleFictitiousProduct(product)}
+                      disabled={fictitiousBusy === product.id}
+                      className={`rounded-lg p-1.5 disabled:opacity-40 ${product.active ? 'text-red-500 hover:bg-red-50' : 'text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]'}`}
+                      title={product.active ? 'Desativar' : 'Reativar'}
+                    >
+                      {fictitiousBusy === product.id
+                        ? <Loader2 size={13} className="animate-spin" />
+                        : product.active ? <Trash2 size={13} /> : <RotateCcw size={13} />}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Produtos reais (Shopify) — mesmas capacidades disponíveis no botão da aba Pedidos */}
+        <div className="space-y-3">
+          <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
+            <div className="flex flex-wrap items-center gap-2 px-5 py-4">
+              <Package size={16} className="shrink-0 text-[#00a884]" />
+              <div className="flex-1">
+                <p className="text-sm font-bold dark:text-[#e9edef]">Produtos reais (Shopify)</p>
+                <p className="text-xs text-[#667781]">
+                  {shopifyProducts.length > 0 ? `${shopifyProducts.length} produto(s) sincronizado(s)` : 'Nenhum produto sincronizado ainda'}
+                </p>
+              </div>
+              <button onClick={onSyncShopifyProducts} disabled={shopifyProductsSyncBusy} className={btnSecondary}>
+                {shopifyProductsSyncBusy ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                Sincronizar
+              </button>
+              <button
+                onClick={() => { setEditingRealProduct(null); setShowRealProductForm((v) => !v) }}
+                className={btnPrimary}
+              >
+                <Plus size={14} />Adicionar
+              </button>
+            </div>
+
+            {showRealProductForm && (
+              <div className="border-t border-[#f0f2f5] px-5 py-4 dark:border-[#2a3942]">
+                <ShopifyProductForm
+                  editing={editingRealProduct}
+                  busy={realProductFormBusy}
+                  onSave={handleSaveRealProduct}
+                  onCancel={() => { setShowRealProductForm(false); setEditingRealProduct(null) }}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl bg-white p-4 shadow-sm dark:bg-[#111b21]">
+            <ShopifyProductsTable
+              products={shopifyProducts}
+              busyId={shopifyProductsBusyId}
+              onToggleKeepLocalCopy={onToggleKeepLocalCopy}
+              onEdit={(product) => { setEditingRealProduct(product); setShowRealProductForm(true) }}
+              onDelete={onDeleteShopifyProduct}
+            />
           </div>
         </div>
       </div>
