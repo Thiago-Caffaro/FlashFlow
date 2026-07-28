@@ -7,6 +7,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import { normalizePhone } from './phone'
 import { syncShopifyProductsForIntegration } from './shopify-products-service'
+import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
 import {
   SHOPIFY_INTEGRATION_PUBLIC_SELECT,
   decodeShopifyAdminToken,
@@ -144,7 +145,8 @@ function numberValue(value: unknown, fallback = 0): number {
 }
 
 function normalizeCountry(value: unknown, fallback: string): string {
-  return stringValue(value, fallback).toUpperCase()
+  const upper = stringValue(value, fallback).toUpperCase()
+  return ISO_TO_FULFILLMENT_COUNTRY[upper] ?? upper
 }
 
 function interpolateTemplate(template: string, vars: Record<string, string>): string {

@@ -184,6 +184,46 @@ describe('shopify-confirmation-service', () => {
     ])
   })
 
+  it('maps Shopify ISO country codes to the FenixCOD country name', async () => {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({
+      shipping_address: {
+        name: 'Cliente Teste',
+        address1: 'Rua A',
+        city: 'Lisboa',
+        province: 'Lisboa',
+        zip: '1000-001',
+        country_code: 'ES',
+        phone: '+351 900 000 000',
+      },
+    }), {
+      id: 'shopify-1',
+      shopDomain: 'example.myshopify.com',
+      defaultCountry: 'PORTUGAL',
+    }, 'wa-1')
+
+    expect(mapped.country).toBe('SPAIN')
+  })
+
+  it('leaves unmapped country codes as-is (countries FenixCOD does not operate in)', async () => {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({
+      shipping_address: {
+        name: 'Cliente Teste',
+        address1: 'Rua A',
+        city: 'Lisboa',
+        province: 'Lisboa',
+        zip: '1000-001',
+        country_code: 'HK',
+        phone: '+351 900 000 000',
+      },
+    }), {
+      id: 'shopify-1',
+      shopDomain: 'example.myshopify.com',
+      defaultCountry: 'PORTUGAL',
+    }, 'wa-1')
+
+    expect(mapped.country).toBe('HK')
+  })
+
   it('upserts Shopify orders idempotently without submitting to Fenix', async () => {
     const account = queryBuilder({ data: { instance_name: 'wa-country' }, error: null })
     const existing = queryBuilder({

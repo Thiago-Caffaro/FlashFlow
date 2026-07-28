@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { encryptSecret, decryptSecret } from '@/lib/ai-crypto'
 import { normalizeShopDomain } from '@/lib/shopify-client'
 import { SHOPIFY_INTEGRATION_PUBLIC_SELECT } from '@/lib/shopify-confirmation-service'
+import { ensureOrderCreateWebhookRegisteredWithToken } from '@/lib/shopify-webhook-setup'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 
@@ -129,8 +130,18 @@ export async function GET(req: NextRequest) {
 
   if (dbError) return fail(`Erro ao salvar integração: ${dbError.message}`)
 
+  // Step 5.5 — Register the orders/create webhook so new orders arrive in
+  // real time, instead of relying on the merchant to configure this manually
+  // in Shopify Admin → Settings → Notifications. Best-effort: a failure here
+  // doesn't block the OAuth connection — the store still works via manual sync.
+  let webhookWarning = ''
+  const webhookResult = await ensureOrderCreateWebhookRegisteredWithToken(normalizedDomain, accessToken)
+  if (!webhookResult.ok) webhookWarning = webhookResult.error ?? 'Falha ao registrar webhook de pedidos'
+
   // Step 6 — Success redirect, clear state cookie
-  const res = NextResponse.redirect(`${appBaseUrl}/fulfillment?shopifyConnected=1`)
+  const successParams = new URLSearchParams({ shopifyConnected: '1' })
+  if (webhookWarning) successParams.set('shopifyWebhookWarning', webhookWarning)
+  const res = NextResponse.redirect(`${appBaseUrl}/fulfillment?${successParams.toString()}`)
   res.cookies.set('shopify_oauth_state', '', { maxAge: 0, path: '/' })
   return res
 }

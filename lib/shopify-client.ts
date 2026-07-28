@@ -106,6 +106,25 @@ export class ShopifyClient {
     return body
   }
 
+  private async post<T>(path: string, payload: unknown): Promise<T> {
+    const url = new URL(`https://${this.shopDomain}/admin/api/${this.apiVersion}${path}`)
+    const response = await fetch(url, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': this.adminToken,
+      },
+      body: JSON.stringify(payload),
+    })
+    const body = parseBody(await response.text())
+    if (!response.ok) {
+      throw new ShopifyApiError(`Shopify respondeu HTTP ${response.status}`, response.status, body)
+    }
+    return body as T
+  }
+
   getRecentOrders(options: ShopifyRequestOptions = {}) {
     return this.request<{ orders?: unknown[] }>('/orders.json', {
       status: 'any',
@@ -152,6 +171,18 @@ export class ShopifyClient {
       created_at_min: options.createdAtMin,
       updated_at_min: options.updatedAtMin,
       status: 'open',
+    })
+  }
+
+  listWebhooks(options: { topic?: string } = {}) {
+    return this.request<{ webhooks?: Array<{ id: number; topic: string; address: string }> }>('/webhooks.json', {
+      topic: options.topic,
+    })
+  }
+
+  createWebhook(topic: string, address: string, format: 'json' | 'xml' = 'json') {
+    return this.post<{ webhook?: { id: number; topic: string; address: string } }>('/webhooks.json', {
+      webhook: { topic, address, format },
     })
   }
 }
