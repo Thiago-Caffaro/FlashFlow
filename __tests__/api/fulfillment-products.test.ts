@@ -108,7 +108,8 @@ describe('/api/fulfillment/products writes', () => {
 
   it('allows PUT that resends the same (unchanged) country', async () => {
     const builder = queryBuilder({ data: { id: 'product-1', country: 'PT', name: 'Produto' }, error: null })
-    mockFrom.mockReturnValue(builder)
+    const mirrorBuilder = queryBuilder({ data: null, error: null })
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : builder))
 
     const response = await PUT(request('http://localhost/api/fulfillment/products', {
       id: 'product-1',
@@ -122,7 +123,8 @@ describe('/api/fulfillment/products writes', () => {
   it('soft deletes a product by setting active=false', async () => {
     const product = { id: 'product-1', active: false }
     const builder = queryBuilder({ data: product, error: null })
-    mockFrom.mockReturnValue(builder)
+    const mirrorBuilder = queryBuilder({ data: null, error: null })
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : builder))
 
     const response = await DELETE(new NextRequest('http://localhost/api/fulfillment/products?id=product-1'))
     const body = await response.json()
@@ -130,5 +132,27 @@ describe('/api/fulfillment/products writes', () => {
     expect(response.status).toBe(200)
     expect(builder.updates[0]).toMatchObject({ active: false })
     expect(body).toMatchObject({ ok: true, product })
+  })
+
+  it('rejects deleting a local product mirrored from Shopify', async () => {
+    const mirrorBuilder = queryBuilder({ data: { id: 'shopify-product-1' }, error: null })
+    const productBuilder = queryBuilder({ data: { id: 'product-1' }, error: null })
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : productBuilder))
+
+    const response = await DELETE(new NextRequest('http://localhost/api/fulfillment/products?id=product-1'))
+
+    expect(response.status).toBe(409)
+    expect(productBuilder.updates).toHaveLength(0)
+  })
+
+  it('fails closed when the Shopify mirror lookup fails during deletion', async () => {
+    const mirrorBuilder = queryBuilder({ data: null, error: { message: 'mirror lookup failed' } })
+    const productBuilder = queryBuilder({ data: { id: 'product-1' }, error: null })
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : productBuilder))
+
+    const response = await DELETE(new NextRequest('http://localhost/api/fulfillment/products?id=product-1'))
+
+    expect(response.status).toBe(500)
+    expect(productBuilder.updates).toHaveLength(0)
   })
 })

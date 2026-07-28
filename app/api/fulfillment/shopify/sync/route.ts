@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     const result = await syncShopifyData({
       integrationId: typeof body.integrationId === 'string' ? body.integrationId : undefined,
       limit: Number.isFinite(Number(body.limit)) ? Math.min(250, Math.max(1, Number(body.limit))) : 50,
-      sendConfirmation: body.sendConfirmation !== false,
+      sendConfirmation: false,
     })
     return NextResponse.json({ ok: true, ...result })
   } catch (error) {

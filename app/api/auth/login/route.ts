@@ -5,7 +5,9 @@ import { checkLoginRateLimit, getClientIp } from '@/lib/login-rate-limit'
 
 /** Compara em tempo constante, sem lançar exceção quando os tamanhos diferem. */
 function safeEqual(a: string, b: string): boolean {
-  return a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b))
+  const actual = Buffer.from(a, 'utf8')
+  const expected = Buffer.from(b, 'utf8')
+  return actual.length === expected.length && timingSafeEqual(actual, expected)
 }
 
 export async function POST(req: NextRequest) {

@@ -69,6 +69,11 @@ describe('POST /api/auth/login', () => {
     expect(diffLength.status).toBe(401)
   })
 
+  it('rejects Unicode with a different UTF-8 byte length without throwing', async () => {
+    const res = await loginPost(loginReq({ username: '\u00e1dmin', password: 'super-secret-pass' }, '2.0.0.7'))
+    expect(res.status).toBe(401)
+  })
+
   it('rejeita quando username ou password estão ausentes', async () => {
     const res = await loginPost(loginReq({ username: 'admin' }, '2.0.0.4'))
     expect(res.status).toBe(400)

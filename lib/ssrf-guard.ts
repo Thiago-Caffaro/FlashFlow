@@ -1,118 +1,192 @@
 import 'server-only'
 import { promises as dns } from 'node:dns'
+import { request as httpsRequest } from 'node:https'
 import net from 'node:net'
+import { sniffImageType } from './image-validation'
 
 const BLOCKED_HOSTNAMES = new Set(['localhost', '0.0.0.0', '::1', '[::1]'])
+const MAX_REDIRECTS = 3
+const DEFAULT_TIMEOUT_MS = 8_000
+const DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 
-function isPrivateIPv4(ip: string): boolean {
-  const parts = ip.split('.').map(Number)
-  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return true
-  const [a, b] = parts
-  if (a === 10) return true
-  if (a === 172 && b >= 16 && b <= 31) return true
-  if (a === 192 && b === 168) return true
-  if (a === 127) return true
-  if (a === 169 && b === 254) return true // link-local, inclui metadata de nuvem (169.254.169.254)
-  if (a === 0) return true
-  return false
+const blockedAddresses = new net.BlockList()
+blockedAddresses.addSubnet('0.0.0.0', 8, 'ipv4')
+blockedAddresses.addSubnet('10.0.0.0', 8, 'ipv4')
+blockedAddresses.addSubnet('100.64.0.0', 10, 'ipv4')
+blockedAddresses.addSubnet('127.0.0.0', 8, 'ipv4')
+blockedAddresses.addSubnet('169.254.0.0', 16, 'ipv4')
+blockedAddresses.addSubnet('172.16.0.0', 12, 'ipv4')
+blockedAddresses.addSubnet('192.0.0.0', 24, 'ipv4')
+blockedAddresses.addSubnet('192.0.2.0', 24, 'ipv4')
+blockedAddresses.addSubnet('192.168.0.0', 16, 'ipv4')
+blockedAddresses.addSubnet('198.18.0.0', 15, 'ipv4')
+blockedAddresses.addSubnet('198.51.100.0', 24, 'ipv4')
+blockedAddresses.addSubnet('203.0.113.0', 24, 'ipv4')
+blockedAddresses.addSubnet('224.0.0.0', 4, 'ipv4')
+blockedAddresses.addSubnet('240.0.0.0', 4, 'ipv4')
+blockedAddresses.addSubnet('::', 128, 'ipv6')
+blockedAddresses.addSubnet('::1', 128, 'ipv6')
+blockedAddresses.addSubnet('2001:db8::', 32, 'ipv6')
+blockedAddresses.addSubnet('fc00::', 7, 'ipv6')
+blockedAddresses.addSubnet('fe80::', 10, 'ipv6')
+blockedAddresses.addSubnet('ff00::', 8, 'ipv6')
+
+const globalIpv6Addresses = new net.BlockList()
+globalIpv6Addresses.addSubnet('2000::', 3, 'ipv6')
+
+type SafeOutboundTarget = {
+  url: URL
+  address: string
+  family: 4 | 6
 }
 
-function isPrivateIPv6(ip: string): boolean {
-  const lower = ip.toLowerCase()
-  if (lower === '::1' || lower === '::') return true
-  if (lower.startsWith('fe80:')) return true // link-local
-  if (lower.startsWith('fc') || lower.startsWith('fd')) return true // unique local
-  if (lower.startsWith('::ffff:')) {
-    const v4 = lower.split(':').pop() ?? ''
-    if (v4.includes('.')) return isPrivateIPv4(v4)
+function isPublicIp(address: string): boolean {
+  const family = net.isIP(address)
+  if (family === 4) return !blockedAddresses.check(address, 'ipv4')
+  if (family === 6) {
+    return globalIpv6Addresses.check(address, 'ipv6') &&
+      !blockedAddresses.check(address, 'ipv6')
   }
   return false
 }
 
-function isPrivateIp(ip: string): boolean {
-  const version = net.isIP(ip)
-  if (version === 4) return isPrivateIPv4(ip)
-  if (version === 6) return isPrivateIPv6(ip)
-  return true // não reconhecido — trata como inseguro por padrão
-}
-
-/**
- * Confirma que uma URL é segura para o servidor buscar (proteção contra
- * SSRF): exige HTTPS, resolve o hostname via DNS e rejeita qualquer IP
- * privado/loopback/link-local (inclusive o endpoint de metadata 169.254.169.254),
- * fechando a janela de DNS rebinding em que o hostname resolveria para um IP
- * público na hora da validação e para um IP interno na hora do fetch real —
- * aqui resolvemos e buscamos a partir do mesmo endereço já validado.
- */
-export async function isUrlSafeForOutboundFetch(rawUrl: string): Promise<boolean> {
+async function resolveSafeOutboundTarget(rawUrl: string): Promise<SafeOutboundTarget | null> {
   let url: URL
   try {
     url = new URL(rawUrl)
   } catch {
-    return false
+    return null
   }
-  if (url.protocol !== 'https:') return false
 
-  const hostname = url.hostname.toLowerCase()
-  if (BLOCKED_HOSTNAMES.has(hostname)) return false
+  if (url.protocol !== 'https:' || (url.port && url.port !== '443')) return null
+  if (url.username || url.password) return null
 
-  if (net.isIP(hostname)) {
-    return !isPrivateIp(hostname)
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, '')
+  if (!hostname || BLOCKED_HOSTNAMES.has(hostname)) return null
+
+  const literalFamily = net.isIP(hostname)
+  if (literalFamily) {
+    if (!isPublicIp(hostname)) return null
+    return { url, address: hostname, family: literalFamily === 6 ? 6 : 4 }
   }
 
   try {
     const records = await dns.lookup(hostname, { all: true, verbatim: true })
-    if (records.length === 0) return false
-    return records.every((r) => !isPrivateIp(r.address))
+    if (records.length === 0 || records.some((record) => !isPublicIp(record.address))) {
+      return null
+    }
+    const selected = records[0]
+    if (selected.family !== 4 && selected.family !== 6) return null
+    return { url, address: selected.address, family: selected.family }
   } catch {
-    return false
+    return null
   }
 }
 
-const MAX_REDIRECTS = 3
-const DEFAULT_TIMEOUT_MS = 8000
-const DEFAULT_MAX_BYTES = 8 * 1024 * 1024 // 8 MB
+export async function isUrlSafeForOutboundFetch(rawUrl: string): Promise<boolean> {
+  return (await resolveSafeOutboundTarget(rawUrl)) !== null
+}
+
+type PinnedResponse =
+  | { ok: true; status: number; headers: Record<string, string | string[] | undefined>; buffer: Buffer }
+  | { ok: false; reason: string }
+
+function headerValue(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? '' : value ?? ''
+}
+
+function requestPinned(
+  target: SafeOutboundTarget,
+  headers: Record<string, string> | undefined,
+  timeoutMs: number,
+  maxBytes: number
+): Promise<PinnedResponse> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (result: PinnedResponse) => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+
+    const request = httpsRequest({
+      protocol: 'https:',
+      hostname: target.address,
+      port: 443,
+      path: `${target.url.pathname}${target.url.search}`,
+      method: 'GET',
+      servername: net.isIP(target.url.hostname) ? undefined : target.url.hostname,
+      headers: {
+        ...headers,
+        Host: target.url.host,
+      },
+    }, (response) => {
+      const status = response.statusCode ?? 0
+      const responseHeaders = response.headers as Record<string, string | string[] | undefined>
+
+      if (status < 200 || status >= 300) {
+        response.resume()
+        finish({ ok: true, status, headers: responseHeaders, buffer: Buffer.alloc(0) })
+        return
+      }
+
+      const declaredLength = Number(headerValue(responseHeaders['content-length']))
+      if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+        response.destroy()
+        finish({ ok: false, reason: 'too_large' })
+        return
+      }
+
+      const chunks: Buffer[] = []
+      let totalBytes = 0
+      response.on('data', (chunk: Buffer | Uint8Array | string) => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        totalBytes += buffer.length
+        if (totalBytes > maxBytes) {
+          response.destroy()
+          finish({ ok: false, reason: 'too_large' })
+          return
+        }
+        chunks.push(buffer)
+      })
+      response.on('end', () => {
+        finish({
+          ok: true,
+          status,
+          headers: responseHeaders,
+          buffer: Buffer.concat(chunks, totalBytes),
+        })
+      })
+      response.on('error', () => finish({ ok: false, reason: 'fetch_failed' }))
+    })
+
+    request.setTimeout(timeoutMs, () => request.destroy(new Error('timeout')))
+    request.on('error', () => finish({ ok: false, reason: 'fetch_failed' }))
+    request.end()
+  })
+}
 
 export type SafeFetchResult =
   | { ok: true; buffer: Buffer; contentType: string }
   | { ok: false; reason: string }
 
-/**
- * Busca uma imagem externa com proteções contra SSRF: valida a URL (e cada
- * redirect, manualmente — nunca deixa o fetch seguir redirects sozinho),
- * timeout, limite de tamanho de resposta e exige Content-Type de imagem.
- */
 export async function fetchImageSafely(
   initialUrl: string,
   opts: { headers?: Record<string, string>; timeoutMs?: number; maxBytes?: number } = {}
 ): Promise<SafeFetchResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES
-
   let currentUrl = initialUrl
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    if (!(await isUrlSafeForOutboundFetch(currentUrl))) {
-      return { ok: false, reason: 'url_not_allowed' }
-    }
+    const target = await resolveSafeOutboundTarget(currentUrl)
+    if (!target) return { ok: false, reason: 'url_not_allowed' }
 
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-    let res: Response
-    try {
-      res = await fetch(currentUrl, {
-        headers: opts.headers,
-        redirect: 'manual',
-        signal: controller.signal,
-      })
-    } catch {
-      return { ok: false, reason: 'fetch_failed' }
-    } finally {
-      clearTimeout(timer)
-    }
+    const response = await requestPinned(target, opts.headers, timeoutMs, maxBytes)
+    if (!response.ok) return response
 
-    if (res.status >= 300 && res.status < 400) {
-      const location = res.headers.get('location')
+    if (response.status >= 300 && response.status < 400) {
+      const location = headerValue(response.headers.location)
       if (!location) return { ok: false, reason: 'redirect_without_location' }
       try {
         currentUrl = new URL(location, currentUrl).toString()
@@ -122,24 +196,25 @@ export async function fetchImageSafely(
       continue
     }
 
-    if (!res.ok) return { ok: false, reason: `http_${res.status}` }
+    if (response.status < 200 || response.status >= 300) {
+      return { ok: false, reason: `http_${response.status}` }
+    }
 
-    const contentType = res.headers.get('content-type') ?? ''
-    if (!contentType.toLowerCase().startsWith('image/')) {
+    const declaredContentType = headerValue(response.headers['content-type'])
+    if (!declaredContentType.toLowerCase().startsWith('image/')) {
       return { ok: false, reason: 'not_an_image' }
     }
 
-    const declaredLength = Number(res.headers.get('content-length') ?? '0')
-    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-      return { ok: false, reason: 'too_large' }
+    const sniffedContentType = sniffImageType(response.buffer)
+    if (!sniffedContentType) {
+      return { ok: false, reason: 'invalid_image_bytes' }
     }
 
-    const arrayBuffer = await res.arrayBuffer()
-    if (arrayBuffer.byteLength > maxBytes) {
-      return { ok: false, reason: 'too_large' }
+    return {
+      ok: true,
+      buffer: response.buffer,
+      contentType: sniffedContentType,
     }
-
-    return { ok: true, buffer: Buffer.from(arrayBuffer), contentType }
   }
 
   return { ok: false, reason: 'too_many_redirects' }

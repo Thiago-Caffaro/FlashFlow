@@ -1,156 +1,202 @@
-/**
- * Testes para lib/ssrf-guard.ts (P10 da varredura de segurança).
- */
+import { EventEmitter } from 'node:events'
+import { Readable } from 'node:stream'
 
-const dnsLookupMock = jest.fn()
+const mockDnsLookup = jest.fn()
+const mockHttpsRequest = jest.fn()
+
 jest.mock('node:dns', () => ({
-  promises: { lookup: (...args: unknown[]) => dnsLookupMock(...args) },
+  promises: { lookup: (...args: unknown[]) => mockDnsLookup(...args) },
+}))
+
+jest.mock('node:https', () => ({
+  request: (...args: unknown[]) => mockHttpsRequest(...args),
 }))
 
 import { fetchImageSafely, isUrlSafeForOutboundFetch } from '@/lib/ssrf-guard'
 
-const fetchMock = jest.fn()
-global.fetch = fetchMock
+type MockResponse = Readable & {
+  statusCode: number
+  headers: Record<string, string>
+}
+
+type MockRequest = EventEmitter & {
+  setTimeout: jest.Mock
+  destroy: jest.Mock
+  end: jest.Mock
+}
+
+const JPEG_BYTES = Buffer.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+])
+const PNG_BYTES = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+])
+
+function queueHttpsResponse({
+  status = 200,
+  headers = {},
+  body = Buffer.alloc(0),
+}: {
+  status?: number
+  headers?: Record<string, string>
+  body?: Buffer
+}) {
+  mockHttpsRequest.mockImplementationOnce((
+    _options: Record<string, unknown>,
+    onResponse: (response: MockResponse) => void
+  ) => {
+    const request = new EventEmitter() as MockRequest
+    request.setTimeout = jest.fn()
+    request.destroy = jest.fn((error?: Error) => {
+      if (error) request.emit('error', error)
+    })
+    request.end = jest.fn(() => {
+      const response = Readable.from(body.length ? [body] : []) as MockResponse
+      response.statusCode = status
+      response.headers = headers
+      onResponse(response)
+    })
+    return request
+  })
+}
 
 beforeEach(() => {
   jest.clearAllMocks()
 })
 
 describe('isUrlSafeForOutboundFetch', () => {
-  it('rejeita URLs que não sejam https', async () => {
+  it('rejects non-HTTPS and malformed URLs', async () => {
     expect(await isUrlSafeForOutboundFetch('http://example.com/x.jpg')).toBe(false)
     expect(await isUrlSafeForOutboundFetch('ftp://example.com/x.jpg')).toBe(false)
     expect(await isUrlSafeForOutboundFetch('file:///etc/passwd')).toBe(false)
+    expect(await isUrlSafeForOutboundFetch('not-a-url')).toBe(false)
   })
 
-  it('rejeita URL malformada', async () => {
-    expect(await isUrlSafeForOutboundFetch('não-e-uma-url')).toBe(false)
-  })
-
-  it('rejeita hostnames literais bloqueados', async () => {
+  it('rejects blocked hostnames and private or reserved literal IPs', async () => {
     expect(await isUrlSafeForOutboundFetch('https://localhost/x.jpg')).toBe(false)
-    expect(await isUrlSafeForOutboundFetch('https://0.0.0.0/x.jpg')).toBe(false)
-  })
-
-  it('rejeita IP literal privado/loopback na própria URL', async () => {
     expect(await isUrlSafeForOutboundFetch('https://127.0.0.1/x.jpg')).toBe(false)
     expect(await isUrlSafeForOutboundFetch('https://10.0.0.5/x.jpg')).toBe(false)
-    expect(await isUrlSafeForOutboundFetch('https://192.168.1.1/x.jpg')).toBe(false)
+    expect(await isUrlSafeForOutboundFetch('https://100.64.0.1/x.jpg')).toBe(false)
     expect(await isUrlSafeForOutboundFetch('https://169.254.169.254/latest/meta-data')).toBe(false)
+    expect(await isUrlSafeForOutboundFetch('https://192.0.2.1/x.jpg')).toBe(false)
   })
 
-  it('rejeita IP literal público (sem precisar de DNS)', async () => {
+  it('accepts a public literal IP without DNS', async () => {
     expect(await isUrlSafeForOutboundFetch('https://8.8.8.8/x.jpg')).toBe(true)
+    expect(mockDnsLookup).not.toHaveBeenCalled()
   })
 
-  it('rejeita hostname que resolve para IP privado (proteção contra DNS rebinding)', async () => {
-    dnsLookupMock.mockResolvedValue([{ address: '10.0.0.5', family: 4 }])
-    expect(await isUrlSafeForOutboundFetch('https://interno.exemplo.com/x.jpg')).toBe(false)
-  })
-
-  it('aceita hostname que resolve para IP público', async () => {
-    dnsLookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
-    expect(await isUrlSafeForOutboundFetch('https://cdn.exemplo.com/x.jpg')).toBe(true)
-  })
-
-  it('rejeita quando qualquer um dos IPs resolvidos é privado', async () => {
-    dnsLookupMock.mockResolvedValue([
+  it('rejects any hostname resolution containing a private IP', async () => {
+    mockDnsLookup.mockResolvedValue([
       { address: '93.184.216.34', family: 4 },
       { address: '127.0.0.1', family: 4 },
     ])
-    expect(await isUrlSafeForOutboundFetch('https://misto.exemplo.com/x.jpg')).toBe(false)
+    expect(await isUrlSafeForOutboundFetch('https://mixed.example.com/x.jpg')).toBe(false)
   })
 
-  it('rejeita quando a resolução DNS falha', async () => {
-    dnsLookupMock.mockRejectedValue(new Error('ENOTFOUND'))
-    expect(await isUrlSafeForOutboundFetch('https://nao-existe.invalido/x.jpg')).toBe(false)
+  it('accepts a hostname only when every resolved address is public', async () => {
+    mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
+    expect(await isUrlSafeForOutboundFetch('https://cdn.example.com/x.jpg')).toBe(true)
+  })
+
+  it('rejects DNS failures', async () => {
+    mockDnsLookup.mockRejectedValue(new Error('ENOTFOUND'))
+    expect(await isUrlSafeForOutboundFetch('https://missing.invalid/x.jpg')).toBe(false)
   })
 })
 
 describe('fetchImageSafely', () => {
-  it('retorna a imagem quando tudo é válido', async () => {
-    dnsLookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
-    fetchMock.mockResolvedValue({
-      status: 200,
-      ok: true,
+  it('pins the HTTPS connection to the validated IP and preserves SNI and Host', async () => {
+    mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
+    queueHttpsResponse({
       headers: {
-        get: (name: string) => (name === 'content-type' ? 'image/jpeg' : name === 'content-length' ? '4' : null),
+        'content-type': 'image/jpeg',
+        'content-length': String(JPEG_BYTES.length),
       },
-      arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+      body: JPEG_BYTES,
     })
 
-    const result = await fetchImageSafely('https://cdn.exemplo.com/x.jpg')
+    const result = await fetchImageSafely('https://cdn.example.com/x.jpg')
+
     expect(result.ok).toBe(true)
+    expect(mockHttpsRequest).toHaveBeenCalledTimes(1)
+    expect(mockHttpsRequest.mock.calls[0][0]).toMatchObject({
+      hostname: '93.184.216.34',
+      servername: 'cdn.example.com',
+      headers: { Host: 'cdn.example.com' },
+    })
     if (result.ok) {
       expect(result.contentType).toBe('image/jpeg')
-      expect(result.buffer.length).toBe(4)
+      expect(result.buffer).toEqual(JPEG_BYTES)
     }
   })
 
-  it('rejeita quando a URL não passa na validação SSRF (não chega a chamar fetch)', async () => {
+  it('does not open a request when the URL fails SSRF validation', async () => {
     const result = await fetchImageSafely('https://127.0.0.1/x.jpg')
     expect(result.ok).toBe(false)
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mockHttpsRequest).not.toHaveBeenCalled()
   })
 
-  it('segue um redirect válido e revalida a nova URL', async () => {
-    dnsLookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
-    fetchMock
-      .mockResolvedValueOnce({
-        status: 302,
-        ok: false,
-        headers: { get: (n: string) => (n === 'location' ? 'https://cdn2.exemplo.com/y.jpg' : null) },
-      })
-      .mockResolvedValueOnce({
-        status: 200,
-        ok: true,
-        headers: { get: (n: string) => (n === 'content-type' ? 'image/png' : null) },
-        arrayBuffer: async () => new Uint8Array([9]).buffer,
-      })
-
-    const result = await fetchImageSafely('https://cdn.exemplo.com/x.jpg')
-    expect(result.ok).toBe(true)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-  })
-
-  it('rejeita redirect para IP privado', async () => {
-    dnsLookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
-    fetchMock.mockResolvedValueOnce({
+  it('revalidates and pins every redirect target', async () => {
+    mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
+    queueHttpsResponse({
       status: 302,
+      headers: { location: 'https://cdn2.example.com/y.png' },
+    })
+    queueHttpsResponse({
+      headers: { 'content-type': 'image/png' },
+      body: PNG_BYTES,
+    })
+
+    const result = await fetchImageSafely('https://cdn.example.com/x.jpg')
+
+    expect(result.ok).toBe(true)
+    expect(mockDnsLookup).toHaveBeenCalledTimes(2)
+    expect(mockHttpsRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a redirect to a private address before the second request', async () => {
+    mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
+    queueHttpsResponse({
+      status: 302,
+      headers: { location: 'https://169.254.169.254/latest/meta-data' },
+    })
+
+    const result = await fetchImageSafely('https://cdn.example.com/x.jpg')
+
+    expect(result.ok).toBe(false)
+    expect(mockHttpsRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects non-image content types and invalid image bytes', async () => {
+    mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
+    queueHttpsResponse({
+      headers: { 'content-type': 'text/html' },
+      body: Buffer.from('<html>'),
+    })
+    await expect(fetchImageSafely('https://cdn.example.com/x.jpg')).resolves.toMatchObject({ ok: false })
+
+    queueHttpsResponse({
+      headers: { 'content-type': 'image/svg+xml' },
+      body: Buffer.from('<svg></svg>'),
+    })
+    await expect(fetchImageSafely('https://cdn.example.com/x.svg')).resolves.toEqual({
       ok: false,
-      headers: { get: (n: string) => (n === 'location' ? 'https://169.254.169.254/latest/meta-data' : null) },
+      reason: 'invalid_image_bytes',
     })
-
-    const result = await fetchImageSafely('https://cdn.exemplo.com/x.jpg')
-    expect(result.ok).toBe(false)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('rejeita quando o Content-Type retornado não é de imagem', async () => {
-    dnsLookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
-    fetchMock.mockResolvedValue({
-      status: 200,
-      ok: true,
-      headers: { get: (n: string) => (n === 'content-type' ? 'text/html' : null) },
-      arrayBuffer: async () => new Uint8Array([1]).buffer,
-    })
-
-    const result = await fetchImageSafely('https://cdn.exemplo.com/x.jpg')
-    expect(result.ok).toBe(false)
-  })
-
-  it('rejeita corpo maior que o limite declarado no Content-Length', async () => {
-    dnsLookupMock.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
-    fetchMock.mockResolvedValue({
-      status: 200,
-      ok: true,
+  it('rejects a declared body larger than the configured limit', async () => {
+    mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
+    queueHttpsResponse({
       headers: {
-        get: (n: string) => (n === 'content-type' ? 'image/jpeg' : n === 'content-length' ? String(50 * 1024 * 1024) : null),
+        'content-type': 'image/jpeg',
+        'content-length': String(50 * 1024 * 1024),
       },
-      arrayBuffer: async () => new ArrayBuffer(10),
+      body: JPEG_BYTES,
     })
 
-    const result = await fetchImageSafely('https://cdn.exemplo.com/x.jpg', { maxBytes: 1024 })
-    expect(result.ok).toBe(false)
+    const result = await fetchImageSafely('https://cdn.example.com/x.jpg', { maxBytes: 1_024 })
+    expect(result).toEqual({ ok: false, reason: 'too_large' })
   })
 })

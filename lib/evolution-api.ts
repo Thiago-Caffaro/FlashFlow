@@ -8,8 +8,39 @@ export const EVOLUTION_WEBHOOK_SECRET_HEADER = 'x-webhook-secret'
 export const MAX_EVOLUTION_WEBHOOK_BODY_BYTES = 15 * 1024 * 1024
 
 export function exceedsMaxEvolutionWebhookBodySize(contentLengthHeader: string | null): boolean {
+  if (contentLengthHeader === null) return false
   const contentLength = Number(contentLengthHeader ?? '0')
-  return Number.isFinite(contentLength) && contentLength > MAX_EVOLUTION_WEBHOOK_BODY_BYTES
+  return !Number.isFinite(contentLength) || contentLength < 0 || contentLength > MAX_EVOLUTION_WEBHOOK_BODY_BYTES
+}
+
+export async function readEvolutionWebhookBody(
+  request: Request,
+  maxBytes = MAX_EVOLUTION_WEBHOOK_BODY_BYTES
+): Promise<string | null> {
+  if (!request.body) return ''
+
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let totalBytes = 0
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+
+      totalBytes += value.byteLength
+      if (totalBytes > maxBytes) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), totalBytes).toString('utf8')
 }
 
 export const EVOLUTION_WEBHOOK_EVENTS = [

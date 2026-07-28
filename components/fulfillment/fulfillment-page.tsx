@@ -169,7 +169,7 @@ export default function FulfillmentPage() {
     const json = await fetch('/api/fulfillment/shopify/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sendConfirmation: true }),
+      body: JSON.stringify({ sendConfirmation: false }),
     }).then(getJson)
     showResult(
       json,

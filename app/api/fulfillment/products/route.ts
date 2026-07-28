@@ -100,11 +100,14 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  const { data: mirror } = await supabaseAdmin
+  const { data: mirror, error: mirrorError } = await supabaseAdmin
     .from('shopify_products')
     .select('id')
     .eq('local_product_id', id)
     .maybeSingle()
+  if (mirrorError) {
+    return NextResponse.json({ ok: false, error: mirrorError.message }, { status: 500 })
+  }
   if (mirror) {
     return NextResponse.json({
       ok: false,
@@ -126,6 +129,22 @@ export async function DELETE(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   const id = String(req.nextUrl.searchParams.get('id') ?? '')
   if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
+
+  const { data: mirror, error: mirrorError } = await supabaseAdmin
+    .from('shopify_products')
+    .select('id')
+    .eq('local_product_id', id)
+    .maybeSingle()
+  if (mirrorError) {
+    return NextResponse.json({ ok: false, error: mirrorError.message }, { status: 500 })
+  }
+  if (mirror) {
+    return NextResponse.json({
+      ok: false,
+      error: 'Este produto é espelhado do catálogo Shopify; altere a cópia local pela tela de produtos reais.',
+    }, { status: 409 })
+  }
+
   const { data, error } = await supabaseAdmin
     .from('fulfillment_products')
     .update({ active: false, updated_at: new Date().toISOString() })

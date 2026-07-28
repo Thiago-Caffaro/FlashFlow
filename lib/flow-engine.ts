@@ -3,14 +3,12 @@ import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTur
 import { decrypt } from './ai-crypto'
 import { getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
+import { fetchEvolution } from './evolution-api'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
-
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
 export interface FlowContext {
   instanceName: string
@@ -60,17 +58,25 @@ export function resolveRealSendTarget(ctx: FlowContext): string | undefined {
   return ctx.instanceName
 }
 
-async function sendWhatsApp(ctx: FlowContext, text: string) {
+export async function sendWhatsApp(ctx: FlowContext, text: string) {
   let waMessageId: string | null = null
   const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
-    const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${realSendTarget}`, {
+    const response = await fetchEvolution(`/message/sendText/${encodeURIComponent(realSendTarget)}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ number: ctx.remoteJid, text }),
-    })
-    const evoData = await res.json().catch(() => ({}))
-    waMessageId = evoData?.key?.id ?? null
+    }, 15_000)
+    if (!response.ok) {
+      throw new Error(`Falha ao enviar mensagem do fluxo (${response.status}): ${response.text.slice(0, 300)}`)
+    }
+    const record = response.body && typeof response.body === 'object'
+      ? response.body as Record<string, unknown>
+      : {}
+    const key = record.key && typeof record.key === 'object'
+      ? record.key as Record<string, unknown>
+      : {}
+    waMessageId = typeof key.id === 'string' ? key.id : null
   }
 
   await supabase.from('messages').insert({
@@ -89,17 +95,25 @@ async function sendWhatsApp(ctx: FlowContext, text: string) {
   }).eq('id', ctx.conversationId)
 }
 
-async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
+export async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
   let waMessageId: string | null = null
   const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
-    const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${realSendTarget}`, {
+    const response = await fetchEvolution(`/message/sendMedia/${encodeURIComponent(realSendTarget)}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ number: ctx.remoteJid, mediatype: 'image', media: imageUrl }),
-    })
-    const evoData = await res.json().catch(() => ({}))
-    waMessageId = evoData?.key?.id ?? null
+    }, 15_000)
+    if (!response.ok) {
+      throw new Error(`Falha ao enviar imagem do fluxo (${response.status}): ${response.text.slice(0, 300)}`)
+    }
+    const record = response.body && typeof response.body === 'object'
+      ? response.body as Record<string, unknown>
+      : {}
+    const key = record.key && typeof record.key === 'object'
+      ? record.key as Record<string, unknown>
+      : {}
+    waMessageId = typeof key.id === 'string' ? key.id : null
   }
 
   await supabase.from('messages').insert({

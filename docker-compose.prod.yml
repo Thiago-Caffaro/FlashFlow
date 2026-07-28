@@ -76,7 +76,9 @@ services:
       CONFIG_SESSION_PHONE_NAME: Chrome
       CONFIG_SESSION_PHONE_VERSION: 2.3000.1036893687
       DEL_INSTANCE_ON_LOGOUT: "false"
-      WEBHOOK_GLOBAL_ENABLED: "true"
+      # Webhooks autenticados são configurados por instância pelo FlashFlow.
+      # O webhook global não suporta o header secreto exigido pelo endpoint.
+      WEBHOOK_GLOBAL_ENABLED: "false"
       WEBHOOK_GLOBAL_URL: http://flashflow:3000/api/webhook/evolution
       WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "true"
       WEBHOOK_EVENTS_QRCODE_UPDATED: "true"

@@ -9,7 +9,11 @@
  */
 
 import { NextRequest } from 'next/server'
-import { EVOLUTION_WEBHOOK_SECRET_HEADER, exceedsMaxEvolutionWebhookBodySize } from '@/lib/evolution-api'
+import {
+  EVOLUTION_WEBHOOK_SECRET_HEADER,
+  exceedsMaxEvolutionWebhookBodySize,
+  readEvolutionWebhookBody,
+} from '@/lib/evolution-api'
 
 const TEST_WEBHOOK_SECRET = 'test-webhook-secret'
 
@@ -251,6 +255,42 @@ describe('POST /api/webhook/evolution', () => {
     expect(exceedsMaxEvolutionWebhookBodySize(String(20 * 1024 * 1024))).toBe(true)
     expect(exceedsMaxEvolutionWebhookBodySize(String(1024))).toBe(false)
     expect(exceedsMaxEvolutionWebhookBodySize(null)).toBe(false)
+    expect(exceedsMaxEvolutionWebhookBodySize('invalid')).toBe(true)
+  })
+
+  it('limits the actual streamed body even without Content-Length', async () => {
+    const req = new Request('http://localhost/api/webhook/evolution', {
+      method: 'POST',
+      body: '12345',
+    })
+    await expect(readEvolutionWebhookBody(req, 4)).resolves.toBeNull()
+  })
+
+  it('rejects invalid JSON after authentication without accessing the database', async () => {
+    const req = new NextRequest('http://localhost/api/webhook/evolution', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        [EVOLUTION_WEBHOOK_SECRET_HEADER]: TEST_WEBHOOK_SECRET,
+      },
+      body: '{invalid',
+    })
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(400)
+    expect(supabaseMock.from).not.toHaveBeenCalled()
+  })
+
+  it('rejects a primitive JSON payload after authentication', async () => {
+    const req = buildRawRequest(null, {
+      [EVOLUTION_WEBHOOK_SECRET_HEADER]: TEST_WEBHOOK_SECRET,
+    })
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(400)
+    expect(supabaseMock.from).not.toHaveBeenCalled()
   })
 
   it('aceita e processa quando o header de segredo é válido', async () => {

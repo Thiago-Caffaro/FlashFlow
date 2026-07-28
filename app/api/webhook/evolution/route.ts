@@ -6,6 +6,7 @@ import { logWebhookEvent } from '@/lib/webhook-log'
 import {
   exceedsMaxEvolutionWebhookBodySize,
   EVOLUTION_WEBHOOK_SECRET_HEADER,
+  readEvolutionWebhookBody,
   verifyEvolutionWebhookSecret,
 } from '@/lib/evolution-api'
 
@@ -199,15 +200,29 @@ export async function POST(req: NextRequest) {
     return unauthorized()
   }
 
+  const rawBody = await readEvolutionWebhookBody(req)
+  if (rawBody === null) {
+    return NextResponse.json({ ok: false, error: 'Payload too large' }, { status: 413 })
+  }
+
+  let body
   try {
-    const body = await req.json()
-    const event = (body.event ?? '').toLowerCase()
-    const evtInstance: string = body.instance ?? ''
+    body = JSON.parse(rawBody)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new Error('Webhook payload must be an object')
+    }
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  try {
+    const event = typeof body.event === 'string' ? body.event.toLowerCase() : ''
+    const evtInstance = typeof body.instance === 'string' ? body.instance : ''
     console.log(`[webhook] received event="${event}" instance="${evtInstance}"`)
     logWebhookEvent(event, evtInstance, body.data ?? {})
 
     if (event === 'qrcode.updated' || event === 'qrcode_updated') {
-      const instanceName: string = body.instance ?? ''
+      const instanceName = evtInstance
       const qr: string | null =
         body.data?.qrcode?.base64 ??
         body.data?.base64 ??
@@ -219,7 +234,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (event === 'connection.update' || event === 'connection_update') {
-      const instanceName: string = body.instance ?? ''
+      const instanceName = evtInstance
       const state: string = (body.data?.instance?.state ?? body.data?.state ?? '').toLowerCase()
       const reason = body.data?.statusReason ?? body.data?.instance?.statusReason ?? null
       console.log(`[webhook] connection.update "${instanceName}" state=${state} reason=${reason}`)
@@ -253,7 +268,7 @@ export async function POST(req: NextRequest) {
     // Processamos aqui para criar conversas imediatamente — sem depender do endpoint findChats.
     if (event === 'chats.upsert') {
       const chats = Array.isArray(body.data) ? body.data : []
-      const instanceName: string = body.instance ?? ''
+      const instanceName = evtInstance
       if (instanceName && chats.length > 0) {
         console.log(`[webhook] chats.upsert: ${chats.length} chat(s) para "${instanceName}"`)
         for (const chat of chats) {
@@ -293,7 +308,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    const instanceName: string = body.instance ?? ''
+    const instanceName = evtInstance
     if (!instanceName) {
       console.error('[webhook] messages.upsert sem "instance" no payload — evento ignorado')
       return NextResponse.json({ ok: true })

@@ -2,6 +2,7 @@ export {}
 
 const mockFrom = jest.fn()
 const mockSubmitFulfillmentOrder = jest.fn()
+const mockRecordOrderEvent = jest.fn()
 const mockSendWhatsAppText = jest.fn()
 const mockDecryptSecret = jest.fn(() => 'decoded-secret')
 const mockExecuteFlow = jest.fn()
@@ -16,6 +17,7 @@ jest.mock('@/lib/flow-engine', () => ({
 
 jest.mock('@/lib/fulfillment-service', () => ({
   submitFulfillmentOrder: mockSubmitFulfillmentOrder,
+  recordOrderEvent: mockRecordOrderEvent,
   FulfillmentOrderSubmissionError: class FulfillmentOrderSubmissionError extends Error {
     constructor(
       message: string,
@@ -141,11 +143,14 @@ const {
   updateConfirmationOrder,
   upsertShopifyAbandonedCheckout,
   upsertShopifyOrder,
+  reserveConfirmationSendSlot,
+  _resetConfirmationSendPacingForTests,
 } = require('@/lib/shopify-confirmation-service')
 
 describe('shopify-confirmation-service', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    _resetConfirmationSendPacingForTests()
     mockSubmitFulfillmentOrder.mockResolvedValue({ id: 'order-1', status: 'created', send_status: 'Enviado' })
   })
 
@@ -253,6 +258,52 @@ describe('shopify-confirmation-service', () => {
     expect(updated.inserts).toEqual([])
     expect(mockSubmitFulfillmentOrder).not.toHaveBeenCalled()
     expect(mockSendWhatsAppText).not.toHaveBeenCalled()
+  })
+
+  it('does not run a confirmation flow when an existing unconfirmed order is reprocessed', async () => {
+    const account = queryBuilder({ data: { instance_name: 'wa-country' }, error: null })
+    const existing = queryBuilder({
+      data: {
+        id: 'order-1',
+        assigned_instance_name: 'wa-country',
+        confirmation_message_sent_at: null,
+      },
+      error: null,
+    })
+    const updated = queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country' }, error: null })
+    setTableQueues({
+      accounts: [account],
+      fulfillment_orders: [existing, updated],
+    })
+
+    await upsertShopifyOrder(integrationRow(), shopifyOrder())
+
+    expect(mockExecuteFlow).not.toHaveBeenCalled()
+    expect(mockSendWhatsAppText).not.toHaveBeenCalled()
+    expect(updated.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('reserves confirmation starts at least 1.5 seconds apart', async () => {
+    jest.useFakeTimers()
+    jest.setSystemTime(Date.parse('2026-07-28T12:00:00.000Z'))
+
+    await reserveConfirmationSendSlot()
+    let secondResolved = false
+    const second = reserveConfirmationSendSlot().then(() => {
+      secondResolved = true
+    })
+
+    await Promise.resolve()
+    expect(secondResolved).toBe(false)
+
+    jest.advanceTimersByTime(1_499)
+    await Promise.resolve()
+    expect(secondResolved).toBe(false)
+
+    jest.advanceTimersByTime(1)
+    await second
+    expect(secondResolved).toBe(true)
+    jest.useRealTimers()
   })
 
   it('reivindica confirmation_message_sent_at atomicamente antes de disparar o gatilho de confirmação', async () => {

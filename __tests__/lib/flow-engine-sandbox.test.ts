@@ -5,8 +5,13 @@
  */
 
 const supabaseMock = { from: jest.fn() }
+const mockFetchEvolution = jest.fn()
 jest.mock('@supabase/supabase-js', () => ({
   createClient: jest.fn(() => supabaseMock),
+}))
+
+jest.mock('@/lib/evolution-api', () => ({
+  fetchEvolution: mockFetchEvolution,
 }))
 
 jest.mock('@/lib/ai-crypto', () => ({
@@ -25,7 +30,7 @@ process.env.EVOLUTION_API_URL = 'http://localhost:8080'
 process.env.EVOLUTION_API_KEY = 'test-key'
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { resolveRealSendTarget } = require('@/lib/flow-engine')
+const { resolveRealSendTarget, sendWhatsApp } = require('@/lib/flow-engine')
 
 function ctx(overrides: Record<string, unknown> = {}) {
   return {
@@ -66,5 +71,24 @@ describe('resolveRealSendTarget', () => {
 
   it('isSandbox=true em uma instância que não é a sandbox não tem efeito — envia normalmente', () => {
     expect(resolveRealSendTarget(ctx({ instanceName: 'inst-a', isSandbox: true }))).toBe('inst-a')
+  })
+})
+
+describe('flow WhatsApp delivery', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('does not persist a flow message as sent when Evolution returns an HTTP error', async () => {
+    mockFetchEvolution.mockResolvedValue({
+      ok: false,
+      status: 503,
+      body: { error: 'unavailable' },
+      text: 'unavailable',
+    })
+
+    await expect(sendWhatsApp(ctx(), 'hello')).rejects.toThrow('503')
+
+    expect(supabaseMock.from).not.toHaveBeenCalled()
   })
 })

@@ -39,6 +39,24 @@ export {
 }
 export type { ShopifyIntegrationCredentialRow }
 
+export const MIN_CONFIRMATION_SEND_GAP_MS = 1_500
+
+let nextConfirmationSendAt = 0
+
+export async function reserveConfirmationSendSlot(): Promise<void> {
+  const now = Date.now()
+  const reservedAt = Math.max(now, nextConfirmationSendAt)
+  nextConfirmationSendAt = reservedAt + MIN_CONFIRMATION_SEND_GAP_MS
+  const waitMs = reservedAt - now
+  if (waitMs > 0) {
+    await new Promise<void>((resolve) => setTimeout(resolve, waitMs))
+  }
+}
+
+export function _resetConfirmationSendPacingForTests(): void {
+  nextConfirmationSendAt = 0
+}
+
 type ShopifyIntegrationContext = {
   id: string
   shopDomain: string
@@ -270,6 +288,7 @@ export async function upsertShopifyOrder(
     .maybeSingle()
   if (existingError) throw new Error(`Falha ao consultar pedido Shopify: ${existingError.message}`)
 
+  const isNewOrder = !existing?.id
   const now = new Date().toISOString()
   const existingAssigned = typeof existing?.assigned_instance_name === 'string' && existing.assigned_instance_name
     ? existing.assigned_instance_name
@@ -281,14 +300,8 @@ export async function upsertShopifyOrder(
     updated_at: now,
   }
 
-  const result = existing?.id
+  const result = isNewOrder
     ? await supabaseAdmin
-      .from('fulfillment_orders')
-      .update(patch)
-      .eq('id', existing.id)
-      .select()
-      .single()
-    : await supabaseAdmin
       .from('fulfillment_orders')
       .insert({
         ...patch,
@@ -301,12 +314,18 @@ export async function upsertShopifyOrder(
       })
       .select()
       .single()
+    : await supabaseAdmin
+      .from('fulfillment_orders')
+      .update(patch)
+      .eq('id', existing.id)
+      .select()
+      .single()
 
   if (result.error || !result.data) {
     throw new Error(result.error?.message ?? 'Falha ao gravar pedido Shopify')
   }
 
-  if (options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
+  if (isNewOrder && options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
     // Claim atômico: a Shopify pode reentregar o mesmo webhook (ela mesma
     // documenta isso). Sem um UPDATE condicional aqui, duas entregas
     // concorrentes leriam confirmation_message_sent_at=null antes de
@@ -321,13 +340,14 @@ export async function upsertShopifyOrder(
       .maybeSingle()
 
     if (claimed) {
-      await runShopifyOrderTrigger(result.data.id).catch((error) => {
+      await runShopifyOrderTrigger(result.data.id).catch(async (error) => {
         console.error('[shopify-confirmation] failed to run order-created trigger:', error)
         // Libera o claim para permitir nova tentativa em webhook futuro.
-        void supabaseAdmin
+        await supabaseAdmin
           .from('fulfillment_orders')
           .update({ confirmation_message_sent_at: null })
           .eq('id', result.data.id)
+          .eq('confirmation_message_sent_at', now)
       })
     }
   }
@@ -502,6 +522,10 @@ export async function runShopifyOrderTrigger(orderId: string) {
     const { conversationId, remoteJid, realSendInstanceName } = await resolveConversationForOrder(
       instanceName, phone, String(order.customer_name || '')
     )
+
+    if (!isSandboxOrder) {
+      await reserveConfirmationSendSlot()
+    }
 
     await executeFlow(flowId, {
       instanceName,
@@ -749,7 +773,7 @@ export async function syncShopifyData(options: {
     try {
       const ordersResponse = await client.getRecentOrders({ limit: options.limit ?? 50 })
       for (const order of ordersResponse.orders ?? []) {
-        await upsertShopifyOrder(integration, order, { sendConfirmation: options.sendConfirmation })
+        await upsertShopifyOrder(integration, order, { sendConfirmation: options.sendConfirmation === true })
         importedOrders += 1
       }
     } catch (error) {
