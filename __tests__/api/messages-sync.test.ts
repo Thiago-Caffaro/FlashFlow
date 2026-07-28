@@ -16,9 +16,9 @@ jest.mock('@supabase/supabase-js', () => ({
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-function buildRequest(conversationId: string): NextRequest {
+function buildRequest(conversationId: string, instance = 'flashflow-main'): NextRequest {
   return new NextRequest(
-    `http://localhost/api/messages/sync/${conversationId}`,
+    `http://localhost/api/messages/sync/${conversationId}?instance=${encodeURIComponent(instance)}`,
     { method: 'POST' }
   )
 }
@@ -161,14 +161,15 @@ describe('POST /api/messages/sync/[conversationId]', () => {
   // ── Guard: instância não encontrada ───────────────────────────────────────
 
   it('retorna { ok: true, added: 0 } se o instanceId não for encontrado', async () => {
+    // Use a name that is guaranteed not in the module-level cache
+    const dynamicInstanceName = `missing-instance-${Date.now()}`
     supabaseMock.from.mockImplementation((table: string) => {
       if (table === 'conversations') {
         return {
           select: jest.fn().mockReturnValue({
             eq: jest.fn().mockReturnValue({
               maybeSingle: jest.fn().mockResolvedValue({
-                // Use a name that is guaranteed not in the module-level cache
-                data: { wa_id: REMOTE_JID, instance_name: `missing-instance-${Date.now()}` },
+                data: { wa_id: REMOTE_JID, instance_name: dynamicInstanceName },
                 error: null,
               }),
             }),
@@ -185,7 +186,7 @@ describe('POST /api/messages/sync/[conversationId]', () => {
       }
     })
 
-    const res = await POST(buildRequest('conv-1'), makeParams('conv-1'))
+    const res = await POST(buildRequest('conv-1', dynamicInstanceName), makeParams('conv-1'))
     const json = await res.json()
     expect(json.ok).toBe(true)
     expect(json.added).toBe(0)

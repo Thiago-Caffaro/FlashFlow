@@ -17,6 +17,7 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       EVOLUTION_API_URL: http://evolution-api:8080
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
+      EVOLUTION_WEBHOOK_SECRET: ${EVOLUTION_WEBHOOK_SECRET}
       WEBHOOK_BASE_URL: http://flashflow:3000
       AI_ENCRYPTION_KEY: ${AI_ENCRYPTION_KEY}
       ADMIN_USERNAME: ${ADMIN_USERNAME}
@@ -67,7 +68,10 @@ services:
       REDIS_URI: ${REDIS_URL}
       CACHE_REDIS_URI: ${REDIS_URL}
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
-      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+      # Nenhuma rota do FlashFlow lê apikey/token da resposta de
+      # fetchInstances — desativado para não expor a authentication key da
+      # Evolution API em uma resposta que não precisa dela.
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "false"
       CONFIG_SESSION_PHONE_CLIENT: FlashFlow
       CONFIG_SESSION_PHONE_NAME: Chrome
       CONFIG_SESSION_PHONE_VERSION: 2.3000.1036893687

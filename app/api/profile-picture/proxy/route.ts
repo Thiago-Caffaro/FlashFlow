@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { fetchImageSafely } from '@/lib/ssrf-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,8 +9,8 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-const CACHE_HIT = 'public, max-age=3600, stale-while-revalidate=86400'
-const CACHE_MISS = 'public, max-age=3600'
+const CACHE_HIT = 'private, max-age=3600, stale-while-revalidate=86400'
+const CACHE_MISS = 'private, max-age=3600'
 const WA_UA = 'WhatsApp/2.24.6.77 A'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -96,9 +97,9 @@ async function resolvePicUrl(
 
 export async function GET(req: NextRequest) {
   const waId = req.nextUrl.searchParams.get('waId')
-  const instanceName = req.nextUrl.searchParams.get('instance') ?? 'flashflow-main'
+  const instanceName = req.nextUrl.searchParams.get('instance')
 
-  if (!waId) return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
+  if (!waId || !instanceName) return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
 
   if (
     waId.includes('@broadcast') ||
@@ -119,27 +120,28 @@ export async function GET(req: NextRequest) {
     if (!resolved) return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
 
     let picUrl = resolved.url
-    let imgRes = await fetch(picUrl, { headers: { 'User-Agent': WA_UA } })
+    let fetched = await fetchImageSafely(picUrl, { headers: { 'User-Agent': WA_UA } })
 
     // CDN URL expired — fetch a fresh one and persist it
-    if (!imgRes.ok) {
+    if (!fetched.ok) {
       const fresh = await fetchPicUrlFromEvolution(phone, instanceName)
       if (fresh && fresh !== picUrl) {
-        imgRes = await fetch(fresh, { headers: { 'User-Agent': WA_UA } })
-        if (imgRes.ok) {
+        const retried = await fetchImageSafely(fresh, { headers: { 'User-Agent': WA_UA } })
+        if (retried.ok) {
+          fetched = retried
           picUrl = fresh
           persistPicUrl(remoteJid, instanceName, fresh)
         }
       }
     }
 
-    if (!imgRes.ok) return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
+    if (!fetched.ok) return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
 
-    const buffer = await imgRes.arrayBuffer()
-    return new NextResponse(buffer, {
+    return new NextResponse(new Uint8Array(fetched.buffer), {
       headers: {
-        'Content-Type': imgRes.headers.get('Content-Type') ?? 'image/jpeg',
+        'Content-Type': fetched.contentType,
         'Cache-Control': CACHE_HIT,
+        'X-Content-Type-Options': 'nosniff',
       },
     })
   } catch {

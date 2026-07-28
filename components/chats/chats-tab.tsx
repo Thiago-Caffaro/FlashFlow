@@ -1,11 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, BellOff, Bot, CheckSquare,
   MessageSquare, Search, Square, X, Zap,
 } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
 import { AISessionWithContext, Conversation } from '@/types'
 import ConversationItem from '@/components/chat/conversation-item'
 import ChatWindow from '@/components/chat/chat-window'
@@ -164,20 +163,15 @@ export default function ChatsTab({ instanceName }: ChatsTabProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null)
 
-  const convTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const sessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
   // Persist filter
   useEffect(() => { localStorage.setItem('chatsFilter', filter) }, [filter])
 
   // ── Fetch conversations ────────────────────────────────────────────────────
 
   const fetchConversations = useCallback(async () => {
-    const { data } = await supabase
-      .from('conversations')
-      .select('*')
-      .eq('instance_name', instanceName)
-      .order('last_message_at', { ascending: false })
+    const res = await fetch(`/api/conversations?instance=${encodeURIComponent(instanceName)}`, { cache: 'no-store' })
+    const json = await res.json()
+    const data: Conversation[] = json.ok ? json.conversations : []
 
     // Primary dedup by wa_id
     const seen = new Set<string>()
@@ -233,49 +227,21 @@ export default function ChatsTab({ instanceName }: ChatsTabProps) {
     loadSessions()
   }, [instanceName]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Realtime + polling: conversations ──────────────────────────────────────
+  // ── Polling: conversations ──────────────────────────────────────────────────
+  // (Sem Realtime via anon key — a tabela não tem mais leitura anônima; ver P5
+  // da varredura de segurança. Atualização por polling a cada 15s.)
 
   useEffect(() => {
-    const ch = supabase
-      .channel(`chats_conv:${instanceName}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, (payload) => {
-        const rec = (payload.new ?? payload.old ?? {}) as Record<string, string>
-        if (rec.instance_name && rec.instance_name !== instanceName) return
-        if (convTimerRef.current) clearTimeout(convTimerRef.current)
-        convTimerRef.current = setTimeout(() => fetchConversations(), 300)
-      })
-      .subscribe()
-
     const poll = setInterval(() => fetchConversations(), 15000)
+    return () => clearInterval(poll)
+  }, [fetchConversations])
 
-    return () => {
-      supabase.removeChannel(ch)
-      clearInterval(poll)
-      if (convTimerRef.current) clearTimeout(convTimerRef.current)
-    }
-  }, [instanceName, fetchConversations])
-
-  // ── Realtime + polling: sessions ───────────────────────────────────────────
+  // ── Polling: sessions ───────────────────────────────────────────────────────
 
   useEffect(() => {
-    const ch = supabase
-      .channel(`chats_sess:${instanceName}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_sessions' }, (payload) => {
-        const rec = (payload.new ?? payload.old ?? {}) as Record<string, unknown>
-        if (rec.instance_name && rec.instance_name !== instanceName) return
-        if (sessTimerRef.current) clearTimeout(sessTimerRef.current)
-        sessTimerRef.current = setTimeout(() => loadSessions(), 300)
-      })
-      .subscribe()
-
     const poll = setInterval(() => loadSessions(), 15000)
-
-    return () => {
-      supabase.removeChannel(ch)
-      clearInterval(poll)
-      if (sessTimerRef.current) clearTimeout(sessTimerRef.current)
-    }
-  }, [instanceName, loadSessions])
+    return () => clearInterval(poll)
+  }, [loadSessions])
 
   // ── Derived data ───────────────────────────────────────────────────────────
 
@@ -341,7 +307,7 @@ export default function ChatsTab({ instanceName }: ChatsTabProps) {
     await fetch(`/api/ai-sessions/${id}/terminate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, useFlowMessage }),
+      body: JSON.stringify({ message, useFlowMessage, instance_name: instanceName }),
     })
     setTerminatingSession(null)
     await loadSessions()
@@ -353,7 +319,7 @@ export default function ChatsTab({ instanceName }: ChatsTabProps) {
         fetch(`/api/ai-sessions/${id}/terminate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: '', useFlowMessage: false }),
+          body: JSON.stringify({ message: '', useFlowMessage: false, instance_name: instanceName }),
         })
       )
     )

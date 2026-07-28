@@ -13,7 +13,9 @@ export async function GET(
   try {
     const current = await getEvolutionConnectionState(name)
     if (current.state === 'open') {
-      void setEvolutionWebhook(name)
+      void setEvolutionWebhook(name).catch((err) => {
+        console.error(`[status] setEvolutionWebhook("${name}") falhou:`, err instanceof Error ? err.message : err)
+      })
     }
 
     return NextResponse.json(current)

@@ -19,18 +19,19 @@ export function useAuth() {
   return useContext(AuthContext)
 }
 
-const STORAGE_KEY = 'ff_auth'
+// Nome legado usado antes da sessão passar a depender só do cookie HttpOnly.
+// Mantido apenas para limpar qualquer token remanescente em navegadores que
+// autenticaram antes desta correção — não é mais lido para decidir o estado.
+const LEGACY_STORAGE_KEY = 'ff_auth'
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>('loading')
 
-  const verify = useCallback(async (token: string): Promise<boolean> => {
+  // A sessão vive inteiramente no cookie HttpOnly — o navegador o envia
+  // automaticamente, então basta perguntar ao servidor se ele é válido.
+  const verify = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch('/api/auth/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-      })
+      const res = await fetch('/api/auth/verify', { method: 'GET' })
       const json = await res.json()
       return json.ok === true
     } catch {
@@ -39,21 +40,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   useEffect(() => {
-    const token = localStorage.getItem(STORAGE_KEY)
-    if (!token) {
-      setState('unauthenticated')
-      return
+    if (localStorage.getItem(LEGACY_STORAGE_KEY)) {
+      localStorage.removeItem(LEGACY_STORAGE_KEY)
     }
-    verify(token).then((ok) => setState(ok ? 'authenticated' : 'unauthenticated'))
+    verify().then((ok) => setState(ok ? 'authenticated' : 'unauthenticated'))
   }, [verify])
 
-  function login(token: string) {
-    localStorage.setItem(STORAGE_KEY, token)
+  function login() {
     setState('authenticated')
   }
 
   function logout() {
-    localStorage.removeItem(STORAGE_KEY)
     fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
     setState('unauthenticated')
   }

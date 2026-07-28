@@ -1,21 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+import { redactPhone } from '@/lib/redact'
 
 export const dynamic = 'force-dynamic'
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
+const RATE_LIMIT = 10
+const RATE_WINDOW_MS = 5 * 60 * 1000
+
 // POST /api/diagnostics/send — envia mensagem de teste diretamente pela Evolution API
 // Body: { instance, number, message }
+// Endpoint de diagnóstico capaz de disparar uma mensagem real para qualquer
+// número — rate limit e redaction de PII nos logs são obrigatórios aqui.
 export async function POST(req: NextRequest) {
   try {
+    const ip = getClientIp(req)
+    if (!checkRateLimit(`diag-send:${ip}`, RATE_LIMIT, RATE_WINDOW_MS)) {
+      return NextResponse.json({ error: 'Muitas tentativas. Tente novamente em instantes.' }, { status: 429 })
+    }
+
     const { instance, number, message } = await req.json()
     if (!instance || !number || !message) {
       return NextResponse.json({ error: 'instance, number e message são obrigatórios' }, { status: 400 })
     }
 
     const waId = String(number).replace(/\D/g, '')
-    console.log(`[diag/send] instance="${instance}" to="${waId}" msg="${message.slice(0, 60)}"`)
+    console.log(`[diag/send] instance="${instance}" to="${redactPhone(waId)}" msgLength=${String(message).length}`)
 
     const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${instance}`, {
       method: 'POST',
@@ -24,7 +36,7 @@ export async function POST(req: NextRequest) {
     })
 
     const data = await res.json().catch(() => ({})) as Record<string, unknown>
-    console.log(`[diag/send] Evolution status=${res.status} raw:`, JSON.stringify(data).slice(0, 200))
+    console.log(`[diag/send] Evolution status=${res.status}`)
 
     if (!res.ok) {
       return NextResponse.json(

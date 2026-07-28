@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { supabase } from '@/lib/supabase'
 import ChatsTab from '@/components/chats/chats-tab'
 import TriggersTab from '@/components/sidebar-right/triggers-tab'
 import FlowsTab from '@/components/flows/flows-tab'
@@ -61,7 +60,6 @@ function ChatApp() {
   const { activeAccount } = useAccount()
   const [activeView, setActiveView] = useState<View>(getStoredView)
   const [escalationCount, setEscalationCount] = useState(0)
-  const escalationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevEscalationRef = useRef(0)
   const escalationInitialized = useRef(false)
 
@@ -76,12 +74,11 @@ function ChatApp() {
     const instanceName = activeAccount.instanceName
 
     const fetchEscalationCount = async () => {
-      const { count } = await supabase
-        .from('ai_sessions')
-        .select('id', { count: 'exact', head: true })
-        .eq('instance_name', instanceName)
-        .eq('requires_human', true)
-      const newCount = count ?? 0
+      const res = await fetch(`/api/ai-sessions?instance=${encodeURIComponent(instanceName)}`, { cache: 'no-store' })
+      const json = await res.json()
+      const newCount: number = json.ok
+        ? (json.sessions as { session: { requires_human: boolean } }[]).filter((s) => s.session.requires_human).length
+        : 0
       if (escalationInitialized.current && newCount > prevEscalationRef.current) {
         playEscalationSound()
       }
@@ -92,22 +89,12 @@ function ChatApp() {
 
     fetchEscalationCount()
 
-    const channel = supabase
-      .channel(`escalations:${instanceName}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_sessions' }, (payload) => {
-        const record = (payload.new ?? payload.old ?? {}) as Record<string, unknown>
-        if (record.instance_name && record.instance_name !== instanceName) return
-        if (escalationTimerRef.current) clearTimeout(escalationTimerRef.current)
-        escalationTimerRef.current = setTimeout(fetchEscalationCount, 300)
-      })
-      .subscribe()
-
+    // Sem Realtime via anon key — a tabela "ai_sessions" não tem mais leitura
+    // anônima (ver P5 da varredura de segurança). Atualização por polling.
     const poll = setInterval(fetchEscalationCount, 10000)
 
     return () => {
-      supabase.removeChannel(channel)
       clearInterval(poll)
-      if (escalationTimerRef.current) clearTimeout(escalationTimerRef.current)
     }
   }, [activeAccount])
 

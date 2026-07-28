@@ -1,7 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AISessionWithContext } from '@/types'
 import SessionList from './session-list'
 import SessionChatView from './session-chat-view'
@@ -22,7 +21,6 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
   const [filter, setFilter] = useState<Filter>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadSessions = useCallback(async () => {
     const res = await fetch(`/api/ai-sessions?instance=${encodeURIComponent(instanceName)}`)
@@ -46,27 +44,8 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
     loadSessions()
   }, [instanceName]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    const channel = supabase
-      .channel(`ai_sessions_tab:${instanceName}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'ai_sessions' },
-        (payload) => {
-          const record = (payload.new ?? payload.old ?? {}) as Record<string, unknown>
-          if (record.instance_name && record.instance_name !== instanceName) return
-          if (timerRef.current) clearTimeout(timerRef.current)
-          timerRef.current = setTimeout(() => loadSessions(), 300)
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-      if (timerRef.current) clearTimeout(timerRef.current)
-    }
-  }, [instanceName, loadSessions])
-
+  // Sem Realtime via anon key — a tabela "ai_sessions" não tem mais leitura
+  // anônima (ver P5 da varredura de segurança). Atualização por polling.
   useEffect(() => {
     const interval = setInterval(() => loadSessions(), 15000)
     return () => clearInterval(interval)
@@ -129,7 +108,7 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
     await fetch(`/api/ai-sessions/${id}/terminate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, useFlowMessage }),
+      body: JSON.stringify({ message, useFlowMessage, instance_name: instanceName }),
     })
     setTerminatingSession(null)
     await loadSessions()
@@ -141,7 +120,7 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
         fetch(`/api/ai-sessions/${id}/terminate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: '', useFlowMessage: false }),
+          body: JSON.stringify({ message: '', useFlowMessage: false, instance_name: instanceName }),
         })
       )
     )

@@ -89,10 +89,14 @@ async function getInstanceId(instanceName: string): Promise<string | null> {
 //   GRANT SELECT ON TABLE public."Message"  TO service_role;
 //   GRANT SELECT ON TABLE public."Instance" TO service_role;
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ conversationId: string }> }
 ) {
   const { conversationId } = await params
+  const instanceParam = req.nextUrl.searchParams.get('instance') ?? ''
+  if (!instanceParam) {
+    return NextResponse.json({ ok: false, error: 'instance obrigatório' }, { status: 400 })
+  }
 
   const { data: conv } = await supabase
     .from('conversations')
@@ -100,7 +104,9 @@ export async function POST(
     .eq('id', conversationId)
     .maybeSingle()
 
-  if (!conv) return NextResponse.json({ ok: false, added: 0 })
+  if (!conv || conv.instance_name !== instanceParam) {
+    return NextResponse.json({ ok: false, added: 0 })
+  }
 
   const { wa_id: remoteJid, instance_name: instanceName } = conv
   const isGroup = remoteJid.endsWith('@g.us')

@@ -1,4 +1,16 @@
 import 'server-only'
+import { timingSafeEqual } from 'node:crypto'
+
+export const EVOLUTION_WEBHOOK_SECRET_HEADER = 'x-webhook-secret'
+
+// Limite defensivo de tamanho do corpo do webhook — eventos de mídia inline em
+// base64 podem ser grandes, mas um payload legítimo não deve passar disto.
+export const MAX_EVOLUTION_WEBHOOK_BODY_BYTES = 15 * 1024 * 1024
+
+export function exceedsMaxEvolutionWebhookBodySize(contentLengthHeader: string | null): boolean {
+  const contentLength = Number(contentLengthHeader ?? '0')
+  return Number.isFinite(contentLength) && contentLength > MAX_EVOLUTION_WEBHOOK_BODY_BYTES
+}
 
 export const EVOLUTION_WEBHOOK_EVENTS = [
   'MESSAGES_UPSERT',
@@ -35,6 +47,25 @@ function evolutionApiKey() {
   const key = process.env.EVOLUTION_API_KEY
   if (!key) throw new Error('EVOLUTION_API_KEY não configurado')
   return key
+}
+
+function evolutionWebhookSecret() {
+  const secret = process.env.EVOLUTION_WEBHOOK_SECRET
+  if (!secret) throw new Error('EVOLUTION_WEBHOOK_SECRET não configurado')
+  return secret
+}
+
+/**
+ * Compara o header enviado pela Evolution API no callback do webhook com o
+ * segredo configurado, em tempo constante. Falha fechado quando o segredo
+ * não está configurado no ambiente.
+ */
+export function verifyEvolutionWebhookSecret(headerValue: string | null): boolean {
+  const secret = process.env.EVOLUTION_WEBHOOK_SECRET
+  if (!secret || !headerValue) return false
+  const expected = Buffer.from(secret, 'utf8')
+  const actual = Buffer.from(headerValue, 'utf8')
+  return actual.length === expected.length && timingSafeEqual(actual, expected)
 }
 
 export function evolutionWebhookUrl() {
@@ -83,6 +114,7 @@ export function webhookConfigPayload() {
     webhook_by_events: true,
     webhook_base64: false,
     events: EVOLUTION_WEBHOOK_EVENTS,
+    headers: { [EVOLUTION_WEBHOOK_SECRET_HEADER]: evolutionWebhookSecret() },
   }
 }
 

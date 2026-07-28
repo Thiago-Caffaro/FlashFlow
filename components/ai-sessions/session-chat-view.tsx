@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bot, XCircle, User } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
 import { AISessionWithContext, Message } from '@/types'
 import MessageBubble from '@/components/chat/message-bubble'
 import MessageInput from '@/components/chat/message-input'
@@ -50,49 +49,26 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
   const displayName = conversation.contact_name || conversation.contact_phone
 
   const loadMessages = useCallback(async () => {
-    const { data } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversation.id)
-      .order('created_at', { ascending: true })
-    setMessages(data ?? [])
+    const res = await fetch(
+      `/api/messages?conversationId=${encodeURIComponent(conversation.id)}&instance=${encodeURIComponent(conversation.instance_name)}`,
+      { cache: 'no-store' }
+    )
+    const json = await res.json()
+    setMessages(json.ok ? json.messages : [])
     setLoading(false)
-  }, [conversation.id])
+  }, [conversation.id, conversation.instance_name])
 
   useEffect(() => {
     setLoading(true)
     loadMessages()
   }, [loadMessages])
 
+  // Sem Realtime via anon key — a tabela "messages" não tem mais leitura
+  // anônima (ver P5 da varredura de segurança). Atualização por polling.
   useEffect(() => {
     const interval = setInterval(() => loadMessages(), 10000)
     return () => clearInterval(interval)
   }, [loadMessages])
-
-  useEffect(() => {
-    const channel = supabase
-      .channel(`session-messages:${conversation.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversation.id}` },
-        (payload) => {
-          const newMessage = payload.new as Message
-          setMessages((prev) => {
-            const exists = prev.some((m) => m.id === newMessage.id)
-            if (exists) return prev
-            if (newMessage.direction === 'outbound') {
-              const filtered = prev.filter(
-                (m) => !(m.status === 'sending' && m.content === newMessage.content && m.type === newMessage.type)
-              )
-              return [...filtered, newMessage].sort((a, b) => a.created_at.localeCompare(b.created_at))
-            }
-            return [...prev, newMessage].sort((a, b) => a.created_at.localeCompare(b.created_at))
-          })
-        }
-      )
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [conversation.id])
 
   useEffect(() => {
     const el = messagesContainerRef.current
@@ -127,7 +103,7 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
       await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversationId: conversation.id, waId: conversation.wa_id, content: actualContent }),
+        body: JSON.stringify({ conversationId: conversation.id, content: actualContent }),
       })
     } catch (err) {
       console.error('Erro ao enviar:', err)
@@ -162,7 +138,6 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
       const formData = new FormData()
       formData.append('file', file)
       formData.append('conversationId', conversation.id)
-      formData.append('waId', conversation.wa_id)
       await fetch('/api/messages/image', { method: 'POST', body: formData })
     } catch (err) {
       console.error('Erro ao enviar imagem:', err)
@@ -174,7 +149,11 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
   }
 
   const handleReleaseToAI = async () => {
-    await fetch(`/api/ai-sessions/${session.id}/release`, { method: 'PATCH' })
+    await fetch(`/api/ai-sessions/${session.id}/release`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instance_name: session.instance_name }),
+    })
   }
 
   const groups = groupByDate(messages)

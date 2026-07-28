@@ -5,12 +5,19 @@ const mockLoadShopifyIntegrationForWebhook = jest.fn()
 const mockDecodeShopifyWebhookSecret = jest.fn(() => 'webhook-secret')
 const mockUpsertShopifyOrder = jest.fn()
 const mockUpsertShopifyAbandonedCheckout = jest.fn()
+const mockGetSetting = jest.fn(async (_key: string) => 'webhook-secret')
 
 jest.mock('@/lib/shopify-confirmation-service', () => ({
   decodeShopifyWebhookSecret: mockDecodeShopifyWebhookSecret,
   loadShopifyIntegrationForWebhook: mockLoadShopifyIntegrationForWebhook,
   upsertShopifyOrder: mockUpsertShopifyOrder,
   upsertShopifyAbandonedCheckout: mockUpsertShopifyAbandonedCheckout,
+}))
+
+// Isola o teste de qualquer cliente Supabase real — app-settings.ts importaria
+// lib/supabase-admin.ts (que exige SUPABASE_URL/SERVICE_ROLE_KEY reais) se não mockado.
+jest.mock('@/lib/app-settings', () => ({
+  getSetting: mockGetSetting,
 }))
 
 function hmac(rawBody: string, secret = 'webhook-secret') {
@@ -47,6 +54,29 @@ describe('Shopify webhooks', () => {
   it('rejects order webhooks with invalid HMAC before upserting', async () => {
     const rawBody = JSON.stringify({ id: 123 })
     const response = await orderWebhook.POST(request(rawBody, 'invalid-signature'))
+    const body = await response.json()
+
+    expect(response.status).toBe(401)
+    expect(body).toMatchObject({ ok: false })
+    expect(mockUpsertShopifyOrder).not.toHaveBeenCalled()
+  })
+
+  it('rejects order webhooks with no HMAC signature header at all', async () => {
+    const rawBody = JSON.stringify({ id: 123 })
+    const response = await orderWebhook.POST(request(rawBody, ''))
+    const body = await response.json()
+
+    expect(response.status).toBe(401)
+    expect(body).toMatchObject({ ok: false })
+    expect(mockUpsertShopifyOrder).not.toHaveBeenCalled()
+  })
+
+  it('rejects order webhooks whose body was tampered with after signing', async () => {
+    const originalBody = JSON.stringify({ id: 123, total: '10.00' })
+    const validSignature = hmac(originalBody)
+    const tamperedBody = JSON.stringify({ id: 123, total: '999999.00' })
+
+    const response = await orderWebhook.POST(request(tamperedBody, validSignature))
     const body = await response.json()
 
     expect(response.status).toBe(401)

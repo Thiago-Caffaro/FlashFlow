@@ -78,7 +78,7 @@ export default function GalleryTab({ instanceName }: Props) {
     const res = await fetch(`/api/flow-media/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: trimmed }),
+      body: JSON.stringify({ filename: trimmed, instance_name: instanceName }),
     })
     const json = await res.json()
     if (res.ok && json.data) {
@@ -95,7 +95,7 @@ export default function GalleryTab({ instanceName }: Props) {
   async function handleDelete(id: string) {
     setDeletingId(id)
     try {
-      const res = await fetch(`/api/flow-media/${id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/flow-media/${id}?instance=${encodeURIComponent(instanceName)}`, { method: 'DELETE' })
       if (res.ok) setItems((prev) => prev.filter((it) => it.id !== id))
     } finally {
       setDeletingId(null)

@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
+
+const supabase = createClient(
+  process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
 
 const EVOLUTION_URL = process.env.EVOLUTION_API_URL
 const EVOLUTION_KEY = process.env.EVOLUTION_API_KEY
 
-const CACHE_HIT = 'public, max-age=86400, stale-while-revalidate=604800'
-const CACHE_MISS = 'public, max-age=3600'
+const CACHE_HIT = 'private, max-age=86400, stale-while-revalidate=604800'
+const CACHE_MISS = 'private, max-age=3600'
 
 const MIME_TYPE: Record<string, string> = {
   stickerMessage: 'image/webp',
@@ -19,16 +25,43 @@ const MIME_TYPE: Record<string, string> = {
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const id = searchParams.get('id')
-  const fromMe = searchParams.get('fromMe') === 'true'
-  const remoteJid = searchParams.get('remoteJid')
-  const instance = searchParams.get('instance') ?? 'flashflow-main'
   const msgType = searchParams.get('type') ?? 'stickerMessage'
 
-  if (!id || !remoteJid) {
+  if (!id) {
     return new NextResponse(null, { status: 400, headers: { 'Cache-Control': CACHE_MISS } })
   }
 
   try {
+    // remoteJid, instance e fromMe nunca vêm do cliente — são derivados da
+    // mensagem localizada no banco (duas consultas sequenciais, sem depender
+    // de embed via foreign key), para impedir que os parâmetros da URL sejam
+    // adulterados para puxar mídia de outra conversa/instância.
+    const { data: message } = await supabase
+      .from('messages')
+      .select('direction, conversation_id')
+      .eq('wa_message_id', id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (!message) {
+      return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
+    }
+
+    const { data: conversation } = await supabase
+      .from('conversations')
+      .select('wa_id, instance_name')
+      .eq('id', message.conversation_id)
+      .maybeSingle()
+
+    if (!conversation) {
+      return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
+    }
+
+    const remoteJid = conversation.wa_id
+    const instance = conversation.instance_name
+    const fromMe = message.direction === 'outbound'
+
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), 15000)
 
@@ -69,6 +102,7 @@ export async function GET(req: NextRequest) {
       headers: {
         'Content-Type': mime,
         'Cache-Control': CACHE_HIT,
+        'X-Content-Type-Options': 'nosniff',
       },
     })
   } catch {

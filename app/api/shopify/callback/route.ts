@@ -49,6 +49,14 @@ export async function GET(req: NextRequest) {
 
   if (!code || !shop || !state || !hmac) return fail('Parâmetros OAuth ausentes')
 
+  // Validação independente do domínio — não depende só do HMAC. O shop.json
+  // e o access_token endpoint abaixo fazem fetch() para este host; sem esta
+  // checagem, um bug futuro na verificação do HMAC (ou uma chave vazada)
+  // abriria uma janela de SSRF via o parâmetro "shop".
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(shop)) {
+    return fail('Domínio inválido — use o formato loja.myshopify.com')
+  }
+
   // Step 1 — Verify HMAC
   const sortedMessage = Array.from(params.entries())
     .filter(([k]) => k !== 'hmac')

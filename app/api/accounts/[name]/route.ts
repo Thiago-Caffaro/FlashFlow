@@ -56,6 +56,13 @@ export async function DELETE(
   }
   console.log(`[DELETE accounts] iniciando remoção de "${name}"`)
 
+  // Rastreia falhas por etapa em vez de assumir sucesso silenciosamente.
+  // Nenhuma etapa individual usa transação (são tabelas/serviços
+  // independentes), mas o retry é seguro: apagar linhas já apagadas não é
+  // erro, então rodar este endpoint de novo após uma falha parcial completa
+  // só o que faltou — não recria nem duplica nada.
+  const failedSteps: string[] = []
+
   try {
     // Log diagnóstico: verificar IsOnWhatsapp da Evolution API antes de deletar
     const { data: evoInstance } = await supabaseAdmin
@@ -84,25 +91,25 @@ export async function DELETE(
 
     // ── 2. ai_sessions ──────────────────────────────────────────────────────────
     const { error: sessErr } = await supabaseAdmin.from('ai_sessions').delete().eq('instance_name', name)
-    if (sessErr) console.error('[DELETE accounts] ai_sessions:', sessErr.message)
+    if (sessErr) { console.error('[DELETE accounts] ai_sessions:', sessErr.message); failedSteps.push('ai_sessions') }
     else console.log('[DELETE accounts] ai_sessions removidos')
 
     const { error: runErr } = await supabaseAdmin.from('flow_runs').delete().eq('instance_name', name)
-    if (runErr) console.error('[DELETE accounts] flow_runs:', runErr.message)
+    if (runErr) { console.error('[DELETE accounts] flow_runs:', runErr.message); failedSteps.push('flow_runs') }
 
     // ── 3. agent_memory_blocks ──────────────────────────────────────────────────
     const { error: memErr } = await supabaseAdmin.from('agent_memory_blocks').delete().eq('instance_name', name)
-    if (memErr) console.error('[DELETE accounts] agent_memory_blocks:', memErr.message)
+    if (memErr) { console.error('[DELETE accounts] agent_memory_blocks:', memErr.message); failedSteps.push('agent_memory_blocks') }
     else console.log('[DELETE accounts] agent_memory_blocks removidos')
 
     // ── 4. triggers ────────────────────────────────────────────────────────────
     const { error: trigErr } = await supabaseAdmin.from('triggers').delete().eq('instance_name', name)
-    if (trigErr) console.error('[DELETE accounts] triggers:', trigErr.message)
+    if (trigErr) { console.error('[DELETE accounts] triggers:', trigErr.message); failedSteps.push('triggers') }
     else console.log('[DELETE accounts] triggers removidos')
 
     // ── 5. flows ───────────────────────────────────────────────────────────────
     const { error: flowErr } = await supabaseAdmin.from('flows').delete().eq('instance_name', name)
-    if (flowErr) console.error('[DELETE accounts] flows:', flowErr.message)
+    if (flowErr) { console.error('[DELETE accounts] flows:', flowErr.message); failedSteps.push('flows') }
     else console.log('[DELETE accounts] flows removidos')
 
     // ── 6. flow_media + Supabase Storage ───────────────────────────────────────
@@ -114,29 +121,34 @@ export async function DELETE(
       const paths = mediaRows.map((r) => r.storage_path as string).filter(Boolean)
       if (paths.length) {
         const { error: storageErr } = await supabaseAdmin.storage.from('media').remove(paths)
-        if (storageErr) console.error('[DELETE accounts] storage remove:', storageErr.message)
+        if (storageErr) { console.error('[DELETE accounts] storage remove:', storageErr.message); failedSteps.push('media_storage') }
         else console.log(`[DELETE accounts] ${paths.length} arquivo(s) de storage removidos`)
       }
     }
     const { error: fmErr } = await supabaseAdmin.from('flow_media').delete().eq('instance_name', name)
-    if (fmErr) console.error('[DELETE accounts] flow_media:', fmErr.message)
+    if (fmErr) { console.error('[DELETE accounts] flow_media:', fmErr.message); failedSteps.push('flow_media') }
     else console.log('[DELETE accounts] flow_media removidos')
 
     // ── 7. instance_ai_config ──────────────────────────────────────────────────
     const { error: cfgErr } = await supabaseAdmin.from('instance_ai_config').delete().eq('instance_name', name)
-    if (cfgErr) console.error('[DELETE accounts] instance_ai_config:', cfgErr.message)
+    if (cfgErr) { console.error('[DELETE accounts] instance_ai_config:', cfgErr.message); failedSteps.push('instance_ai_config') }
     else console.log('[DELETE accounts] instance_ai_config removido')
 
     // ── 8. messages + conversations ────────────────────────────────────────────
-    const { data: conversations } = await supabaseAdmin
+    const { data: conversations, error: convSelectErr } = await supabaseAdmin
       .from('conversations')
       .select('id')
       .eq('instance_name', name)
-    if (conversations?.length) {
+    if (convSelectErr) {
+      console.error('[DELETE accounts] conversations (select):', convSelectErr.message)
+      failedSteps.push('conversations_select')
+    } else if (conversations?.length) {
       const ids = conversations.map((c) => c.id)
-      await supabaseAdmin.from('messages').delete().in('conversation_id', ids)
-      await supabaseAdmin.from('conversations').delete().eq('instance_name', name)
-      console.log(`[DELETE accounts] ${conversations.length} conversa(s) e mensagens removidos`)
+      const { error: msgDelErr } = await supabaseAdmin.from('messages').delete().in('conversation_id', ids)
+      if (msgDelErr) { console.error('[DELETE accounts] messages:', msgDelErr.message); failedSteps.push('messages') }
+      const { error: convDelErr } = await supabaseAdmin.from('conversations').delete().eq('instance_name', name)
+      if (convDelErr) { console.error('[DELETE accounts] conversations:', convDelErr.message); failedSteps.push('conversations') }
+      if (!msgDelErr && !convDelErr) console.log(`[DELETE accounts] ${conversations.length} conversa(s) e mensagens removidos`)
     }
 
     // ── 9. fulfillment_orders / shopify_abandoned_checkouts ─────────────────────
@@ -148,19 +160,19 @@ export async function DELETE(
       .from('fulfillment_orders')
       .update({ assigned_instance_name: null, instance_name: '' })
       .eq('instance_name', name)
-    if (ordersInstanceErr) console.error('[DELETE accounts] fulfillment_orders (instance_name):', ordersInstanceErr.message)
+    if (ordersInstanceErr) { console.error('[DELETE accounts] fulfillment_orders (instance_name):', ordersInstanceErr.message); failedSteps.push('fulfillment_orders_instance') }
     const { error: ordersAssignedErr } = await supabaseAdmin
       .from('fulfillment_orders')
       .update({ assigned_instance_name: null, instance_name: '' })
       .eq('assigned_instance_name', name)
-    if (ordersAssignedErr) console.error('[DELETE accounts] fulfillment_orders (assigned_instance_name):', ordersAssignedErr.message)
+    if (ordersAssignedErr) { console.error('[DELETE accounts] fulfillment_orders (assigned_instance_name):', ordersAssignedErr.message); failedSteps.push('fulfillment_orders_assigned') }
     if (!ordersInstanceErr && !ordersAssignedErr) console.log('[DELETE accounts] fulfillment_orders desvinculados')
 
     const { error: checkoutsErr } = await supabaseAdmin
       .from('shopify_abandoned_checkouts')
       .update({ assigned_instance_name: null })
       .eq('assigned_instance_name', name)
-    if (checkoutsErr) console.error('[DELETE accounts] shopify_abandoned_checkouts:', checkoutsErr.message)
+    if (checkoutsErr) { console.error('[DELETE accounts] shopify_abandoned_checkouts:', checkoutsErr.message); failedSteps.push('shopify_abandoned_checkouts') }
     else console.log('[DELETE accounts] shopify_abandoned_checkouts desvinculados')
 
     // ── 10. ai_provider_keys (somente se for a última conta real) ───────────────
@@ -173,16 +185,32 @@ export async function DELETE(
       .eq('is_sandbox', false)
     if (remainingAccounts === 0) {
       const { error: keysErr } = await supabaseAdmin.from('ai_provider_keys').delete().neq('provider', '')
-      if (keysErr) console.error('[DELETE accounts] ai_provider_keys:', keysErr.message)
+      if (keysErr) { console.error('[DELETE accounts] ai_provider_keys:', keysErr.message); failedSteps.push('ai_provider_keys') }
       else console.log('[DELETE accounts] ai_provider_keys removidas (última conta)')
     } else {
       console.log(`[DELETE accounts] ai_provider_keys mantidas (${remainingAccounts} conta(s) restante(s))`)
     }
 
     // ── 11. accounts ───────────────────────────────────────────────────────────
+    // Só remove a conta em si (o ponto sem volta — some da UI a partir daqui)
+    // se todas as etapas de limpeza anteriores tiverem sucedido. Se alguma
+    // falhou, a conta permanece e o endpoint pode ser chamado de novo com
+    // segurança: apagar linhas já apagadas não é erro, então o retry só
+    // termina o que faltou, sem duplicar nem recriar nada.
+    if (failedSteps.length > 0) {
+      console.error(`[DELETE accounts] exclusão parcial de "${name}" — etapas com falha: ${failedSteps.join(', ')}`)
+      return NextResponse.json(
+        { ok: false, error: 'Falha ao limpar dados relacionados — conta não removida. Tente novamente.', failedSteps },
+        { status: 500 }
+      )
+    }
+
     const { error: accErr } = await supabaseAdmin.from('accounts').delete().eq('instance_name', name)
-    if (accErr) console.error('[DELETE accounts] accounts:', accErr.message)
-    else console.log(`[DELETE accounts] conta "${name}" removida com sucesso`)
+    if (accErr) {
+      console.error('[DELETE accounts] accounts:', accErr.message)
+      return NextResponse.json({ ok: false, error: accErr.message, failedSteps: ['accounts'] }, { status: 500 })
+    }
+    console.log(`[DELETE accounts] conta "${name}" removida com sucesso`)
 
     return NextResponse.json({ ok: true })
   } catch (err) {

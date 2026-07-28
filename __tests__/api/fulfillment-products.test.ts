@@ -87,6 +87,35 @@ describe('/api/fulfillment/products writes', () => {
     expect(body).toMatchObject({ ok: true, product })
   })
 
+  it('rejects PUT that tries to change the product country', async () => {
+    const builder = queryBuilder({ data: { id: 'product-1', country: 'PT' }, error: null })
+    mockFrom.mockReturnValue(builder)
+
+    const response = await PUT(request('http://localhost/api/fulfillment/products', {
+      id: 'product-1',
+      country: 'ES',
+      name: 'Produto',
+    }))
+    const body = await response.json()
+
+    expect(response.status).toBe(400)
+    expect(body.ok).toBe(false)
+    expect(builder.updates.length).toBe(0)
+  })
+
+  it('allows PUT that resends the same (unchanged) country', async () => {
+    const builder = queryBuilder({ data: { id: 'product-1', country: 'PT', name: 'Produto' }, error: null })
+    mockFrom.mockReturnValue(builder)
+
+    const response = await PUT(request('http://localhost/api/fulfillment/products', {
+      id: 'product-1',
+      country: 'PT',
+      name: 'Produto novo',
+    }))
+
+    expect(response.status).toBe(200)
+  })
+
   it('soft deletes a product by setting active=false', async () => {
     const product = { id: 'product-1', active: false }
     const builder = queryBuilder({ data: product, error: null })

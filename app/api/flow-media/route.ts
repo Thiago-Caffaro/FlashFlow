@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { uploadFileToStorage } from '@/lib/storage'
+import { extensionForSniffedType, sniffImageType } from '@/lib/image-validation'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -8,6 +9,23 @@ const supabase = createClient(
 )
 
 const MAX_SIZE = 512_000 // 500 KB
+
+/**
+ * Sanitiza o nome original para uso como metadado de exibição apenas — nunca
+ * é usado para montar o caminho de armazenamento (esse é sempre aleatório).
+ * Remove separadores de caminho e caracteres de controle, e limita o tamanho.
+ */
+function sanitizeDisplayFilename(name: string): string {
+  const base = name.split(/[/\\]/).pop() ?? name
+  const cleaned = Array.from(base)
+    .filter((ch) => {
+      const code = ch.codePointAt(0) ?? 0
+      return code >= 32 && code !== 127
+    })
+    .join('')
+    .trim()
+  return (cleaned || 'imagem').slice(0, 200)
+}
 
 export async function GET(req: NextRequest) {
   const instance = req.nextUrl.searchParams.get('instance')
@@ -33,22 +51,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'file e instanceName são obrigatórios' }, { status: 400 })
     }
 
-    if (!file.type.startsWith('image/')) {
-      return NextResponse.json({ error: 'Apenas imagens são permitidas' }, { status: 400 })
-    }
-
     if (file.size > MAX_SIZE) {
       return NextResponse.json({ error: 'Imagem excede o limite de 500KB' }, { status: 400 })
     }
 
     const buffer = await file.arrayBuffer()
-    const { path, url } = await uploadFileToStorage(buffer, file.name, file.type, 'flow-images/')
+    // Nunca confia no Content-Type/nome enviado pelo cliente — detecta o
+    // formato real pelos magic bytes. SVG e outros formatos "ativos" nunca
+    // passam aqui, apenas raster puro (jpeg/png/gif/webp).
+    const sniffed = sniffImageType(Buffer.from(buffer))
+    if (!sniffed) {
+      return NextResponse.json({ error: 'Formato de imagem não suportado ou arquivo corrompido' }, { status: 400 })
+    }
+    const safeFilename = `image.${extensionForSniffedType(sniffed)}`
+    const { path, url } = await uploadFileToStorage(buffer, safeFilename, sniffed, 'flow-images/')
 
     const { data, error } = await supabase
       .from('flow_media')
       .insert({
         instance_name: instanceName,
-        filename: file.name,
+        filename: sanitizeDisplayFilename(file.name),
         storage_path: path,
         url,
         size_bytes: file.size,

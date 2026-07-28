@@ -202,7 +202,7 @@ export default function FlowsTab({ instanceName }: Props) {
     const res = await fetch(`/api/flows/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(changes),
+      body: JSON.stringify({ ...changes, instance_name: instanceName }),
     })
     const json = await res.json()
     if (json.ok) {
@@ -212,7 +212,7 @@ export default function FlowsTab({ instanceName }: Props) {
   }
 
   async function handleDelete(id: string) {
-    const res = await fetch(`/api/flows/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/flows/${id}?instance=${encodeURIComponent(instanceName)}`, { method: 'DELETE' })
     const json = await res.json()
     if (json.ok) {
       setFlows((prev) => prev.filter((f) => f.id !== id))

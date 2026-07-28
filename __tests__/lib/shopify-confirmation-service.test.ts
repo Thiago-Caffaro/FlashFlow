@@ -42,6 +42,7 @@ type QueryBuilder = {
   updates: unknown[]
   select: jest.Mock<QueryBuilder, [string?]>
   eq: jest.Mock<QueryBuilder, [string, unknown]>
+  is: jest.Mock<QueryBuilder, [string, unknown]>
   order: jest.Mock<QueryBuilder, [string, unknown?]>
   limit: jest.Mock<QueryBuilder, [number]>
   maybeSingle: jest.Mock<Promise<QueryResult>, []>
@@ -63,6 +64,7 @@ function queryBuilder(result: QueryResult = { data: null, error: null }) {
     updates,
     select: jest.fn((_columns?: string) => builder),
     eq: jest.fn((_column: string, _value: unknown) => builder),
+    is: jest.fn((_column: string, _value: unknown) => builder),
     order: jest.fn((_column: string, _options?: unknown) => builder),
     limit: jest.fn((_count: number) => builder),
     maybeSingle: jest.fn(async () => result),
@@ -211,6 +213,66 @@ describe('shopify-confirmation-service', () => {
     expect(updated.inserts).toEqual([])
     expect(mockSubmitFulfillmentOrder).not.toHaveBeenCalled()
     expect(mockSendWhatsAppText).not.toHaveBeenCalled()
+  })
+
+  it('reivindica confirmation_message_sent_at atomicamente antes de disparar o gatilho de confirmação', async () => {
+    const account = queryBuilder({ data: { instance_name: 'wa-country' }, error: null })
+    const existing = queryBuilder({ data: null, error: null }) // pedido novo, nunca confirmado
+    const inserted = queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country' }, error: null })
+    const claim = queryBuilder({ data: { id: 'order-1' }, error: null }) // claim vence
+    const orderForTrigger = queryBuilder({
+      data: {
+        id: 'order-1',
+        customer_name: 'Cliente Teste',
+        contact_phone: '351900000000',
+        assigned_instance_name: 'wa-country',
+        instance_name: 'wa-country',
+        is_simulation: false,
+      },
+      error: null,
+    })
+    const triggerLookup = queryBuilder({ data: null, error: null }) // nenhum gatilho configurado -> lança erro
+    // runShopifyOrderTrigger tem seu próprio catch interno que grava
+    // confirmation_message_error antes de relançar o erro.
+    const internalErrorUpdate = queryBuilder({ data: null, error: null })
+    const unclaim = queryBuilder({ data: null, error: null })
+
+    setTableQueues({
+      accounts: [account],
+      fulfillment_orders: [existing, inserted, claim, orderForTrigger, internalErrorUpdate, unclaim],
+      triggers: [triggerLookup],
+    })
+
+    await upsertShopifyOrder(integrationRow(), shopifyOrder())
+
+    // O claim é um UPDATE condicional: só afeta a linha se confirmation_message_sent_at ainda for null.
+    expect(claim.update).toHaveBeenCalledWith({ confirmation_message_sent_at: expect.any(String) })
+    // is('confirmation_message_sent_at', null) é implementado via .eq no mock genérico de query builder,
+    // mas o importante aqui é que o claim ocorreu ANTES da tentativa de disparo do gatilho.
+    expect(triggerLookup.eq).toHaveBeenCalledWith('source', 'shopify_order')
+
+    // Sem gatilho configurado, runShopifyOrderTrigger lança e o catch libera o claim.
+    expect(unclaim.updates[0]).toMatchObject({ confirmation_message_sent_at: null })
+  })
+
+  it('não reivindica nem tenta disparar confirmação de novo quando confirmation_message_sent_at já foi setado por outra entrega concorrente do webhook', async () => {
+    const account = queryBuilder({ data: { instance_name: 'wa-country' }, error: null })
+    const existing = queryBuilder({ data: null, error: null })
+    const inserted = queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country' }, error: null })
+    // Simula outra entrega do webhook já ter vencido a corrida — o UPDATE
+    // condicional (WHERE confirmation_message_sent_at IS NULL) não afeta
+    // nenhuma linha e retorna null.
+    const claimLost = queryBuilder({ data: null, error: null })
+
+    setTableQueues({
+      accounts: [account],
+      fulfillment_orders: [existing, inserted, claimLost],
+    })
+
+    await upsertShopifyOrder(integrationRow(), shopifyOrder())
+
+    // Sem vencer o claim, o gatilho de confirmação nunca deve ser consultado/disparado.
+    expect(mockExecuteFlow).not.toHaveBeenCalled()
   })
 
   it('maps and inserts abandoned checkouts for WhatsApp recovery', async () => {

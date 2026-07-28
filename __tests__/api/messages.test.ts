@@ -1,10 +1,16 @@
 /**
  * Testes unitários para app/api/messages/route.ts
  *
+ * Cobre o achado P7 da varredura de segurança: o destino do envio (wa_id e
+ * instance_name) é derivado exclusivamente da conversa carregada no
+ * servidor — nunca de um "waId" enviado pelo cliente — e não há mais
+ * fallback para a instância "flashflow-main" quando a conversa não é
+ * encontrada.
+ *
  * Estratégia de mock:
  * - @supabase/supabase-js é mockado via jest.mock.
  * - fetch global é substituído por jest.fn() antes de cada teste para
- *   simular chamadas à Evolution API sem rede real.
+ *   simular chamadas à Evolution API (via lib/whatsapp-text.ts) sem rede real.
  */
 
 import { NextRequest } from 'next/server'
@@ -34,7 +40,6 @@ function buildRequest(body: unknown): NextRequest {
   })
 }
 
-/** Resposta de sucesso da Evolution API */
 function mockEvolutionSuccess() {
   fetchMock.mockResolvedValue({
     ok: true,
@@ -44,7 +49,6 @@ function mockEvolutionSuccess() {
   })
 }
 
-/** Resposta de falha da Evolution API */
 function mockEvolutionFailure() {
   fetchMock.mockResolvedValue({
     ok: false,
@@ -54,53 +58,79 @@ function mockEvolutionFailure() {
   })
 }
 
+function mockEvolutionTimeout() {
+  const abortError = new Error('The operation was aborted')
+  abortError.name = 'AbortError'
+  fetchMock.mockRejectedValue(abortError)
+}
+
 /**
- * Configura supabaseMock para insert em messages + update em conversations,
- * ambos com sucesso.
+ * Configura o Supabase para o caminho feliz completo:
+ *   conversations(select) → messages(insert "sending") → messages(update "sent") → conversations(update last_message)
  */
-// Tracks how many times 'conversations' has been called to distinguish
-// the first call (select instance_name) from the second (update last_message).
-function mockSupabaseSuccess(savedMessage = { id: 'msg-saved', content: 'oi' }) {
-  const convCallCount = { n: 0 }
+function mockSupabaseSuccess(opts: {
+  waId?: string
+  instanceName?: string
+  updatedMessage?: Record<string, unknown>
+} = {}) {
+  const waId = opts.waId ?? '5521912345678@s.whatsapp.net'
+  const instanceName = opts.instanceName ?? 'flashflow-main'
+  const pending = { id: 'pending-1', status: 'sending', content: 'x' }
+  const updatedMessage = opts.updatedMessage ?? { ...pending, wa_message_id: 'evo-msg-id', status: 'sent' }
+
+  let messagesCallCount = 0
   supabaseMock.from.mockImplementation((table: string) => {
     if (table === 'conversations') {
-      convCallCount.n++
-      if (convCallCount.n === 1) {
-        // First call: select instance_name
-        return {
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              maybeSingle: jest.fn().mockResolvedValue({
-                data: { instance_name: 'flashflow-main' },
-                error: null,
-              }),
+      return {
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            maybeSingle: jest.fn().mockResolvedValue({
+              data: { id: 'conv-1', wa_id: waId, instance_name: instanceName },
+              error: null,
             }),
           }),
-        }
-      }
-      // Second call: update last_message
-      return {
+        }),
         update: jest.fn().mockReturnValue({
           eq: jest.fn().mockResolvedValue({ error: null }),
         }),
       }
     }
     if (table === 'messages') {
+      messagesCallCount++
+      if (messagesCallCount === 1) {
+        return {
+          insert: jest.fn().mockReturnValue({
+            select: jest.fn().mockReturnValue({
+              single: jest.fn().mockResolvedValue({ data: pending, error: null }),
+            }),
+          }),
+          update: jest.fn().mockReturnValue({
+            eq: jest.fn().mockResolvedValue({ error: null }),
+          }),
+        }
+      }
       return {
-        insert: jest.fn().mockReturnValue({
-          select: jest.fn().mockReturnValue({
-            single: jest.fn().mockResolvedValue({ data: savedMessage, error: null }),
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            select: jest.fn().mockReturnValue({
+              single: jest.fn().mockResolvedValue({ data: updatedMessage, error: null }),
+            }),
+            eq: jest.fn().mockResolvedValue({ error: null }),
           }),
         }),
       }
     }
-    if (table === 'ai_sessions') {
+  })
+}
+
+/** Conversa não encontrada — a rota deve falhar ANTES de qualquer envio. */
+function mockConversationNotFound() {
+  supabaseMock.from.mockImplementation((table: string) => {
+    if (table === 'conversations') {
       return {
-        update: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
           eq: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              eq: jest.fn().mockResolvedValue({ error: null }),
-            }),
+            maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
           }),
         }),
       }
@@ -127,16 +157,7 @@ describe('POST /api/messages', () => {
   // ── Validação de campos obrigatórios ──────────────────────────────────────
 
   it('retorna 400 se conversationId estiver ausente', async () => {
-    const req = buildRequest({ waId: '5521999887766@s.whatsapp.net', content: 'oi' })
-    const res = await POST(req)
-
-    expect(res.status).toBe(400)
-    expect(await res.json()).toMatchObject({ error: expect.any(String) })
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it('retorna 400 se waId estiver ausente', async () => {
-    const req = buildRequest({ conversationId: 'conv-1', content: 'oi' })
+    const req = buildRequest({ content: 'oi' })
     const res = await POST(req)
 
     expect(res.status).toBe(400)
@@ -144,25 +165,52 @@ describe('POST /api/messages', () => {
   })
 
   it('retorna 400 se content estiver ausente', async () => {
-    const req = buildRequest({ conversationId: 'conv-1', waId: '5521999887766@s.whatsapp.net' })
+    const req = buildRequest({ conversationId: 'conv-1' })
     const res = await POST(req)
 
     expect(res.status).toBe(400)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  // ── Chamada à Evolution API ───────────────────────────────────────────────
+  // ── Isolamento: destino vem do servidor, nunca do cliente ────────────────
 
-  it('chama a Evolution API com number e text corretos', async () => {
+  it('retorna 404 e não envia nada quando a conversa não existe (sem fallback para flashflow-main)', async () => {
+    mockConversationNotFound()
+
+    const req = buildRequest({ conversationId: 'conv-inexistente', content: 'oi' })
+    const res = await POST(req)
+
+    expect(res.status).toBe(404)
+    expect(fetchMock).not.toHaveBeenCalled()
+    const calledTables = supabaseMock.from.mock.calls.map((c: string[]) => c[0])
+    expect(calledTables).not.toContain('messages')
+  })
+
+  it('ignora um waId adulterado no corpo e usa o wa_id real da conversa', async () => {
     mockEvolutionSuccess()
-    mockSupabaseSuccess()
+    mockSupabaseSuccess({ waId: '5521900000000@s.whatsapp.net' })
 
     const req = buildRequest({
       conversationId: 'conv-1',
-      waId: '5521912345678@s.whatsapp.net',
-      content: 'olá mundo',
+      waId: '5521999999999@s.whatsapp.net', // número de outro contato — deve ser ignorado
+      content: 'olá',
     })
 
+    await POST(req)
+
+    const [, options] = fetchMock.mock.calls[0]
+    const sentBody = JSON.parse(options.body)
+    expect(sentBody.number).toBe('5521900000000@s.whatsapp.net')
+    expect(sentBody.number).not.toBe('5521999999999@s.whatsapp.net')
+  })
+
+  // ── Chamada à Evolution API ───────────────────────────────────────────────
+
+  it('chama a Evolution API com number (da conversa) e text corretos', async () => {
+    mockEvolutionSuccess()
+    mockSupabaseSuccess({ waId: '5521912345678@s.whatsapp.net', instanceName: 'flashflow-main' })
+
+    const req = buildRequest({ conversationId: 'conv-1', content: 'olá mundo' })
     await POST(req)
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -179,12 +227,7 @@ describe('POST /api/messages', () => {
     mockEvolutionSuccess()
     mockSupabaseSuccess()
 
-    const req = buildRequest({
-      conversationId: 'conv-1',
-      waId: '5521912345678@s.whatsapp.net',
-      content: 'teste header',
-    })
-
+    const req = buildRequest({ conversationId: 'conv-1', content: 'teste header' })
     await POST(req)
 
     const [, options] = fetchMock.mock.calls[0]
@@ -193,105 +236,80 @@ describe('POST /api/messages', () => {
 
   // ── Persistência no Supabase ──────────────────────────────────────────────
 
-  it('salva mensagem no Supabase com direction "outbound" e wa_message_id da Evolution', async () => {
+  it('registra a mensagem como "sending" antes de enviar e como "sent" com wa_message_id depois', async () => {
     mockEvolutionSuccess()
     mockSupabaseSuccess()
 
-    const req = buildRequest({
-      conversationId: 'conv-1',
-      waId: '5521912345678@s.whatsapp.net',
-      content: 'mensagem outbound',
-    })
-
+    const req = buildRequest({ conversationId: 'conv-1', content: 'mensagem outbound' })
     await POST(req)
 
-    // results[0] = conversations (select instance_name), results[1] = messages (insert)
+    // from() calls: 0=conversations(select), 1=messages(insert pending), 2=messages(update sent), 3=conversations(update)
     const insertCall = supabaseMock.from.mock.results[1].value.insert
     const insertArg = insertCall.mock.calls[0][0]
-
+    expect(insertArg.status).toBe('sending')
     expect(insertArg.direction).toBe('outbound')
-    expect(insertArg.status).toBe('sent')
-    expect(insertArg.content).toBe('mensagem outbound')
-    expect(insertArg.conversation_id).toBe('conv-1')
-    expect(insertArg.type).toBe('text')
-    expect(insertArg.wa_message_id).toBe('evo-msg-id') // capturado da Evolution API
+    expect(insertArg.wa_message_id).toBeNull()
+
+    const updateCall = supabaseMock.from.mock.results[2].value.update
+    const updateArg = updateCall.mock.calls[0][0]
+    expect(updateArg.status).toBe('sent')
+    expect(updateArg.wa_message_id).toBe('evo-msg-id')
   })
 
   it('atualiza last_message na conversa após envio', async () => {
     mockEvolutionSuccess()
     mockSupabaseSuccess()
 
-    const req = buildRequest({
-      conversationId: 'conv-42',
-      waId: '5521912345678@s.whatsapp.net',
-      content: 'atualiza conversa',
-    })
-
+    const req = buildRequest({ conversationId: 'conv-1', content: 'atualiza conversa' })
     await POST(req)
 
-    // results[2] = conversations (update last_message)
-    const updateCall = supabaseMock.from.mock.results[2].value.update
+    const updateCall = supabaseMock.from.mock.results[3].value.update
     const updateArg = updateCall.mock.calls[0][0]
-
     expect(updateArg.last_message).toBe('atualiza conversa')
     expect(updateArg.last_message_at).toBeDefined()
-
-    const eqCall = updateCall.mock.results[0].value.eq
-    expect(eqCall.mock.calls[0]).toEqual(['id', 'conv-42'])
   })
 
   // ── Resposta de sucesso ───────────────────────────────────────────────────
 
   it('retorna { ok: true } com a mensagem salva em caso de sucesso', async () => {
-    const savedMessage = { id: 'msg-999', content: 'resposta', direction: 'outbound' }
+    const updatedMessage = { id: 'msg-999', content: 'resposta', direction: 'outbound', status: 'sent' }
     mockEvolutionSuccess()
-    mockSupabaseSuccess(savedMessage)
+    mockSupabaseSuccess({ updatedMessage })
 
-    const req = buildRequest({
-      conversationId: 'conv-1',
-      waId: '5521912345678@s.whatsapp.net',
-      content: 'resposta',
-    })
-
+    const req = buildRequest({ conversationId: 'conv-1', content: 'resposta' })
     const res = await POST(req)
-    expect(res.status).toBe(200)
 
+    expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.ok).toBe(true)
-    expect(json.message).toMatchObject(savedMessage)
+    expect(json.message).toMatchObject(updatedMessage)
   })
 
-  // ── Falha da Evolution API ────────────────────────────────────────────────
+  // ── Falha e timeout da Evolution API ──────────────────────────────────────
 
-  it('retorna 500 se a Evolution API retornar erro', async () => {
-    // Precisa mockar o select de instance_name que ocorre antes da chamada à Evolution
-    supabaseMock.from.mockImplementation((table: string) => {
-      if (table === 'conversations') {
-        return {
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              maybeSingle: jest.fn().mockResolvedValue({
-                data: { instance_name: 'flashflow-main' },
-                error: null,
-              }),
-            }),
-          }),
-        }
-      }
-    })
+  it('retorna 502 e marca a mensagem como "failed" quando a Evolution rejeita', async () => {
+    mockSupabaseSuccess()
     mockEvolutionFailure()
 
-    const req = buildRequest({
-      conversationId: 'conv-1',
-      waId: '5521912345678@s.whatsapp.net',
-      content: 'vai falhar',
-    })
-
+    const req = buildRequest({ conversationId: 'conv-1', content: 'vai falhar' })
     const res = await POST(req)
-    expect(res.status).toBe(500)
-    expect(await res.json()).toMatchObject({ error: expect.any(String) })
-    // Não deve tentar salvar mensagem no Supabase se a Evolution falhou
-    const calledTables = supabaseMock.from.mock.calls.map((c: string[]) => c[0])
-    expect(calledTables).not.toContain('messages')
+
+    expect(res.status).toBe(502)
+    // from() calls: 0=conversations(select), 1=messages(insert pending), 2=messages(update failed)
+    const failUpdateCall = supabaseMock.from.mock.results[2].value.update
+    expect(failUpdateCall).toHaveBeenCalledWith({ status: 'failed' })
+  })
+
+  it('retorna 504 e mantém status "sending" (resultado desconhecido) em timeout, sem marcar como failed', async () => {
+    mockSupabaseSuccess()
+    mockEvolutionTimeout()
+
+    const req = buildRequest({ conversationId: 'conv-1', content: 'vai expirar' })
+    const res = await POST(req)
+
+    expect(res.status).toBe(504)
+    // Nenhuma atualização de status deve ocorrer — só o insert "sending" inicial.
+    const messagesCalls = supabaseMock.from.mock.calls.filter((c: string[]) => c[0] === 'messages')
+    expect(messagesCalls.length).toBe(1)
   })
 })

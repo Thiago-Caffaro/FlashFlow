@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt } from '@/lib/ai-crypto'
-import type { AnalysisResult } from '@/types'
+import { validateAnalysisResult } from '@/lib/analysis-validation'
 
 export const dynamic = 'force-dynamic'
 
@@ -106,13 +106,32 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Fetch conversations metadata ───────────────────────────────────────────
+  // Filtra por instance_name explicitamente — sem isso, qualquer instância
+  // poderia enviar conversation_ids de outra instância e a IA analisaria (e
+  // devolveria o conteúdo de) conversas que não são suas.
   const { data: conversations } = await supabaseAdmin
     .from('conversations')
     .select('id, contact_name, contact_phone')
+    .eq('instance_name', instance_name)
     .in('id', conversation_ids)
 
   if (!conversations || conversations.length === 0) {
     return NextResponse.json({ ok: false, error: 'Conversas não encontradas.' }, { status: 400 })
+  }
+
+  // Se algum id não pertence à instância informada (ou não existe), a
+  // consulta acima simplesmente o omite — não prosseguimos silenciosamente
+  // com um subconjunto menor do que o solicitado.
+  const foundIds = new Set(conversations.map((c: { id: string }) => c.id))
+  const missingIds = conversation_ids.filter((id) => !foundIds.has(id))
+  if (missingIds.length > 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `${missingIds.length} conversa(s) não encontrada(s) ou não pertencem à instância informada.`,
+      },
+      { status: 400 }
+    )
   }
 
   // ── Fetch messages for each conversation ──────────────────────────────────
@@ -242,7 +261,7 @@ export async function POST(req: NextRequest) {
     .replace(/\s*```\s*$/m, '')
     .trim()
 
-  let parsed: AnalysisResult
+  let parsed: unknown
   try {
     parsed = JSON.parse(cleaned)
   } catch {
@@ -252,12 +271,16 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  if (typeof parsed.analysis !== 'string' || !Array.isArray(parsed.suggestions)) {
+  // Validação integral da saída — nunca repassa campos inesperados que o
+  // modelo possa ter incluído, e recusa formas fora dos limites esperados
+  // (tamanho, quantidade de sugestões, tipos, keywords).
+  const validation = validateAnalysisResult(parsed)
+  if (!validation.ok || !validation.data) {
     return NextResponse.json(
-      { ok: false, error: 'Resposta da IA em formato inesperado.' },
+      { ok: false, error: validation.error ?? 'Resposta da IA em formato inesperado.' },
       { status: 500 }
     )
   }
 
-  return NextResponse.json({ ok: true, result: parsed })
+  return NextResponse.json({ ok: true, result: validation.data })
 }

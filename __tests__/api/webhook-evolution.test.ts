@@ -9,6 +9,9 @@
  */
 
 import { NextRequest } from 'next/server'
+import { EVOLUTION_WEBHOOK_SECRET_HEADER, exceedsMaxEvolutionWebhookBodySize } from '@/lib/evolution-api'
+
+const TEST_WEBHOOK_SECRET = 'test-webhook-secret'
 
 // ─── Mock do Supabase ──────────────────────────────────────────────────────────
 
@@ -38,12 +41,21 @@ global.fetch = fetchMock
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-function buildRequest(body: unknown): NextRequest {
+/** Monta o request bruto, sem injetar header de autenticação nem "instance" por padrão. */
+function buildRawRequest(body: unknown, headers: Record<string, string> = {}): NextRequest {
   return new NextRequest('http://localhost/api/webhook/evolution', {
     method: 'POST',
-    body: JSON.stringify(body),
-    headers: { 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json', ...headers },
   })
+}
+
+/** Monta um request autenticado (header de segredo válido) com "instance" padrão. */
+function buildRequest(body: Record<string, unknown>): NextRequest {
+  return buildRawRequest(
+    { instance: 'flashflow-main', ...body },
+    { [EVOLUTION_WEBHOOK_SECRET_HEADER]: TEST_WEBHOOK_SECRET }
+  )
 }
 
 /**
@@ -184,6 +196,95 @@ describe('POST /api/webhook/evolution', () => {
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-key'
     process.env.EVOLUTION_API_URL = 'http://localhost:8080'
     process.env.EVOLUTION_API_KEY = 'test-key'
+    process.env.EVOLUTION_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET
+  })
+
+  // ── Autenticação do webhook ────────────────────────────────────────────────
+
+  it('rejeita com 401 quando o header de segredo está ausente', async () => {
+    const req = buildRawRequest({ event: 'messages.upsert', instance: 'flashflow-main', data: {} })
+    const res = await POST(req)
+
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ ok: false, error: 'Unauthorized' })
+    expect(supabaseMock.from).not.toHaveBeenCalled()
+  })
+
+  it('rejeita com 401 quando o header de segredo está incorreto', async () => {
+    const req = buildRawRequest(
+      { event: 'messages.upsert', instance: 'flashflow-main', data: {} },
+      { [EVOLUTION_WEBHOOK_SECRET_HEADER]: 'wrong-secret' }
+    )
+    const res = await POST(req)
+
+    expect(res.status).toBe(401)
+    expect(supabaseMock.from).not.toHaveBeenCalled()
+  })
+
+  it('rejeita com 401 quando EVOLUTION_WEBHOOK_SECRET não está configurado no servidor (fail closed)', async () => {
+    delete process.env.EVOLUTION_WEBHOOK_SECRET
+    const req = buildRequest({ event: 'messages.upsert', data: {} })
+    const res = await POST(req)
+
+    expect(res.status).toBe(401)
+    expect(supabaseMock.from).not.toHaveBeenCalled()
+  })
+
+  it('rejeita com 401 quando o Content-Type não é application/json', async () => {
+    const req = buildRawRequest(
+      { event: 'messages.upsert', instance: 'flashflow-main', data: {} },
+      { [EVOLUTION_WEBHOOK_SECRET_HEADER]: TEST_WEBHOOK_SECRET, 'Content-Type': 'text/plain' }
+    )
+    const res = await POST(req)
+
+    expect(res.status).toBe(401)
+    expect(supabaseMock.from).not.toHaveBeenCalled()
+  })
+
+  // NOTE: o cabeçalho "content-length" é proibido pela spec do Fetch para ser
+  // definido manualmente em Request/Headers construídos em código (inclusive
+  // NextRequest de teste) — apenas o transporte HTTP real o define. Por isso o
+  // guard de tamanho é testado isoladamente como função pura; em produção o
+  // mesmo valor chega via req.headers.get('content-length') do HTTP real e
+  // cai no mesmo branch 401 já coberto pelos testes de autenticação acima.
+  it('exceedsMaxEvolutionWebhookBodySize rejeita corpo acima do limite e aceita dentro do limite', () => {
+    expect(exceedsMaxEvolutionWebhookBodySize(String(20 * 1024 * 1024))).toBe(true)
+    expect(exceedsMaxEvolutionWebhookBodySize(String(1024))).toBe(false)
+    expect(exceedsMaxEvolutionWebhookBodySize(null)).toBe(false)
+  })
+
+  it('aceita e processa quando o header de segredo é válido', async () => {
+    mockSupabaseSuccess()
+    const req = buildRequest({
+      event: 'messages.upsert',
+      data: {
+        key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-auth-ok' },
+        message: { conversation: 'ok' },
+        pushName: 'Teste',
+      },
+    })
+    const res = await POST(req)
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+  })
+
+  it('ignora messages.upsert sem "instance" no payload, sem fallback para flashflow-main', async () => {
+    const req = buildRawRequest(
+      {
+        event: 'messages.upsert',
+        data: {
+          key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-no-instance' },
+          message: { conversation: 'sem instance' },
+        },
+      },
+      { [EVOLUTION_WEBHOOK_SECRET_HEADER]: TEST_WEBHOOK_SECRET }
+    )
+    const res = await POST(req)
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(supabaseMock.from).not.toHaveBeenCalled()
   })
 
   // ── Filtragem de eventos ───────────────────────────────────────────────────

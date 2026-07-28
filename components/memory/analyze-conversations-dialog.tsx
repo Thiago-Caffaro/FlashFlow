@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { X, Search, Sparkles, ChevronLeft, CheckSquare, Square, AlertTriangle, Loader2, CheckCircle2, XCircle } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
 import type { AnalysisResult, MemoryBlockType, MemorySuggestion } from '@/types'
 
 interface Props {
@@ -46,15 +45,21 @@ export default function AnalyzeConversationsDialog({ instanceName, onClose, onBl
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    supabase
-      .from('conversations')
-      .select('id, contact_name, contact_phone, last_message')
-      .eq('instance_name', instanceName)
-      .order('last_message_at', { ascending: false })
-      .then(({ data }) => {
-        setConversations((data as ConversationOption[]) ?? [])
+    fetch(`/api/conversations?instance=${encodeURIComponent(instanceName)}`, { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((json) => {
+        const rows: ConversationOption[] = json.ok
+          ? (json.conversations as ConversationOption[]).map((c) => ({
+              id: c.id,
+              contact_name: c.contact_name,
+              contact_phone: c.contact_phone,
+              last_message: c.last_message,
+            }))
+          : []
+        setConversations(rows)
         setLoadingConvs(false)
       })
+      .catch(() => setLoadingConvs(false))
   }, [instanceName])
 
   const filteredConvs = useMemo(() => {

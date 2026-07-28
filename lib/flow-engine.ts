@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession, SwitchCase, FlowNodeData } from '@/types'
 import { decrypt } from './ai-crypto'
 import { getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
+import { SANDBOX_INSTANCE_NAME } from './sandbox'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -43,9 +44,25 @@ function logError(tag: string, ...args: unknown[]) {
 
 // ─── WhatsApp send ────────────────────────────────────────────────────────────
 
+/**
+ * Determina para qual instância da Evolution API (se houver) a mensagem deve
+ * de fato ser enviada. A barreira fica aqui, amarrada ao instanceName em vez
+ * de depender só da flag isSandbox — mesmo que algum chamador esqueça de
+ * setar ctx.isSandbox, uma conversa cuja instância é literalmente
+ * "__sandbox__" NUNCA envia de verdade a menos que realSendInstanceName
+ * tenha sido explicitamente resolvido a partir de um contato de teste
+ * importado com o envio real ligado (ver app/api/fulfillment/sandbox/message/route.ts).
+ */
+export function resolveRealSendTarget(ctx: FlowContext): string | undefined {
+  if (ctx.instanceName === SANDBOX_INSTANCE_NAME) {
+    return ctx.isSandbox ? ctx.realSendInstanceName : undefined
+  }
+  return ctx.instanceName
+}
+
 async function sendWhatsApp(ctx: FlowContext, text: string) {
   let waMessageId: string | null = null
-  const realSendTarget = ctx.isSandbox ? ctx.realSendInstanceName : ctx.instanceName
+  const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
     const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${realSendTarget}`, {
       method: 'POST',
@@ -74,7 +91,7 @@ async function sendWhatsApp(ctx: FlowContext, text: string) {
 
 async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
   let waMessageId: string | null = null
-  const realSendTarget = ctx.isSandbox ? ctx.realSendInstanceName : ctx.instanceName
+  const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
     const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${realSendTarget}`, {
       method: 'POST',
@@ -1041,6 +1058,22 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
       if (useTextSignal && rawReply.includes(ESCALATION_SIGNAL)) {
         requiresHuman = true
         reply = rawReply.replace(ESCALATION_SIGNAL, '').trim()
+      }
+
+      // A chamada de IA acima pode levar vários segundos. Reconfirma
+      // requires_human agora, no último instante antes de qualquer efeito
+      // externo — um operador humano (ou outro timer de debounce concorrente)
+      // pode ter assumido a conversa enquanto a IA respondia. Sem isso, a
+      // resposta da IA seria enviada por cima de um atendimento já escalado.
+      const { data: recheck } = await supabase
+        .from('ai_sessions')
+        .select('requires_human')
+        .eq('id', session.id)
+        .maybeSingle()
+
+      if (recheck?.requires_human && !requiresHuman) {
+        log(`handleActiveSession: sessão foi escalada durante a chamada de IA — descartando resposta`, { sessionId: session.id })
+        return
       }
 
       if (requiresHuman) {

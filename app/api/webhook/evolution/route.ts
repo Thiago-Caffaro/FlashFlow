@@ -3,6 +3,11 @@ import { createClient } from '@supabase/supabase-js'
 import { executeFlow, checkActiveFlowRun, checkActiveSession, handleActiveSession } from '@/lib/flow-engine'
 import { cacheQr, clearQr } from '@/lib/qr-cache'
 import { logWebhookEvent } from '@/lib/webhook-log'
+import {
+  exceedsMaxEvolutionWebhookBodySize,
+  EVOLUTION_WEBHOOK_SECRET_HEADER,
+  verifyEvolutionWebhookSecret,
+} from '@/lib/evolution-api'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -11,6 +16,10 @@ const supabase = createClient(
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
+
+function unauthorized() {
+  return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+}
 
 async function ensureMediaBucket() {
   await supabase.storage.createBucket('media', { public: true }).catch(() => {})
@@ -173,6 +182,23 @@ async function executeTriggers(
 }
 
 export async function POST(req: NextRequest) {
+  // Autenticação do webhook precisa acontecer antes de qualquer parsing de payload,
+  // log de conteúdo ou acesso ao banco. A Evolution API 2.3.7 permite configurar
+  // headers customizados por instância (ver webhookConfigPayload em lib/evolution-api.ts),
+  // que ela reenvia em todo callback — validamos esse header em tempo constante aqui.
+  const contentType = req.headers.get('content-type') ?? ''
+  if (!contentType.toLowerCase().includes('application/json')) {
+    return unauthorized()
+  }
+
+  if (exceedsMaxEvolutionWebhookBodySize(req.headers.get('content-length'))) {
+    return unauthorized()
+  }
+
+  if (!verifyEvolutionWebhookSecret(req.headers.get(EVOLUTION_WEBHOOK_SECRET_HEADER))) {
+    return unauthorized()
+  }
+
   try {
     const body = await req.json()
     const event = (body.event ?? '').toLowerCase()
@@ -267,7 +293,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    const instanceName: string = body.instance ?? 'flashflow-main'
+    const instanceName: string = body.instance ?? ''
+    if (!instanceName) {
+      console.error('[webhook] messages.upsert sem "instance" no payload — evento ignorado')
+      return NextResponse.json({ ok: true })
+    }
+
     const waMessageId: string = data.key.id
     const remoteJid: string = data.key.remoteJid
 

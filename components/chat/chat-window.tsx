@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { MoreVertical, Search } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
 import { Conversation, Message } from '@/types'
 import MessageBubble from './message-bubble'
 import MessageInput from './message-input'
@@ -66,11 +65,14 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const conversationId = conversation?.id ?? null
 
   const fetchMessages = useCallback(async (showLoading = false) => {
-    if (!conversationId) return
+    if (!conversationId || !conversation?.instance_name) return
     const thisConvId = conversationId
     if (showLoading) setLoading(true)
     try {
-      const res = await fetch(`/api/messages?conversationId=${encodeURIComponent(conversationId)}`, { cache: 'no-store' })
+      const res = await fetch(
+        `/api/messages?conversationId=${encodeURIComponent(conversationId)}&instance=${encodeURIComponent(conversation.instance_name)}`,
+        { cache: 'no-store' }
+      )
       const json = await res.json()
       // Drop stale responses if the user switched conversations while fetch was in-flight
       if (thisConvId !== currentConvIdRef.current) return
@@ -89,9 +91,9 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
           )
         })
 
-        if (msgs.length < 30 && !syncedConversations.has(conversationId)) {
+        if (msgs.length < 30 && !syncedConversations.has(conversationId) && conversation?.instance_name) {
           syncedConversations.add(conversationId)
-          fetch(`/api/messages/sync/${conversationId}`, { method: 'POST' })
+          fetch(`/api/messages/sync/${conversationId}?instance=${encodeURIComponent(conversation.instance_name)}`, { method: 'POST' })
             .then(() => fetchMessages())
             .catch(() => {})
         }
@@ -99,7 +101,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     } finally {
       if (thisConvId === currentConvIdRef.current) setLoading(false)
     }
-  }, [conversationId])
+  }, [conversationId, conversation?.instance_name])
 
   useEffect(() => {
     currentConvIdRef.current = conversationId
@@ -110,41 +112,13 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     setMessages([])
     fetchMessages(true)
 
-    fetch(`/api/conversations/${conversationId}/read`, { method: 'POST' }).catch(() => {})
-
-    const channel = supabase
-      .channel(`messages:${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload) => {
-          const newMessage = payload.new as Message
-          setMessages((prev) => {
-            if (newMessage.direction === 'outbound') {
-              const exists = prev.some(m => m.id === newMessage.id)
-              if (exists) return prev
-
-              const filtered = prev.filter(m =>
-                !(m.status === 'sending' && m.content === newMessage.content && m.type === newMessage.type)
-              )
-              return [...filtered, newMessage].sort((a, b) => a.created_at.localeCompare(b.created_at))
-            }
-            return [...prev, newMessage].sort((a, b) => a.created_at.localeCompare(b.created_at))
-          })
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
+    if (conversation?.instance_name) {
+      fetch(`/api/conversations/${conversationId}/read?instance=${encodeURIComponent(conversation.instance_name)}`, { method: 'POST' }).catch(() => {})
     }
-  }, [conversationId, fetchMessages])
+  }, [conversationId, conversation?.instance_name, fetchMessages])
 
+  // Sem Realtime via anon key — a tabela "messages" não tem mais leitura
+  // anônima (ver P5 da varredura de segurança). Atualização por polling.
   useEffect(() => {
     if (!conversationId) return
     const interval = setInterval(() => fetchMessages(), 4000)
@@ -188,7 +162,6 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId: conversation.id,
-          waId: conversation.wa_id,
           content,
         }),
       })
@@ -227,7 +200,6 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       const formData = new FormData()
       formData.append('file', file)
       formData.append('conversationId', conversation.id)
-      formData.append('waId', conversation.wa_id)
       await fetch('/api/messages/image', { method: 'POST', body: formData })
       onMessageSent()
     } catch (err) {

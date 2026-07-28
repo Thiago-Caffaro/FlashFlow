@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { validateFlowJson } from '@/lib/flow-validation'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,12 +31,18 @@ export async function POST(req: NextRequest) {
     const { instance_name, name, json: flowJson, ativo } = body
     if (!instance_name) return NextResponse.json({ ok: false, error: 'instance_name required' }, { status: 400 })
 
+    const jsonToSave = flowJson ?? { nodes: [], edges: [] }
+    const validation = validateFlowJson(jsonToSave)
+    if (!validation.ok) {
+      return NextResponse.json({ ok: false, error: validation.error }, { status: 422 })
+    }
+
     const { data, error } = await supabaseAdmin
       .from('flows')
       .insert({
         instance_name,
         name: name ?? 'Novo Fluxo',
-        json: flowJson ?? { nodes: [], edges: [] },
+        json: jsonToSave,
         ativo: ativo ?? true,
       })
       .select()

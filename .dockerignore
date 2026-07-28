@@ -1,6 +1,13 @@
 .git
 .next
 node_modules
-.env*.local
+.env*
 *.md
 logs
+*.log
+*_logs.txt
+*.zip
+*.tar
+*.tar.gz
+*.pdf
+*.postman_collection.json

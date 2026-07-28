@@ -29,7 +29,15 @@ export async function POST(
   if (sessionErr) return NextResponse.json({ ok: false, error: sessionErr.message }, { status: 500 })
   if (!session) return NextResponse.json({ ok: false, error: 'session not found' }, { status: 404 })
 
-  const { message, useFlowMessage } = (await req.json()) as { message?: string; useFlowMessage?: boolean }
+  const { message, useFlowMessage, instance_name: instanceClaim } = (await req.json()) as {
+    message?: string
+    useFlowMessage?: boolean
+    instance_name?: string
+  }
+
+  if (!instanceClaim || instanceClaim !== (session as AISession).instance_name) {
+    return NextResponse.json({ ok: false, error: 'session not found' }, { status: 404 })
+  }
 
   let finalMessage = message?.trim() ?? ''
 

@@ -9,8 +9,22 @@ const supabase = createClient(
 
 export async function GET(req: NextRequest) {
   const conversationId = req.nextUrl.searchParams.get('conversationId')
+  const instanceName = req.nextUrl.searchParams.get('instance')
   if (!conversationId) {
     return NextResponse.json({ ok: false, error: 'conversationId required' }, { status: 400 })
+  }
+  if (!instanceName) {
+    return NextResponse.json({ ok: false, error: 'instance required' }, { status: 400 })
+  }
+
+  const { data: conv } = await supabase
+    .from('conversations')
+    .select('instance_name')
+    .eq('id', conversationId)
+    .maybeSingle()
+
+  if (!conv || conv.instance_name !== instanceName) {
+    return NextResponse.json({ ok: false, error: 'conversation not found' }, { status: 404 })
   }
 
   const { data, error } = await supabase
@@ -30,42 +44,98 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { conversationId, waId, content } = await req.json()
+    const body = await req.json()
+    const conversationId: string = typeof body.conversationId === 'string' ? body.conversationId : ''
+    const content: string = typeof body.content === 'string' ? body.content : ''
 
-    if (!conversationId || !waId || !content) {
-      return NextResponse.json({ error: 'Campos obrigatórios ausentes' }, { status: 400 })
+    if (!conversationId || !content) {
+      return NextResponse.json({ ok: false, error: 'Campos obrigatórios ausentes' }, { status: 400 })
     }
 
-    // Busca instance_name da conversa
+    // O destino (wa_id/instance_name) vem exclusivamente da conversa
+    // carregada no servidor — nunca do corpo da requisição. Um waId
+    // adulterado no cliente não pode mais redirecionar o envio para outro
+    // contato, e não há fallback para "flashflow-main" quando a conversa não
+    // é encontrada: falhamos antes de qualquer tentativa de envio.
     const { data: conv } = await supabase
       .from('conversations')
-      .select('instance_name')
+      .select('id, wa_id, instance_name')
       .eq('id', conversationId)
       .maybeSingle()
-    const instanceName = conv?.instance_name ?? 'flashflow-main'
 
-    console.log(`[messages/send] instance="${instanceName}" to="${waId}" content="${content.slice(0, 60)}"`)
+    if (!conv) {
+      return NextResponse.json({ ok: false, error: 'Conversa não encontrada' }, { status: 404 })
+    }
 
-    const sent = await sendWhatsAppText({ instanceName, number: waId, text: content })
-    const waMessageId = sent.messageId
+    const { wa_id: waId, instance_name: instanceName } = conv
 
-    console.log(`[messages/send] Evolution msgId="${waMessageId}" ok=true`)
-
-    // Salva no Supabase
-    const { data: message } = await supabase
+    // Registra a mensagem como "sending" ANTES de chamar a Evolution API. Se
+    // a chamada expirar (timeout) sem resposta, o resultado real é
+    // desconhecido — a Evolution pode ter aceitado a mensagem mesmo assim —
+    // então preferimos deixar um rastro em vez de simplesmente não persistir
+    // nada e o operador não ter como saber que uma tentativa aconteceu.
+    const { data: pending, error: pendingError } = await supabase
       .from('messages')
       .insert({
         conversation_id: conversationId,
-        wa_message_id: waMessageId,
+        wa_message_id: null,
         content,
         type: 'text',
         direction: 'outbound',
-        status: 'sent',
+        status: 'sending',
       })
       .select()
       .single()
 
-    // Atualiza last_message na conversa
+    if (pendingError || !pending) {
+      return NextResponse.json({ ok: false, error: 'Falha ao registrar mensagem' }, { status: 500 })
+    }
+
+    console.log(`[messages/send] instance="${instanceName}" conv="${conversationId}" msg="${pending.id}"`)
+
+    let sent
+    try {
+      sent = await sendWhatsAppText({ instanceName, number: waId, text: content })
+    } catch (err) {
+      // AbortError = timeout do lado do FlashFlow, não necessariamente uma
+      // rejeição da Evolution — mantém o status "sending" (resultado
+      // desconhecido) em vez de marcar como falho, para não induzir um
+      // reenvio que duplicaria a mensagem caso ela tenha sido aceita.
+      const isTimeout = err instanceof Error && err.name === 'AbortError'
+      if (!isTimeout) {
+        await supabase.from('messages').update({ status: 'failed' }).eq('id', pending.id)
+      }
+
+      console.error(`[messages/send] falha msg="${pending.id}" timeout=${isTimeout}:`, err instanceof Error ? err.message : err)
+      return NextResponse.json(
+        {
+          ok: false,
+          error: isTimeout
+            ? 'Tempo esgotado ao enviar — resultado desconhecido, verifique antes de reenviar.'
+            : 'Falha ao enviar mensagem',
+        },
+        { status: isTimeout ? 504 : 502 }
+      )
+    }
+
+    const waMessageId = sent.messageId
+    console.log(`[messages/send] Evolution msgId="${waMessageId}" ok=true msg="${pending.id}"`)
+
+    const { data: updated, error: updateError } = await supabase
+      .from('messages')
+      .update({ wa_message_id: waMessageId, status: 'sent' })
+      .eq('id', pending.id)
+      .select()
+      .single()
+
+    if (updateError) {
+      // A Evolution já aceitou a mensagem — não falhar a resposta por causa
+      // de um erro ao persistir o resultado, só registrar para investigação.
+      console.error(`[messages/send] enviado mas falhou ao persistir msg="${pending.id}":`, updateError.message)
+    }
+
+    const message = updated ?? { ...pending, wa_message_id: waMessageId, status: 'sent' }
+
     await supabase
       .from('conversations')
       .update({

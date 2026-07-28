@@ -355,9 +355,29 @@ export async function upsertShopifyOrder(
   }
 
   if (options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
-    await runShopifyOrderTrigger(result.data.id).catch((error) => {
-      console.error('[shopify-confirmation] failed to run order-created trigger:', error)
-    })
+    // Claim atômico: a Shopify pode reentregar o mesmo webhook (ela mesma
+    // documenta isso). Sem um UPDATE condicional aqui, duas entregas
+    // concorrentes leriam confirmation_message_sent_at=null antes de
+    // qualquer uma escrever, e ambas disparariam a mensagem de confirmação
+    // para o cliente. Só quem vencer o claim (linha afetada = 1) dispara.
+    const { data: claimed } = await supabaseAdmin
+      .from('fulfillment_orders')
+      .update({ confirmation_message_sent_at: now })
+      .eq('id', result.data.id)
+      .is('confirmation_message_sent_at', null)
+      .select('id')
+      .maybeSingle()
+
+    if (claimed) {
+      await runShopifyOrderTrigger(result.data.id).catch((error) => {
+        console.error('[shopify-confirmation] failed to run order-created trigger:', error)
+        // Libera o claim para permitir nova tentativa em webhook futuro.
+        void supabaseAdmin
+          .from('fulfillment_orders')
+          .update({ confirmation_message_sent_at: null })
+          .eq('id', result.data.id)
+      })
+    }
   }
 
   return result.data

@@ -82,6 +82,17 @@ export async function PUT(req: NextRequest) {
     const id = validText(body.id)
     if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
 
+    // Confirma que a integração existe antes de aplicar qualquer alteração —
+    // mesma cautela usada em app/api/fulfillment/integrations/route.ts.
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from('shopify_integrations')
+      .select('id, shop_domain')
+      .eq('id', id)
+      .single()
+    if (existingError || !existing) {
+      return NextResponse.json({ ok: false, error: existingError?.message ?? 'Integração não encontrada' }, { status: 404 })
+    }
+
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (body.shop_name !== undefined || body.shopName !== undefined) {
       const shopName = validText(body.shop_name || body.shopName)
@@ -90,8 +101,12 @@ export async function PUT(req: NextRequest) {
     }
     if (body.shop_domain !== undefined || body.shopDomain !== undefined) {
       const shopDomain = normalizeShopDomain(validText(body.shop_domain || body.shopDomain))
-      if (!shopDomain) return NextResponse.json({ ok: false, error: 'Domínio inválido' }, { status: 400 })
-      patch.shop_domain = shopDomain
+      // O domínio da loja identifica a integração (webhooks HMAC, pedidos já
+      // associados etc.) — trocá-lo silenciosamente misturaria dados de duas
+      // lojas Shopify diferentes sob o mesmo registro.
+      if (!shopDomain || shopDomain !== existing.shop_domain) {
+        return NextResponse.json({ ok: false, error: 'O domínio da loja não pode ser alterado; crie uma nova integração.' }, { status: 400 })
+      }
     }
     if (body.default_country !== undefined || body.defaultCountry !== undefined) {
       const defaultCountry = validText(body.default_country || body.defaultCountry).toUpperCase()

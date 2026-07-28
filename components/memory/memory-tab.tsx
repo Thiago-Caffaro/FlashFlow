@@ -97,7 +97,7 @@ export default function MemoryTab({ instanceName }: Props) {
         const res = await fetch(`/api/memory-blocks/${selectedId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(form),
+          body: JSON.stringify({ ...form, instance_name: instanceName }),
         })
         const json = await res.json()
         if (json.ok) {
@@ -111,7 +111,7 @@ export default function MemoryTab({ instanceName }: Props) {
   }
 
   async function deleteBlock(id: string) {
-    await fetch(`/api/memory-blocks/${id}`, { method: 'DELETE' })
+    await fetch(`/api/memory-blocks/${id}?instance=${encodeURIComponent(instanceName)}`, { method: 'DELETE' })
     setBlocks((prev) => prev.filter((b) => b.id !== id))
     if (selectedId === id) closePanel()
   }

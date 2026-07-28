@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { belongsToInstance } from '@/lib/instance-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +14,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params
     const body = await req.json()
-    const { name, content, type, keywords } = body
+    const { name, content, type, keywords, instance_name } = body
+
+    const instanceName = typeof instance_name === 'string' ? instance_name : ''
+    if (!instanceName) {
+      return NextResponse.json({ ok: false, error: 'instance_name obrigatório' }, { status: 400 })
+    }
+    if (!(await belongsToInstance(supabaseAdmin, 'agent_memory_blocks', id, instanceName))) {
+      return NextResponse.json({ ok: false, error: 'Bloco não encontrado' }, { status: 404 })
+    }
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (name !== undefined) updates.name = name.trim()
@@ -35,9 +44,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-// DELETE /api/memory-blocks/[id]
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+// DELETE /api/memory-blocks/[id]?instance=xxx
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  const instanceName = req.nextUrl.searchParams.get('instance') ?? ''
+  if (!instanceName) {
+    return NextResponse.json({ ok: false, error: 'instance obrigatório' }, { status: 400 })
+  }
+  if (!(await belongsToInstance(supabaseAdmin, 'agent_memory_blocks', id, instanceName))) {
+    return NextResponse.json({ ok: false, error: 'Bloco não encontrado' }, { status: 404 })
+  }
+
   const { error } = await supabaseAdmin
     .from('agent_memory_blocks')
     .delete()

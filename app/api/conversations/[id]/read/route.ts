@@ -13,10 +13,14 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 // Marca todas as mensagens inbound não-lidas como lidas e zera unread_count.
 // Envia read receipt via Evolution API para acionar os dois checks azuis no remetente.
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const instanceName = req.nextUrl.searchParams.get('instance') ?? ''
+  if (!instanceName) {
+    return NextResponse.json({ ok: false, error: 'instance obrigatório' }, { status: 400 })
+  }
 
   // Busca a conversa para obter wa_id
   const { data: conversation, error: convErr } = await supabaseAdmin
@@ -25,7 +29,7 @@ export async function POST(
     .eq('id', id)
     .maybeSingle()
 
-  if (convErr || !conversation) {
+  if (convErr || !conversation || conversation.instance_name !== instanceName) {
     return NextResponse.json({ ok: false, error: 'conversation not found' }, { status: 404 })
   }
 

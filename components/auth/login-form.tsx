@@ -5,7 +5,7 @@ import { Loader2, LogIn } from 'lucide-react'
 import { useTheme } from '@/contexts/theme-context'
 
 interface LoginFormProps {
-  onLogin: (token: string) => void
+  onLogin: () => void
 }
 
 export default function LoginForm({ onLogin }: LoginFormProps) {
@@ -27,7 +27,7 @@ export default function LoginForm({ onLogin }: LoginFormProps) {
       })
       const json = await res.json()
       if (json.ok) {
-        onLogin(json.token)
+        onLogin()
       } else {
         setError(json.error ?? 'Erro ao autenticar')
       }

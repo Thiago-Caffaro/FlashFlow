@@ -360,14 +360,14 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
     const res = await fetch(`/api/triggers/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(changes),
+      body: JSON.stringify({ ...changes, instance_name: instanceName }),
     })
     const json = await res.json()
     if (json.ok) setTriggers((prev) => prev.map((t) => (t.id === id ? json.trigger : t)))
   }
 
   async function handleDelete(id: string) {
-    const res = await fetch(`/api/triggers/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/triggers/${id}?instance=${encodeURIComponent(instanceName)}`, { method: 'DELETE' })
     const json = await res.json()
     if (json.ok) {
       setTriggers((prev) => prev.filter((t) => t.id !== id))
