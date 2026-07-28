@@ -16,6 +16,7 @@ type QueryBuilder = {
   select: jest.Mock<QueryBuilder, [string?]>
   eq: jest.Mock<QueryBuilder, [string, unknown]>
   single: jest.Mock<Promise<QueryResult>, []>
+  maybeSingle: jest.Mock<Promise<QueryResult>, []>
   update: jest.Mock<QueryBuilder, [unknown]>
   insert: jest.Mock<QueryBuilder, [unknown]>
   order: jest.Mock<QueryBuilder, [string, unknown?]>
@@ -33,6 +34,7 @@ function queryBuilder(result: QueryResult = { data: null, error: null }) {
     select: jest.fn((_columns?: string) => builder),
     eq: jest.fn((_column: string, _value: unknown) => builder),
     single: jest.fn(async () => result),
+    maybeSingle: jest.fn(async () => result),
     update: jest.fn((payload: unknown) => {
       updates.push(payload)
       return builder
@@ -73,8 +75,9 @@ describe('/api/fulfillment/products writes', () => {
 
   it('reactivates a product through PUT without requiring all fields', async () => {
     const product = { id: 'product-1', active: true }
-    const builder = queryBuilder({ data: product, error: null })
-    mockFrom.mockReturnValue(builder)
+    const mirrorBuilder = queryBuilder({ data: null, error: null })
+    const productBuilder = queryBuilder({ data: product, error: null })
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : productBuilder))
 
     const response = await PUT(request('http://localhost/api/fulfillment/products', {
       id: 'product-1',
@@ -83,7 +86,7 @@ describe('/api/fulfillment/products writes', () => {
     const body = await response.json()
 
     expect(response.status).toBe(200)
-    expect(builder.updates[0]).toMatchObject({ active: true })
+    expect(productBuilder.updates[0]).toMatchObject({ active: true })
     expect(body).toMatchObject({ ok: true, product })
   })
 

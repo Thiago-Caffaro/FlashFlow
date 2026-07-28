@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import {
   CheckCircle, ExternalLink, KeyRound, Loader2, Pencil, RefreshCw,
-  RotateCcw, Save, ShoppingBag, Trash2,
+  RotateCcw, Save, ShoppingBag, Trash2, Webhook,
 } from 'lucide-react'
 import { Account, ShopifyIntegration } from '@/types'
 
@@ -67,6 +67,9 @@ export default function ShopifyConfig({
   const [showCredsForm, setShowCredsForm] = useState(false)
   const [credsBusy, setCredsBusy] = useState(false)
 
+  const [webhookBusy, setWebhookBusy] = useState(false)
+  const [webhookResult, setWebhookResult] = useState<{ text: string; error?: boolean } | null>(null)
+
   useEffect(() => {
     fetch('/api/settings/shopify').then(getJson).then((json) => {
       if (json.ok) {
@@ -114,12 +117,40 @@ export default function ShopifyConfig({
       setMessage({ text: decodeURIComponent(err), error: true })
       window.history.replaceState({}, '', window.location.pathname)
     }
+    const webhookWarning = params.get('shopifyWebhookWarning')
+    if (webhookWarning) {
+      setWebhookResult({ text: `Loja conectada, mas o webhook de pedidos não pôde ser registrado automaticamente: ${decodeURIComponent(webhookWarning)}`, error: true })
+      window.history.replaceState({}, '', window.location.pathname)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function showMsg(text: string, error = false) {
     setMessage({ text, error })
     setTimeout(() => setMessage(null), 5000)
+  }
+
+  async function ensureWebhooks() {
+    setWebhookBusy(true)
+    setWebhookResult(null)
+    const json = await fetch('/api/fulfillment/shopify/webhooks/ensure', { method: 'POST' }).then(getJson)
+    if (!json.ok && !json.results) {
+      setWebhookResult({ text: json.error ?? 'Erro ao verificar webhooks.', error: true })
+    } else {
+      const results = (json.results ?? []) as Array<{ shopDomain: string; ok: boolean; alreadyRegistered: boolean; error?: string }>
+      const failed = results.filter((r) => !r.ok)
+      if (failed.length > 0) {
+        setWebhookResult({ text: `Falha em ${failed.length} loja(s): ${failed.map((r) => `${r.shopDomain} (${r.error})`).join('; ')}`, error: true })
+      } else {
+        const registered = results.filter((r) => !r.alreadyRegistered).length
+        setWebhookResult({
+          text: registered > 0
+            ? `Webhook de pedidos registrado em ${registered} loja(s). Já estava ativo nas demais.`
+            : 'Webhook de pedidos já estava ativo em todas as lojas conectadas.',
+        })
+      }
+    }
+    setWebhookBusy(false)
   }
 
   function startEdit(integration: ShopifyIntegration) {
@@ -207,6 +238,12 @@ export default function ShopifyConfig({
       {message && (
         <div className={`rounded-lg px-4 py-3 text-sm ${message.error ? 'bg-red-50 text-red-600 dark:bg-red-900/20' : 'bg-[#e7f8f4] text-[#008f72]'}`}>
           {message.text}
+        </div>
+      )}
+
+      {webhookResult && (
+        <div className={`rounded-lg px-4 py-3 text-sm ${webhookResult.error ? 'bg-red-50 text-red-600 dark:bg-red-900/20' : 'bg-[#e7f8f4] text-[#008f72]'}`}>
+          {webhookResult.text}
         </div>
       )}
 
@@ -384,18 +421,26 @@ export default function ShopifyConfig({
             {activeStep === 2 && (
               <>
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm dark:border-emerald-900/40 dark:bg-emerald-900/20">
-                  <p className="font-semibold text-emerald-800 dark:text-emerald-300">Webhooks verificados via OAuth</p>
+                  <p className="font-semibold text-emerald-800 dark:text-emerald-300">Verificação de webhook automática</p>
                   <p className="mt-1 text-emerald-700 dark:text-emerald-400">
-                    Integrações conectadas via OAuth usam a chave do app para verificar webhooks automaticamente — nenhuma configuração manual é necessária.
+                    A assinatura HMAC de cada webhook recebido é verificada automaticamente usando a chave do app — nenhuma configuração manual de segredo é necessária.
                   </p>
                 </div>
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900/40 dark:bg-amber-900/20">
-                  <p className="font-semibold text-amber-800 dark:text-amber-300">Modo de sincronização: manual</p>
-                  <p className="mt-1 text-amber-700 dark:text-amber-400">
-                    Use o botão <strong>Sincronizar</strong> para importar pedidos e carrinhos. Webhooks em tempo real podem ser configurados no Shopify apontando para
-                    {' '}<code className="rounded bg-amber-100 px-1 dark:bg-amber-900/40">/api/webhook/shopify/orders</code>.
+                <div className="rounded-lg border border-[#f0f2f5] bg-[#f8f9fa] p-4 text-sm dark:border-[#2a3942] dark:bg-[#182229]">
+                  <p className="font-semibold dark:text-[#e9edef]">Recebimento em tempo real de pedidos novos</p>
+                  <p className="mt-1 text-[#667781]">
+                    Ao conectar uma loja, o FlashFlow tenta registrar automaticamente o webhook <code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">orders/create</code> apontando para
+                    {' '}<code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">/api/webhook/shopify/orders</code>, para que pedidos apareçam na Fila assim que forem criados — sem precisar clicar em Sincronizar.
+                    Use o botão abaixo para verificar/registrar de novo a qualquer momento (ex: em lojas conectadas antes desse recurso existir, ou depois de trocar a URL do app).
                   </p>
+                  <button onClick={ensureWebhooks} disabled={webhookBusy} className={`${btnSecondary} mt-3`}>
+                    {webhookBusy ? <Loader2 size={14} className="animate-spin" /> : <Webhook size={14} />}
+                    Verificar webhook de pedidos
+                  </button>
                 </div>
+                <p className="text-xs text-[#667781]">
+                  O botão <strong>Sincronizar</strong> continua disponível para reimportar pedidos e carrinhos antigos, ou como reforço caso um webhook seja perdido.
+                </p>
               </>
             )}
 

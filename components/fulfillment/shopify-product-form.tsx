@@ -1,0 +1,108 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { Loader2, Save } from 'lucide-react'
+import { ShopifyProduct } from '@/types'
+
+export interface ShopifyProductFormValues {
+  title: string
+  variant_title: string
+  sku: string
+  price: string
+  currency: string
+  image_url: string
+}
+
+const emptyForm: ShopifyProductFormValues = {
+  title: '', variant_title: '', sku: '', price: '', currency: 'EUR', image_url: '',
+}
+
+const inputClass = 'w-full rounded-lg border border-transparent bg-[#f0f2f5] px-3 py-2.5 text-sm outline-none focus:border-[#00a884] dark:bg-[#2a3942] dark:text-[#e9edef]'
+const btnPrimary = 'flex items-center gap-2 rounded-lg bg-[#00a884] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#008f72] disabled:opacity-50'
+const btnSecondary = 'flex items-center gap-2 rounded-lg bg-[#f0f2f5] px-3 py-2.5 text-sm font-semibold text-[#667781] hover:bg-[#e6e9ec] disabled:opacity-40 dark:bg-[#2a3942] dark:text-[#e9edef] dark:hover:bg-[#334650]'
+
+interface ShopifyProductFormProps {
+  editing: ShopifyProduct | null
+  busy: boolean
+  onSave: (values: ShopifyProductFormValues) => void
+  onCancel: () => void
+}
+
+export default function ShopifyProductForm({ editing, busy, onSave, onCancel }: ShopifyProductFormProps) {
+  const [form, setForm] = useState<ShopifyProductFormValues>(emptyForm)
+
+  useEffect(() => {
+    setForm(editing ? {
+      title: editing.title,
+      variant_title: editing.variant_title ?? '',
+      sku: editing.sku ?? '',
+      price: String(editing.price),
+      currency: editing.currency,
+      image_url: editing.image_url ?? '',
+    } : emptyForm)
+  }, [editing])
+
+  return (
+    <div className="space-y-3">
+      {editing?.source === 'shopify' && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Este produto vem do Shopify — alterações aqui valem até a próxima sincronização, que traz os dados reais de volta.
+        </p>
+      )}
+      <input
+        className={inputClass}
+        placeholder="Nome do produto"
+        value={form.title}
+        onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+      />
+      <input
+        className={inputClass}
+        placeholder="Variante (opcional, ex: Grande / Azul)"
+        value={form.variant_title}
+        onChange={(e) => setForm((f) => ({ ...f, variant_title: e.target.value }))}
+      />
+      <input
+        className={inputClass}
+        placeholder="SKU (opcional)"
+        value={form.sku}
+        onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
+      />
+      <div className="grid grid-cols-[1fr_80px] gap-2">
+        <input
+          className={inputClass}
+          placeholder="Preço"
+          type="number"
+          min={0}
+          step="0.01"
+          value={form.price}
+          onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+        />
+        <input
+          className={inputClass}
+          placeholder="EUR"
+          value={form.currency}
+          onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
+        />
+      </div>
+      <input
+        className={inputClass}
+        placeholder="URL da imagem (opcional)"
+        value={form.image_url}
+        onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))}
+      />
+      <div className="flex gap-2 pt-1">
+        <button
+          onClick={() => onSave(form)}
+          disabled={busy || !form.title.trim() || !form.price}
+          className={btnPrimary}
+        >
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+          {editing ? 'Salvar' : 'Adicionar produto'}
+        </button>
+        <button onClick={onCancel} className={btnSecondary}>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  )
+}

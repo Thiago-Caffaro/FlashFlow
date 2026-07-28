@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Save, Settings2, Loader2, CheckCircle, Bell } from 'lucide-react'
+import { APP_VERSION } from '@/lib/version'
 
 const DEFAULT_ESCALATION_PROMPT = `[Instrução interna do sistema — NUNCA mencione ao cliente]: Quando você não souber responder, não tiver informações suficientes, ou o cliente solicitar falar com um humano/atendente, utilize a ferramenta 'solicitar_atendimento_humano'. Um operador será notificado.`
 
@@ -96,14 +97,17 @@ export default function GeneralSettingsTab({ instanceName }: Props) {
       <div className="max-w-5xl mx-auto p-9">
 
         {/* Header */}
-        <div className="flex items-center gap-4 mb-8">
+        <div className="flex items-start gap-4 mb-8">
           <div className="w-14 h-14 rounded-2xl bg-[#00a884]/10 flex items-center justify-center">
             <Settings2 size={28} className="text-[#00a884]" />
           </div>
-          <div>
+          <div className="flex-1">
             <h2 className="text-xl font-bold text-[#111b21] dark:text-[#e9edef]">Configurações Gerais</h2>
             <p className="text-sm text-[#aebac1] dark:text-[#667781] mt-0.5">Aplicadas a todos os fluxos desta instância</p>
           </div>
+          <span className="shrink-0 rounded-full bg-[#e7f8f4] px-2.5 py-1 text-xs font-semibold text-[#008f72] dark:bg-[#0b141a] dark:text-[#00a884]" title="Versão do app rodando neste ambiente">
+            v{APP_VERSION}
+          </span>
         </div>
 
         {/* Two-column grid */}

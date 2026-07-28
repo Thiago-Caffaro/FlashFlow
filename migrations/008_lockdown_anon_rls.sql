@@ -1,4 +1,4 @@
--- 006_lockdown_anon_rls.sql
+-- 008_lockdown_anon_rls.sql
 --
 -- Achado: nenhuma tabela usada pelo FlashFlow tinha Row Level Security
 -- habilitado. A chave anônima do Supabase (NEXT_PUBLIC_SUPABASE_ANON_KEY),
@@ -62,6 +62,7 @@ ALTER TABLE fulfillment_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE fulfillment_order_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE shopify_integrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE shopify_abandoned_checkouts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shopify_products ENABLE ROW LEVEL SECURITY;
 
 -- Tabelas internas da Evolution API (schema Prisma, nomes capitalizados).
 -- A própria Evolution API acessa o Postgres com uma role/connection string
@@ -97,6 +98,7 @@ ALTER TABLE "IsOnWhatsapp" ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE fulfillment_order_events DISABLE ROW LEVEL SECURITY;
 -- ALTER TABLE shopify_integrations DISABLE ROW LEVEL SECURITY;
 -- ALTER TABLE shopify_abandoned_checkouts DISABLE ROW LEVEL SECURITY;
+-- ALTER TABLE shopify_products DISABLE ROW LEVEL SECURITY;
 -- ALTER TABLE "Contact" DISABLE ROW LEVEL SECURITY;
 -- ALTER TABLE "Chat" DISABLE ROW LEVEL SECURITY;
 -- ALTER TABLE "Instance" DISABLE ROW LEVEL SECURITY;

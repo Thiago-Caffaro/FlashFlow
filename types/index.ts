@@ -229,6 +229,25 @@ export interface ShopifyIntegration {
   updated_at: string
 }
 
+export interface ShopifyProduct {
+  id: string
+  shopify_integration_id: string | null
+  shopify_product_id: string | null
+  shopify_variant_id: string | null
+  sku: string | null
+  title: string
+  variant_title: string | null
+  price: number
+  currency: string
+  image_url: string | null
+  source: 'shopify' | 'manual'
+  hidden: boolean
+  keep_local_copy: boolean
+  local_product_id: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface ShopifyAbandonedCheckout {
   id: string
   shopify_integration_id: string | null

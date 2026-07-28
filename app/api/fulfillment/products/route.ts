@@ -100,6 +100,18 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  const { data: mirror } = await supabaseAdmin
+    .from('shopify_products')
+    .select('id')
+    .eq('local_product_id', id)
+    .maybeSingle()
+  if (mirror) {
+    return NextResponse.json({
+      ok: false,
+      error: 'Este produto é espelhado do catálogo Shopify; edite pela tela de produtos reais.',
+    }, { status: 409 })
+  }
+
   const { data, error } = await supabaseAdmin
     .from('fulfillment_products')
     .update({ ...parsed.patch, updated_at: new Date().toISOString() })

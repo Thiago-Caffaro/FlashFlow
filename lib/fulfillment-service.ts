@@ -355,7 +355,7 @@ export async function cancelLocalFulfillmentOrder(orderId: string) {
   return updated
 }
 
-async function recordOrderEvent(orderId: string, eventType: string, payload: unknown) {
+export async function recordOrderEvent(orderId: string, eventType: string, payload: unknown) {
   await supabaseAdmin.from('fulfillment_order_events').insert({
     order_id: orderId,
     event_type: eventType,

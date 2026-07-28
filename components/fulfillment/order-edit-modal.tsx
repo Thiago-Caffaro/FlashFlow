@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
-import { Loader2, MessageCircle, RefreshCw, Send, Trash2, X, XCircle } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Loader2, MessageCircle, Plus, RefreshCw, Save, Send, Trash2, X, XCircle } from 'lucide-react'
 import {
   Account,
   COMMERCIAL_STATUSES,
   DELIVERY_STATUSES,
   FulfillmentOrder,
+  FulfillmentProduct,
   SEND_STATUSES,
   type CommercialStatus,
   type DeliveryStatus,
@@ -15,6 +16,7 @@ import {
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
+type OrderItems = FulfillmentOrder['items']
 
 interface OrderEditModalProps {
   order: FulfillmentOrder
@@ -26,8 +28,13 @@ interface OrderEditModalProps {
     delivery_status?: DeliveryStatus
     assigned_instance_name?: string
   }) => Promise<void>
+  onUpdateItems: (id: string, items: OrderItems) => Promise<void>
   onAction: (id: string, action: OrderAction) => Promise<void>
   onResendConfirmation: (orderId: string) => Promise<void>
+}
+
+async function getJson(res: Response) {
+  return res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))
 }
 
 const inputClass = 'w-full rounded-lg border border-transparent bg-[#f0f2f5] px-3 py-2 text-sm outline-none focus:border-[#00a884] dark:bg-[#2a3942] dark:text-[#e9edef]'
@@ -45,13 +52,25 @@ function CommercialBadge({ status }: { status: CommercialStatus }) {
 }
 
 export default function OrderEditModal({
-  order, accounts, onClose, onUpdateStatus, onAction, onResendConfirmation,
+  order, accounts, onClose, onUpdateStatus, onUpdateItems, onAction, onResendConfirmation,
 }: OrderEditModalProps) {
   const [busy, setBusy] = useState(false)
+  const [draftItems, setDraftItems] = useState<OrderItems>(order.items)
+  const [itemsBusy, setItemsBusy] = useState(false)
+  const [showAddProduct, setShowAddProduct] = useState(false)
+  const [catalogProducts, setCatalogProducts] = useState<FulfillmentProduct[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogAllCountries, setCatalogAllCountries] = useState(false)
+
+  useEffect(() => {
+    setDraftItems(order.items)
+  }, [order.id, order.items])
 
   const hasLead = Boolean(order.lead_number)
   const canSubmit = !hasLead && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
   const canCancelLocal = !hasLead && order.status === 'pending_operator' && order.source === 'manual'
+  const canEditItems = !hasLead
+  const itemsDirty = canEditItems && JSON.stringify(draftItems) !== JSON.stringify(order.items)
   const accountLabel = accounts.find((a) => a.instanceName === (order.assigned_instance_name || order.instance_name))?.label
   const isSandboxOrder = (order.assigned_instance_name || order.instance_name) === SANDBOX_INSTANCE_NAME
   // Sandbox test orders can re-run the confirmation trigger repeatedly; real
@@ -77,6 +96,48 @@ export default function OrderEditModal({
     setBusy(true)
     await onResendConfirmation(order.id)
     setBusy(false)
+  }
+
+  function updateDraftItem(index: number, patch: { quantity?: number; unit_price?: number }) {
+    setDraftItems((items) => items.map((item, i) => {
+      if (i !== index) return item
+      const quantity = patch.quantity ?? item.quantity
+      const unitPrice = patch.unit_price ?? item.unit_price
+      return { ...item, quantity, unit_price: unitPrice, total: quantity * unitPrice }
+    }))
+  }
+
+  function removeDraftItem(index: number) {
+    setDraftItems((items) => (items.length > 1 ? items.filter((_, i) => i !== index) : items))
+  }
+
+  async function loadCatalogProducts(allCountries: boolean) {
+    setCatalogLoading(true)
+    const qs = allCountries ? '' : `?country=${encodeURIComponent(order.country)}`
+    const json = await fetch(`/api/fulfillment/products${qs}`, { cache: 'no-store' }).then(getJson)
+    setCatalogProducts(json.ok ? (json.products ?? []).filter((p: FulfillmentProduct) => p.active) : [])
+    setCatalogLoading(false)
+  }
+
+  function addProductToDraft(product: FulfillmentProduct) {
+    setDraftItems((items) => [
+      ...items,
+      {
+        product_id: product.id,
+        sku: product.sku,
+        name: product.name,
+        quantity: 1,
+        unit_price: Number(product.price),
+        total: Number(product.price),
+      },
+    ])
+    setShowAddProduct(false)
+  }
+
+  async function handleSaveItems() {
+    setItemsBusy(true)
+    await onUpdateItems(order.id, draftItems)
+    setItemsBusy(false)
   }
 
   return (
@@ -179,7 +240,7 @@ export default function OrderEditModal({
           </div>
 
           {/* Items */}
-          {order.items?.length > 0 && (
+          {!canEditItems && order.items?.length > 0 && (
             <div className="px-6 py-4">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">Itens</p>
               <div className="space-y-1">
@@ -193,6 +254,111 @@ export default function OrderEditModal({
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {canEditItems && (
+            <div className="px-6 py-4">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#667781]">Itens</p>
+                {itemsDirty && (
+                  <button
+                    onClick={handleSaveItems}
+                    disabled={itemsBusy}
+                    className="flex items-center gap-1.5 rounded-lg bg-[#00a884] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#008f72] disabled:opacity-50"
+                  >
+                    {itemsBusy ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                    Salvar itens
+                  </button>
+                )}
+              </div>
+              <div className="space-y-2">
+                {draftItems.map((item, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-[#f0f2f5] px-3 py-2 dark:border-[#2a3942]">
+                    <span className="min-w-0 flex-1 truncate text-sm dark:text-[#e9edef]" title={item.name || item.sku}>
+                      {item.name || item.sku}
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={item.quantity}
+                      onChange={(e) => updateDraftItem(i, { quantity: Math.max(1, Math.trunc(Number(e.target.value) || 1)) })}
+                      className="w-16 rounded border border-[#d1d7db] bg-white px-1.5 py-1 text-xs dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef]"
+                      title="Quantidade"
+                    />
+                    <span className="text-xs text-[#667781]">×</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={item.unit_price}
+                      onChange={(e) => updateDraftItem(i, { unit_price: Math.max(0, Number(e.target.value) || 0) })}
+                      className="w-24 rounded border border-[#d1d7db] bg-white px-1.5 py-1 text-xs dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef]"
+                      title="Preço unitário"
+                    />
+                    <span className="w-20 shrink-0 text-right text-xs text-[#667781]">
+                      {order.currency} {Number(item.total).toFixed(2)}
+                    </span>
+                    <button
+                      onClick={() => removeDraftItem(i)}
+                      disabled={draftItems.length <= 1}
+                      className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:opacity-30 dark:hover:bg-red-900/20"
+                      title="Remover item"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {!showAddProduct ? (
+                <button
+                  onClick={() => { setShowAddProduct(true); setCatalogAllCountries(false); loadCatalogProducts(false) }}
+                  className="mt-2 flex items-center gap-1.5 rounded-lg bg-[#f0f2f5] px-3 py-1.5 text-xs font-semibold text-[#667781] hover:bg-[#e6e9ec] dark:bg-[#2a3942] dark:text-[#e9edef] dark:hover:bg-[#334650]"
+                >
+                  <Plus size={12} />Adicionar produto
+                </button>
+              ) : (
+                <div className="mt-2 rounded-lg border border-[#f0f2f5] p-3 dark:border-[#2a3942]">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-semibold text-[#667781]">Catálogo — {order.country}</p>
+                    <button onClick={() => setShowAddProduct(false)} className="text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef]">
+                      <X size={14} />
+                    </button>
+                  </div>
+                  {catalogLoading && <p className="text-xs text-[#667781]">Carregando catálogo...</p>}
+                  {!catalogLoading && catalogProducts.length === 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-[#667781]">
+                        Nenhum produto cadastrado para {order.country}.
+                      </p>
+                      {!catalogAllCountries && (
+                        <button
+                          onClick={() => { setCatalogAllCountries(true); loadCatalogProducts(true) }}
+                          className="text-xs font-semibold text-[#00a884] hover:underline"
+                        >
+                          Mostrar produtos de todos os países
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <div className="max-h-40 space-y-1 overflow-y-auto">
+                    {catalogProducts.map((product) => (
+                      <button
+                        key={product.id}
+                        onClick={() => addProductToDraft(product)}
+                        className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]"
+                      >
+                        <span className="truncate dark:text-[#e9edef]">
+                          {product.name}
+                          {catalogAllCountries && <span className="text-xs text-[#667781]"> · {product.country}</span>}
+                        </span>
+                        <span className="shrink-0 text-xs text-[#667781]">{product.currency} {Number(product.price).toFixed(2)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
