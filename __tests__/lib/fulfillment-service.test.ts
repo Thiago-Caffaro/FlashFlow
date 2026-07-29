@@ -213,6 +213,123 @@ describe('fulfillment-service', () => {
     expect(order).toMatchObject({ status: 'created', lead_number: 'PD-1' })
   })
 
+  it('resolves the latest Shopify catalog SKU before submitting an existing order', async () => {
+    const shopifyOrder = localOrder({
+      status: 'submitting',
+      source: 'shopify',
+      shopify_integration_id: 'shopify-1',
+      raw_shopify_payload: {
+        line_items: [{
+          product_id: 15268755505500,
+          variant_id: 55776453460316,
+          sku: null,
+          name: 'CAFFEINE',
+        }],
+      },
+      items: [{
+        product_id: '15268755505500',
+        sku: '55776453460316',
+        name: 'CAFFEINE',
+        quantity: 1,
+        unit_price: 20,
+        total: 20,
+      }],
+    })
+    const lockedOrder = queryBuilder({ data: shopifyOrder, error: null })
+    const eventSubmitting = queryBuilder()
+    const catalog = queryBuilder({
+      data: [{ shopify_variant_id: '55776453460316', sku: 'FENIX-CAFFEINE' }],
+      error: null,
+    })
+    const integration = queryBuilder({ data: integrationRow(), error: null })
+    const updatedOrder = queryBuilder({ data: localOrder({ status: 'created', lead_number: 'PD-1' }), error: null })
+    const eventCreated = queryBuilder()
+    setTableQueues({
+      fulfillment_orders: [lockedOrder, updatedOrder],
+      fulfillment_order_events: [eventSubmitting, eventCreated],
+      shopify_products: [catalog],
+      fulfillment_integrations: [integration],
+    })
+
+    await submitFulfillmentOrder('order-1')
+
+    expect(mockCreateLead).toHaveBeenCalledWith(expect.objectContaining({
+      items: [{ sku: 'FENIX-CAFFEINE', quantity: 1, total: 20 }],
+    }))
+    expect(updatedOrder.updates[0]).toMatchObject({
+      items: [expect.objectContaining({
+        product_id: '55776453460316',
+        shopify_product_id: '15268755505500',
+        shopify_variant_id: '55776453460316',
+        sku: 'FENIX-CAFFEINE',
+      })],
+    })
+  })
+
+  it('blocks a Shopify order without a valid SKU before calling FenixCOD', async () => {
+    const lockedOrder = queryBuilder({
+      data: localOrder({
+        status: 'submitting',
+        source: 'shopify',
+        shopify_integration_id: 'shopify-1',
+        raw_shopify_payload: {
+          line_items: [{
+            product_id: 15268755505500,
+            variant_id: 55776453460316,
+            sku: null,
+            name: 'CAFFEINE',
+          }],
+        },
+        items: [{
+          product_id: '15268755505500',
+          sku: '55776453460316',
+          name: 'CAFFEINE',
+          quantity: 1,
+          unit_price: 20,
+          total: 20,
+        }],
+      }),
+      error: null,
+    })
+    const eventSubmitting = queryBuilder()
+    const catalog = queryBuilder({ data: [], error: null })
+    const failedOrder = queryBuilder({ data: localOrder({ status: 'failed' }), error: null })
+    const eventFailed = queryBuilder()
+    setTableQueues({
+      fulfillment_orders: [lockedOrder, failedOrder],
+      fulfillment_order_events: [eventSubmitting, eventFailed],
+      shopify_products: [catalog],
+    })
+
+    await expect(submitFulfillmentOrder('order-1')).rejects.toThrow(
+      'não possui SKU válido no Shopify'
+    )
+
+    expect(mockCreateLead).not.toHaveBeenCalled()
+    expect(failedOrder.updates[0]).toMatchObject({
+      status: 'failed',
+      send_status: 'Pendente',
+    })
+  })
+
+  it('turns a FenixCOD product-not-found response into an actionable SKU error', async () => {
+    mockCreateLead.mockRejectedValue(new Error('Product Not Found BAD-SKU'))
+    const lockedOrder = queryBuilder({ data: localOrder({ status: 'submitting' }), error: null })
+    const eventSubmitting = queryBuilder()
+    const integration = queryBuilder({ data: integrationRow(), error: null })
+    const failedOrder = queryBuilder({ data: localOrder({ status: 'failed' }), error: null })
+    const eventFailed = queryBuilder()
+    setTableQueues({
+      fulfillment_orders: [lockedOrder, failedOrder],
+      fulfillment_order_events: [eventSubmitting, eventFailed],
+      fulfillment_integrations: [integration],
+    })
+
+    await expect(submitFulfillmentOrder('order-1')).rejects.toThrow(
+      'SKU "BAD-SKU" não encontrado no FenixCOD'
+    )
+  })
+
   it('marks timeout submissions as unknown without a retry loop', async () => {
     mockCreateLead.mockRejectedValue(new Error('Timeout ao acessar fulfillment'))
     const lockedOrder = queryBuilder({ data: localOrder({ status: 'submitting' }), error: null })

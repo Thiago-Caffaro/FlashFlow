@@ -41,7 +41,10 @@ export default function ShopifyProductsTable({
               {product.title}{product.variant_title ? ` — ${product.variant_title}` : ''}
             </p>
             <p className="text-xs text-[#667781]">
-              {product.sku || 'sem SKU'} · {product.source === 'shopify' ? 'shopify' : 'manual'}
+              <span className={product.sku ? '' : 'font-semibold text-amber-600 dark:text-amber-400'}>
+                {product.sku || 'sem SKU · envio ao FenixCOD bloqueado'}
+              </span>
+              {' · '}{product.source === 'shopify' ? 'shopify' : 'manual'}
             </p>
           </div>
           <div className="col-span-2 flex min-w-0 items-center gap-2 border-t border-[#f0f2f5] pt-2 sm:contents dark:border-[#2a3942]">

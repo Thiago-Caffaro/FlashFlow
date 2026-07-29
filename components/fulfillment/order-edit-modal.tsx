@@ -9,6 +9,7 @@ import {
   FulfillmentOrder,
   FulfillmentProduct,
   SEND_STATUSES,
+  ShopifyProduct,
   type CommercialStatus,
   type DeliveryStatus,
   type SendStatus,
@@ -22,6 +23,8 @@ interface OrderEditModalProps {
   order: FulfillmentOrder
   accounts: Account[]
   fulfillmentCountries: string[]
+  shopifyProducts: ShopifyProduct[]
+  onOpenShopifyProducts: () => void
   onClose: () => void
   onUpdateStatus: (id: string, patch: {
     country?: string
@@ -54,7 +57,8 @@ function CommercialBadge({ status }: { status: CommercialStatus }) {
 }
 
 export default function OrderEditModal({
-  order, accounts, fulfillmentCountries, onClose, onUpdateStatus, onUpdateItems, onAction, onResendConfirmation,
+  order, accounts, fulfillmentCountries, shopifyProducts, onOpenShopifyProducts,
+  onClose, onUpdateStatus, onUpdateItems, onAction, onResendConfirmation,
 }: OrderEditModalProps) {
   const [busy, setBusy] = useState(false)
   const [draftItems, setDraftItems] = useState<OrderItems>(order.items)
@@ -64,6 +68,36 @@ export default function OrderEditModal({
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogAllCountries, setCatalogAllCountries] = useState(false)
   const availableCountries = [...new Set(fulfillmentCountries)].sort()
+  const rawLineItems = Array.isArray(order.raw_shopify_payload?.line_items)
+    ? order.raw_shopify_payload.line_items.filter(
+      (item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)
+    )
+    : []
+  const skuIssues = order.source === 'shopify'
+    ? draftItems.filter((item, index) => {
+      const rawItem = rawLineItems.find((candidate) => {
+        const variantId = String(candidate.variant_id ?? '')
+        const productId = String(candidate.product_id ?? '')
+        return Boolean(
+          (item.shopify_variant_id && variantId === item.shopify_variant_id) ||
+          (item.shopify_product_id && productId === item.shopify_product_id) ||
+          item.product_id === variantId ||
+          item.product_id === productId
+        )
+      }) ?? rawLineItems[index] ?? {}
+      const variantId = item.shopify_variant_id || String(rawItem.variant_id ?? '')
+      const productId = item.shopify_product_id || String(rawItem.product_id ?? '')
+      const catalogSku = shopifyProducts.find((product) =>
+        product.shopify_integration_id === order.shopify_integration_id &&
+        product.shopify_variant_id === variantId
+      )?.sku?.trim()
+      const storedSku = item.sku.trim()
+      const storedSkuIsIdentifier = storedSku === variantId ||
+        storedSku === productId ||
+        storedSku.startsWith('SHOPIFY-')
+      return !(catalogSku || (storedSku && !storedSkuIsIdentifier))
+    })
+    : []
 
   useEffect(() => {
     setDraftItems(order.items)
@@ -71,7 +105,11 @@ export default function OrderEditModal({
 
   const hasLead = Boolean(order.lead_number)
   const hasCountryIntegration = availableCountries.includes(order.country)
-  const canSubmit = !hasLead && hasCountryIntegration && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
+  const canSubmit = !hasLead &&
+    hasCountryIntegration &&
+    skuIssues.length === 0 &&
+    ['pending_operator', 'failed'].includes(order.status) &&
+    !order.is_simulation
   const canCancelLocal = !hasLead && order.status === 'pending_operator' && order.source === 'manual'
   const canEditItems = !hasLead
   const itemsDirty = canEditItems && JSON.stringify(draftItems) !== JSON.stringify(order.items)
@@ -304,8 +342,11 @@ export default function OrderEditModal({
               <div className="space-y-2">
                 {draftItems.map((item, i) => (
                   <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-[#f0f2f5] px-3 py-2 dark:border-[#2a3942]">
-                    <span className="min-w-0 flex-1 truncate text-sm dark:text-[#e9edef]" title={item.name || item.sku}>
-                      {item.name || item.sku}
+                    <span className="min-w-0 flex-1 text-sm dark:text-[#e9edef]" title={item.name || item.sku}>
+                      <span className="block truncate">{item.name || item.sku}</span>
+                      <span className="block truncate text-xs text-[#667781]">
+                        SKU: {item.sku || 'não cadastrado'}
+                      </span>
                     </span>
                     <input
                       type="number"
@@ -339,6 +380,23 @@ export default function OrderEditModal({
                   </div>
                 ))}
               </div>
+
+              {skuIssues.length > 0 && (
+                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                  <p className="font-semibold">
+                    {skuIssues.length === 1 ? 'Um produto está sem SKU válido.' : `${skuIssues.length} produtos estão sem SKU válido.`}
+                  </p>
+                  <p className="mt-1">
+                    O SKU no Shopify deve ser exatamente o mesmo cadastrado no FenixCOD. Corrija o produto e sincronize o catálogo antes de enviar.
+                  </p>
+                  <button
+                    onClick={onOpenShopifyProducts}
+                    className="mt-2 font-semibold text-[#008f72] hover:underline dark:text-[#53d6bd]"
+                  >
+                    Abrir produtos
+                  </button>
+                </div>
+              )}
 
               {!showAddProduct ? (
                 <button

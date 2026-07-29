@@ -82,7 +82,16 @@ type ShopifyOrderMappedFields = {
   province: string
   zipcode: string
   payment_type: 'COD' | 'PREPAID'
-  items: Array<{ product_id: string; sku: string; name: string; quantity: number; unit_price: number; total: number }>
+  items: Array<{
+    product_id: string
+    shopify_product_id?: string
+    shopify_variant_id?: string
+    sku: string
+    name: string
+    quantity: number
+    unit_price: number
+    total: number
+  }>
   total: number
   currency: string
 }
@@ -185,11 +194,15 @@ function mapLineItems(value: unknown): ShopifyOrderMappedFields['items'] {
     const total = Math.max(0, numberValue(item.total_discount, 0) > unitPrice * quantity
       ? unitPrice * quantity
       : unitPrice * quantity - numberValue(item.total_discount, 0))
-    const sku = stringValue(item.sku, item.variant_id, item.product_id, `SHOPIFY-${index + 1}`)
+    const shopifyProductId = stringValue(item.product_id)
+    const shopifyVariantId = stringValue(item.variant_id)
+    const sku = stringValue(item.sku)
     return {
-      product_id: stringValue(item.product_id, item.variant_id, sku),
+      product_id: stringValue(shopifyVariantId, shopifyProductId, `SHOPIFY-${index + 1}`),
+      shopify_product_id: shopifyProductId || undefined,
+      shopify_variant_id: shopifyVariantId || undefined,
       sku,
-      name: stringValue(item.name, item.title, sku),
+      name: stringValue(item.name, item.title, sku, `Produto Shopify ${index + 1}`),
       quantity,
       unit_price: unitPrice,
       total,
@@ -591,7 +604,7 @@ export async function maybeAutoSubmitConfirmedOrder(orderId: string) {
   }
 }
 
-function normalizeAndValidateItems(value: unknown): FulfillmentOrder['items'] {
+function normalizeAndValidateItems(value: unknown, allowMissingSku = false): FulfillmentOrder['items'] {
   if (!Array.isArray(value) || value.length === 0) throw new Error('Pedido precisa ter ao menos 1 item')
   return value.map((raw) => {
     if (!raw || typeof raw !== 'object') throw new Error('Item de pedido inválido')
@@ -600,13 +613,15 @@ function normalizeAndValidateItems(value: unknown): FulfillmentOrder['items'] {
     const name = String(record.name ?? '').trim()
     const quantity = Number(record.quantity)
     const unitPrice = Number(record.unit_price)
-    if (!sku) throw new Error('Item de pedido sem SKU')
+    if (!sku && !allowMissingSku) throw new Error('Item de pedido sem SKU')
     if (!name) throw new Error('Item de pedido sem nome')
     if (!Number.isFinite(quantity) || quantity < 1) throw new Error('Quantidade do item inválida')
     if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Preço unitário do item inválido')
     const normalizedQuantity = Math.max(1, Math.trunc(quantity))
     return {
       product_id: String(record.product_id ?? ''),
+      shopify_product_id: record.shopify_product_id ? String(record.shopify_product_id) : undefined,
+      shopify_variant_id: record.shopify_variant_id ? String(record.shopify_variant_id) : undefined,
       sku,
       name,
       quantity: normalizedQuantity,
@@ -668,13 +683,13 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
   if (body.items !== undefined) {
     const { data: existing, error: existingError } = await supabaseAdmin
       .from('fulfillment_orders')
-      .select('lead_number, total')
+      .select('lead_number, total, source')
       .eq('id', orderId)
       .single()
     if (existingError || !existing) throw new Error('Pedido não encontrado')
     if (existing.lead_number) throw new Error('Pedido já foi enviado para o FenixCOD — itens não podem mais ser alterados')
 
-    const items = normalizeAndValidateItems(body.items)
+    const items = normalizeAndValidateItems(body.items, existing.source === 'shopify')
     previousTotal = Number(existing.total)
     patch.items = items
     patch.total = items.reduce((sum, item) => sum + item.total, 0)

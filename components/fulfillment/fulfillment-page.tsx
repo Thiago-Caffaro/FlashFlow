@@ -351,6 +351,8 @@ export default function FulfillmentPage() {
             orders={orders}
             accounts={accounts}
             integrations={integrations}
+            shopifyProducts={shopifyProducts}
+            onOpenShopifyProducts={() => setTab('products')}
             onUpdateOrderStatus={updateOrderStatus}
             onUpdateItems={updateOrderItems}
             onOrderAction={orderAction}
@@ -368,6 +370,7 @@ export default function FulfillmentPage() {
             busyId={busyId}
             syncBusy={syncBusy}
             shopifyIntegrationsCount={shopifyIntegrations.length}
+            shopifyProducts={shopifyProducts}
             onSyncShopify={syncShopify}
             onUpdateOrderStatus={updateOrderStatus}
             onUpdateItems={updateOrderItems}

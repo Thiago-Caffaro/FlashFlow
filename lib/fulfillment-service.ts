@@ -37,6 +37,8 @@ type FulfillmentProductRow = {
 
 type FulfillmentOrderItem = {
   product_id: string
+  shopify_product_id?: string
+  shopify_variant_id?: string
   sku: string
   name: string
   quantity: number
@@ -65,6 +67,9 @@ type FulfillmentOrderRow = {
   status: string
   send_status?: string | null
   shopify_order_name?: string | null
+  shopify_integration_id?: string | null
+  raw_shopify_payload?: Record<string, unknown> | null
+  source?: 'manual' | 'shopify'
   is_simulation?: boolean | null
 }
 
@@ -262,13 +267,15 @@ export async function submitFulfillmentOrder(orderId: string) {
   await recordOrderEvent(orderRow.id, 'submitting', { order_number: orderRow.order_number })
 
   try {
+    const resolvedItems = await resolveOrderItemsForSubmission(orderRow)
     const client = await getFulfillmentClient(orderRow.country)
-    const payload = buildLeadPayload(orderRow)
+    const payload = buildLeadPayload(orderRow, resolvedItems)
     const external = await client.createLead(payload)
     const leadNumber = findLeadNumber(external)
     const { data: updated } = await supabaseAdmin
       .from('fulfillment_orders')
       .update({
+        items: resolvedItems,
         lead_number: leadNumber,
         status: 'created',
         send_status: 'Enviado',
@@ -282,7 +289,7 @@ export async function submitFulfillmentOrder(orderId: string) {
     await recordOrderEvent(orderRow.id, 'created', { lead_number: leadNumber })
     return updated
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Falha desconhecida'
+    const message = submissionErrorMessage(error)
     const uncertain = isTimeoutError(error)
     const status = uncertain ? 'unknown' : 'failed'
     const { data: updated } = await supabaseAdmin.from('fulfillment_orders').update({
@@ -363,8 +370,7 @@ export async function recordOrderEvent(orderId: string, eventType: string, paylo
   })
 }
 
-function buildLeadPayload(order: FulfillmentOrderRow): CreateFulfillmentLead {
-  const items = normalizeOrderItems(order.items)
+function buildLeadPayload(order: FulfillmentOrderRow, items = normalizeOrderItems(order.items)): CreateFulfillmentLead {
   return {
     name_costumer: order.customer_name,
     mobile: order.contact_phone,
@@ -389,11 +395,13 @@ function normalizeOrderItems(value: unknown): FulfillmentOrderItem[] {
     const sku = String(record.sku ?? '').trim()
     const quantity = Number(record.quantity)
     const total = Number(record.total)
-    if (!sku || !Number.isFinite(quantity) || !Number.isFinite(total)) {
+    if (!Number.isFinite(quantity) || !Number.isFinite(total)) {
       throw new Error('Pedido local sem itens válidos')
     }
     return {
       product_id: String(record.product_id ?? ''),
+      shopify_product_id: record.shopify_product_id ? String(record.shopify_product_id) : undefined,
+      shopify_variant_id: record.shopify_variant_id ? String(record.shopify_variant_id) : undefined,
       sku,
       name: String(record.name ?? sku),
       quantity: Math.max(1, Math.trunc(quantity)),
@@ -401,6 +409,89 @@ function normalizeOrderItems(value: unknown): FulfillmentOrderItem[] {
       total,
     }
   })
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function isShopifyIdentifierSku(sku: string, productId: string, variantId: string): boolean {
+  return Boolean(sku) && (sku === productId || sku === variantId || sku.startsWith('SHOPIFY-'))
+}
+
+async function resolveOrderItemsForSubmission(order: FulfillmentOrderRow): Promise<FulfillmentOrderItem[]> {
+  const items = normalizeOrderItems(order.items)
+  if (order.source !== 'shopify' || !order.shopify_integration_id) {
+    if (items.some((item) => !item.sku)) throw new Error('Pedido local possui item sem SKU')
+    return items
+  }
+
+  const rawLineItems = Array.isArray(order.raw_shopify_payload?.line_items)
+    ? order.raw_shopify_payload.line_items.map(asRecord)
+    : []
+  const variantIds = [...new Set([
+    ...items.map((item) => item.shopify_variant_id).filter((id): id is string => Boolean(id)),
+    ...rawLineItems.map((item) => String(item.variant_id ?? '')).filter(Boolean),
+  ])]
+
+  let catalogByVariantId = new Map<string, string>()
+  if (variantIds.length > 0) {
+    const { data, error } = await supabaseAdmin
+      .from('shopify_products')
+      .select('shopify_variant_id, sku')
+      .eq('shopify_integration_id', order.shopify_integration_id)
+      .in('shopify_variant_id', variantIds)
+    if (error) throw new Error(`Falha ao validar os SKUs do Shopify: ${error.message}`)
+    catalogByVariantId = new Map(
+      (data ?? []).map((row) => [String(row.shopify_variant_id ?? ''), String(row.sku ?? '').trim()])
+    )
+  }
+
+  return items.map((item, index) => {
+    const rawItem = rawLineItems.find((candidate) => {
+      const variantId = String(candidate.variant_id ?? '')
+      const productId = String(candidate.product_id ?? '')
+      return Boolean(
+        (item.shopify_variant_id && variantId === item.shopify_variant_id) ||
+        (item.shopify_product_id && productId === item.shopify_product_id) ||
+        item.product_id === variantId ||
+        item.product_id === productId
+      )
+    }) ?? rawLineItems[index] ?? {}
+    const productId = item.shopify_product_id || String(rawItem.product_id ?? '')
+    const variantId = item.shopify_variant_id || String(rawItem.variant_id ?? '')
+    const rawSku = String(rawItem.sku ?? '').trim()
+    const storedSku = item.sku.trim()
+    const catalogSku = catalogByVariantId.get(variantId)?.trim() ?? ''
+    const currentSku = isShopifyIdentifierSku(storedSku, productId, variantId) ? '' : storedSku
+    const sku = catalogSku || rawSku || currentSku
+
+    if (!sku) {
+      throw new Error(
+        `O produto "${item.name}" não possui SKU válido no Shopify. ` +
+        'Cadastre no Shopify o mesmo SKU usado no FenixCOD, sincronize os produtos e tente novamente.'
+      )
+    }
+
+    return {
+      ...item,
+      product_id: variantId || item.product_id,
+      shopify_product_id: productId || undefined,
+      shopify_variant_id: variantId || undefined,
+      sku,
+    }
+  })
+}
+
+function submissionErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : 'Falha desconhecida'
+  const match = message.match(/Product Not Found\s+(.+)/i)
+  if (!match) return message
+  const sku = match[1].trim()
+  return `SKU "${sku}" não encontrado no FenixCOD. ` +
+    'Use no Shopify exatamente o mesmo SKU cadastrado no FenixCOD, sincronize os produtos e tente novamente.'
 }
 
 function isTimeoutError(error: unknown): boolean {

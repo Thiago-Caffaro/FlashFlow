@@ -5,6 +5,7 @@ import { CheckCheck, ChevronDown, ChevronUp, Clock, Loader2, Phone, Users, X, XC
 import {
   Account,
   FulfillmentOrder,
+  ShopifyProduct,
   type CommercialStatus,
   type DeliveryStatus,
   type SendStatus,
@@ -19,6 +20,8 @@ interface QueuePanelProps {
   orders: FulfillmentOrder[]
   accounts: Account[]
   integrations: Array<{ country: string; active: boolean }>
+  shopifyProducts: ShopifyProduct[]
+  onOpenShopifyProducts: () => void
   onUpdateOrderStatus: (id: string, patch: {
     country?: string
     commercial_status?: CommercialStatus
@@ -150,7 +153,8 @@ function QueueGroupHeader({
 }
 
 export default function QueuePanel({
-  orders, accounts, integrations, onUpdateOrderStatus, onUpdateItems, onOrderAction, onResendConfirmation, onBulkUpdateStatus,
+  orders, accounts, integrations, shopifyProducts, onOpenShopifyProducts,
+  onUpdateOrderStatus, onUpdateItems, onOrderAction, onResendConfirmation, onBulkUpdateStatus,
 }: QueuePanelProps) {
   const [openOrderId, setOpenOrderId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -300,6 +304,8 @@ export default function QueuePanel({
           order={openOrder}
           accounts={accounts}
           fulfillmentCountries={integrations.filter((integration) => integration.active).map((integration) => integration.country)}
+          shopifyProducts={shopifyProducts}
+          onOpenShopifyProducts={onOpenShopifyProducts}
           onClose={() => setOpenOrderId(null)}
           onUpdateStatus={onUpdateOrderStatus}
           onUpdateItems={onUpdateItems}

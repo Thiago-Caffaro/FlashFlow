@@ -46,7 +46,8 @@ export default function ShopifyProductForm({ editing, busy, onSave, onCancel }: 
     <div className="space-y-3">
       {editing?.source === 'shopify' && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
-          Este produto vem do Shopify — alterações aqui valem até a próxima sincronização, que traz os dados reais de volta.
+          Este produto vem do Shopify. Para enviar ao FenixCOD, use exatamente o mesmo SKU nos dois sistemas.
+          Alterações feitas apenas aqui valem até a próxima sincronização.
         </p>
       )}
       <input
@@ -63,7 +64,7 @@ export default function ShopifyProductForm({ editing, busy, onSave, onCancel }: 
       />
       <input
         className={inputClass}
-        placeholder="SKU (opcional)"
+        placeholder="SKU usado no FenixCOD"
         value={form.sku}
         onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
       />

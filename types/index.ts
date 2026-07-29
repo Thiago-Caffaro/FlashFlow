@@ -189,7 +189,16 @@ export interface FulfillmentOrder {
   province: string
   zipcode: string
   payment_type: 'COD' | 'PREPAID'
-  items: Array<{ product_id: string; sku: string; name: string; quantity: number; unit_price: number; total: number }>
+  items: Array<{
+    product_id: string
+    shopify_product_id?: string
+    shopify_variant_id?: string
+    sku: string
+    name: string
+    quantity: number
+    unit_price: number
+    total: number
+  }>
   total: number
   currency: string
   status: string

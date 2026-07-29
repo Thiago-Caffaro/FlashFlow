@@ -187,8 +187,37 @@ describe('shopify-confirmation-service', () => {
       currency: 'EUR',
     })
     expect(mapped.items).toEqual([
-      { product_id: '1', sku: 'SKU-1', name: 'Produto', quantity: 2, unit_price: 19.95, total: 39.9 },
+      {
+        product_id: '2',
+        shopify_product_id: '1',
+        shopify_variant_id: '2',
+        sku: 'SKU-1',
+        name: 'Produto',
+        quantity: 2,
+        unit_price: 19.95,
+        total: 39.9,
+      },
     ])
+  })
+
+  it('never uses Shopify product or variant ids as a missing SKU', async () => {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({
+      line_items: [
+        { product_id: 15268755505500, variant_id: 55776453460316, sku: null, name: 'CAFFEINE', quantity: 1, price: '19.95' },
+      ],
+    }), {
+      id: 'shopify-1',
+      shopDomain: 'example.myshopify.com',
+      defaultCountry: 'SPAIN',
+    }, 'wa-1')
+
+    expect(mapped.items[0]).toMatchObject({
+      product_id: '55776453460316',
+      shopify_product_id: '15268755505500',
+      shopify_variant_id: '55776453460316',
+      sku: '',
+      name: 'CAFFEINE',
+    })
   })
 
   it('maps Shopify ISO country codes to the FenixCOD country name', async () => {

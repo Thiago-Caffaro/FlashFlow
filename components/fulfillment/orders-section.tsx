@@ -12,6 +12,7 @@ import {
   ExternalFulfillmentLead,
   FulfillmentOrder,
   ShopifyAbandonedCheckout,
+  ShopifyProduct,
   type AbandonedCheckoutStatus,
   type CommercialStatus,
   type DeliveryStatus,
@@ -40,6 +41,7 @@ interface OrdersSectionProps {
   busyId: string | null
   syncBusy: boolean
   shopifyIntegrationsCount: number
+  shopifyProducts: ShopifyProduct[]
   onSyncShopify: () => Promise<void>
   onUpdateOrderStatus: (id: string, patch: {
     country?: string
@@ -216,7 +218,7 @@ function OrderGroupHeader({ group, expanded }: { group: CustomerGroup; expanded:
 
 export default function OrdersSection({
   orders, accounts, abandonedCheckouts, integrations,
-  busyId, syncBusy, shopifyIntegrationsCount,
+  busyId, syncBusy, shopifyIntegrationsCount, shopifyProducts,
   onSyncShopify, onUpdateOrderStatus, onUpdateItems, onOrderAction,
   onResendConfirmation, onUpdateCheckout, onRecoverCheckout, onOpenShopifyProducts,
 }: OrdersSectionProps) {
@@ -419,6 +421,8 @@ export default function OrdersSection({
           order={openOrder}
           accounts={accounts}
           fulfillmentCountries={activeIntegrations.map((integration) => integration.country)}
+          shopifyProducts={shopifyProducts}
+          onOpenShopifyProducts={onOpenShopifyProducts}
           onClose={() => setOpenOrderId(null)}
           onUpdateStatus={onUpdateOrderStatus}
           onUpdateItems={onUpdateItems}
