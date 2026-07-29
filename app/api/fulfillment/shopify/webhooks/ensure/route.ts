@@ -7,14 +7,21 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
-  const body = await req.json().catch(() => ({})) as Record<string, unknown>
-  const integrationId = typeof body.integrationId === 'string' ? body.integrationId : undefined
+  try {
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>
+    const integrationId = typeof body.integrationId === 'string' ? body.integrationId : undefined
 
-  const integrations = await listActiveShopifyIntegrations(integrationId)
-  const results = await Promise.all(integrations.map((integration) => ensureOrderCreateWebhookRegistered(integration)))
+    const integrations = await listActiveShopifyIntegrations(integrationId)
+    const results = await Promise.all(integrations.map((integration) => ensureOrderCreateWebhookRegistered(integration)))
+    const ok = results.every((result) => result.ok)
+    console.log(`[shopify-webhook] registration checked=${results.length} ok=${results.filter((result) => result.ok).length}`)
 
-  return NextResponse.json({
-    ok: results.every((r) => r.ok),
-    results,
-  })
+    return NextResponse.json({ ok, results })
+  } catch (error) {
+    console.error(`[shopify-webhook] registration failed: ${error instanceof Error ? error.message : 'unexpected error'}`)
+    return NextResponse.json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro inesperado',
+    }, { status: 500 })
+  }
 }

@@ -18,7 +18,9 @@ type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 interface QueuePanelProps {
   orders: FulfillmentOrder[]
   accounts: Account[]
+  integrations: Array<{ country: string; active: boolean }>
   onUpdateOrderStatus: (id: string, patch: {
+    country?: string
     commercial_status?: CommercialStatus
     send_status?: SendStatus
     delivery_status?: DeliveryStatus
@@ -148,7 +150,7 @@ function QueueGroupHeader({
 }
 
 export default function QueuePanel({
-  orders, accounts, onUpdateOrderStatus, onUpdateItems, onOrderAction, onResendConfirmation, onBulkUpdateStatus,
+  orders, accounts, integrations, onUpdateOrderStatus, onUpdateItems, onOrderAction, onResendConfirmation, onBulkUpdateStatus,
 }: QueuePanelProps) {
   const [openOrderId, setOpenOrderId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -297,6 +299,7 @@ export default function QueuePanel({
         <OrderEditModal
           order={openOrder}
           accounts={accounts}
+          fulfillmentCountries={integrations.filter((integration) => integration.active).map((integration) => integration.country)}
           onClose={() => setOpenOrderId(null)}
           onUpdateStatus={onUpdateOrderStatus}
           onUpdateItems={onUpdateItems}

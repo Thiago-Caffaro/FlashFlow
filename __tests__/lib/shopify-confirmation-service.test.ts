@@ -446,4 +446,46 @@ describe('shopify-confirmation-service', () => {
     expect(mockSubmitFulfillmentOrder).toHaveBeenCalledWith('order-1')
     expect(result.autoSubmit).toMatchObject({ submitted: true })
   })
+
+  it('allows correcting the fulfillment country to an active integration without auto-submitting', async () => {
+    const existing = queryBuilder({ data: { lead_number: null, country: 'HK' }, error: null })
+    const integration = queryBuilder({ data: { id: 'integration-spain' }, error: null })
+    const updated = queryBuilder({
+      data: {
+        id: 'order-1',
+        country: 'SPAIN',
+        commercial_status: 'Confirmado',
+        send_status: 'Pendente',
+      },
+      error: null,
+    })
+    setTableQueues({
+      fulfillment_orders: [existing, updated],
+      fulfillment_integrations: [integration],
+    })
+
+    const result = await updateConfirmationOrder('order-1', { country: 'spain' })
+
+    expect(integration.eq).toHaveBeenCalledWith('country', 'SPAIN')
+    expect(integration.eq).toHaveBeenCalledWith('active', true)
+    expect(updated.updates[0]).toMatchObject({ country: 'SPAIN' })
+    expect(mockRecordOrderEvent).toHaveBeenCalledWith('order-1', 'country_updated', {
+      previous_country: 'HK',
+      new_country: 'SPAIN',
+    })
+    expect(mockSubmitFulfillmentOrder).not.toHaveBeenCalled()
+    expect(result.autoSubmit).toMatchObject({ submitted: false })
+  })
+
+  it('rejects a country correction when no active fulfillment integration exists', async () => {
+    const existing = queryBuilder({ data: { lead_number: null, country: 'HK' }, error: null })
+    const integration = queryBuilder({ data: null, error: null })
+    setTableQueues({
+      fulfillment_orders: [existing],
+      fulfillment_integrations: [integration],
+    })
+
+    await expect(updateConfirmationOrder('order-1', { country: 'MARS' }))
+      .rejects.toThrow('Integração de fulfillment não configurada para MARS')
+  })
 })

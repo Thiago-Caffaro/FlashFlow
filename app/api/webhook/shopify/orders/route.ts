@@ -15,8 +15,12 @@ export async function POST(req: NextRequest) {
   const hmac = req.headers.get('x-shopify-hmac-sha256')
 
   try {
+    console.log('[shopify-webhook] orders/create received')
     const integration = await loadShopifyIntegrationForWebhook(shopDomain)
-    if (!integration) return NextResponse.json({ ok: false, error: 'Shopify integration not found' }, { status: 404 })
+    if (!integration) {
+      console.warn('[shopify-webhook] orders/create rejected: integration not found')
+      return NextResponse.json({ ok: false, error: 'Shopify integration not found' }, { status: 404 })
+    }
 
     let secret: string
     if (integration.oauth_connected || !integration.encrypted_webhook_secret) {
@@ -27,13 +31,16 @@ export async function POST(req: NextRequest) {
     }
 
     if (!verifyShopifyWebhookHmac(rawBody, hmac, secret)) {
+      console.warn('[shopify-webhook] orders/create rejected: invalid HMAC')
       return NextResponse.json({ ok: false, error: 'Invalid Shopify HMAC' }, { status: 401 })
     }
 
     const payload = JSON.parse(rawBody) as unknown
     const order = await upsertShopifyOrder(integration, payload)
+    console.log(`[shopify-webhook] orders/create accepted country=${order.country}`)
     return NextResponse.json({ ok: true, order })
   } catch (error) {
+    console.error(`[shopify-webhook] orders/create failed: ${error instanceof Error ? error.message : 'unexpected error'}`)
     return NextResponse.json({
       ok: false,
       error: error instanceof Error ? error.message : 'Erro inesperado',

@@ -42,6 +42,7 @@ interface OrdersSectionProps {
   shopifyIntegrationsCount: number
   onSyncShopify: () => Promise<void>
   onUpdateOrderStatus: (id: string, patch: {
+    country?: string
     commercial_status?: CommercialStatus
     send_status?: SendStatus
     delivery_status?: DeliveryStatus
@@ -417,6 +418,7 @@ export default function OrdersSection({
         <OrderEditModal
           order={openOrder}
           accounts={accounts}
+          fulfillmentCountries={activeIntegrations.map((integration) => integration.country)}
           onClose={() => setOpenOrderId(null)}
           onUpdateStatus={onUpdateOrderStatus}
           onUpdateItems={onUpdateItems}

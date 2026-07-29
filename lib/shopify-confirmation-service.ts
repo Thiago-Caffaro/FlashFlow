@@ -619,6 +619,32 @@ function normalizeAndValidateItems(value: unknown): FulfillmentOrder['items'] {
 export async function updateConfirmationOrder(orderId: string, body: Record<string, unknown>) {
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   let previousTotal: number | null = null
+  let previousCountry: string | null = null
+
+  if (body.country !== undefined) {
+    const country = String(body.country ?? '').trim().toUpperCase()
+    if (!country || country.length > 64) throw new Error('País de fulfillment inválido')
+
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from('fulfillment_orders')
+      .select('lead_number, country')
+      .eq('id', orderId)
+      .single()
+    if (existingError || !existing) throw new Error('Pedido não encontrado')
+    if (existing.lead_number) throw new Error('Pedido já foi enviado para o FenixCOD — o país não pode mais ser alterado')
+
+    const { data: integration, error: integrationError } = await supabaseAdmin
+      .from('fulfillment_integrations')
+      .select('id')
+      .eq('country', country)
+      .eq('active', true)
+      .maybeSingle()
+    if (integrationError) throw new Error(`Falha ao validar integração para ${country}`)
+    if (!integration) throw new Error(`Integração de fulfillment não configurada para ${country}`)
+
+    previousCountry = String(existing.country)
+    patch.country = country
+  }
 
   if (body.commercial_status !== undefined) {
     if (!isCommercialStatus(body.commercial_status)) throw new Error('Status comercial inválido')
@@ -672,7 +698,18 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
     })
   }
 
-  const autoSubmit = await maybeAutoSubmitConfirmedOrder(orderId)
+  if (patch.country !== undefined) {
+    await recordOrderEvent(orderId, 'country_updated', {
+      previous_country: previousCountry,
+      new_country: patch.country,
+    })
+  }
+
+  // A correção de país é uma preparação para o envio, não uma autorização
+  // implícita para disparar uma operação externa no FenixCOD.
+  const autoSubmit = body.country !== undefined && body.commercial_status === undefined
+    ? { submitted: false, order: data }
+    : await maybeAutoSubmitConfirmedOrder(orderId)
   return { order: autoSubmit.order ?? data, autoSubmit }
 }
 

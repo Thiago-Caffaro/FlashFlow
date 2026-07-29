@@ -1,6 +1,11 @@
 import { NextRequest } from 'next/server'
 
 const mockFrom = jest.fn()
+const mockEnsureOrderCreateWebhookRegisteredWithToken = jest.fn(async () => ({
+  shopDomain: 'loja-a.myshopify.com',
+  ok: true,
+  alreadyRegistered: false,
+}))
 
 jest.mock('@/lib/server-auth', () => ({
   isAdminRequest: jest.fn(() => true),
@@ -18,23 +23,35 @@ jest.mock('@/lib/shopify-confirmation-service', () => ({
   SHOPIFY_INTEGRATION_PUBLIC_SELECT: 'id, shop_domain, default_country',
 }))
 
+jest.mock('@/lib/shopify-webhook-setup', () => ({
+  ensureOrderCreateWebhookRegisteredWithToken: mockEnsureOrderCreateWebhookRegisteredWithToken,
+}))
+
 type QueryResult = { data: unknown; error: { message: string } | null }
 type QueryBuilder = {
+  inserts: unknown[]
   updates: unknown[]
   select: jest.Mock<QueryBuilder, [string?]>
   eq: jest.Mock<QueryBuilder, [string, unknown]>
   single: jest.Mock<Promise<QueryResult>, []>
+  insert: jest.Mock<QueryBuilder, [unknown]>
   update: jest.Mock<QueryBuilder, [unknown]>
 }
 
 function queryBuilder(result: QueryResult): QueryBuilder {
+  const inserts: unknown[] = []
   const updates: unknown[] = []
   let builder: QueryBuilder
   builder = {
+    inserts,
     updates,
     select: jest.fn((_columns?: string) => builder),
     eq: jest.fn((_column: string, _value: unknown) => builder),
     single: jest.fn(async () => result),
+    insert: jest.fn((payload: unknown) => {
+      inserts.push(payload)
+      return builder
+    }),
     update: jest.fn((payload: unknown) => {
       updates.push(payload)
       return builder
@@ -51,8 +68,16 @@ function putRequest(body: unknown) {
   })
 }
 
+function postRequest(body: unknown) {
+  return new NextRequest('http://localhost/api/fulfillment/shopify/integrations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { PUT } = require('@/app/api/fulfillment/shopify/integrations/route')
+const { POST, PUT } = require('@/app/api/fulfillment/shopify/integrations/route')
 
 beforeEach(() => jest.clearAllMocks())
 
@@ -83,5 +108,29 @@ describe('PUT /api/fulfillment/shopify/integrations — domínio imutável', () 
 
     const res = await PUT(putRequest({ id: 'inexistente', shop_name: 'X' }))
     expect(res.status).toBe(404)
+  })
+})
+
+describe('POST /api/fulfillment/shopify/integrations — webhook automático', () => {
+  it('registers the orders/create webhook after creating a manual integration', async () => {
+    const builder = queryBuilder({
+      data: { id: 'int-1', shop_domain: 'loja-a.myshopify.com', default_country: 'SPAIN' },
+      error: null,
+    })
+    mockFrom.mockReturnValue(builder)
+
+    const res = await POST(postRequest({
+      shop_name: 'Loja A',
+      shop_domain: 'loja-a.myshopify.com',
+      admin_token: 'admin-token',
+      webhook_secret: 'webhook-secret',
+      default_country: 'SPAIN',
+    }))
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.webhook).toMatchObject({ ok: true, alreadyRegistered: false })
+    expect(mockEnsureOrderCreateWebhookRegisteredWithToken)
+      .toHaveBeenCalledWith('loja-a.myshopify.com', 'admin-token')
   })
 })

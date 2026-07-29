@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { encryptSecret } from '@/lib/ai-crypto'
 import { SHOPIFY_INTEGRATION_PUBLIC_SELECT } from '@/lib/shopify-confirmation-service'
 import { normalizeShopDomain } from '@/lib/shopify-client'
+import { ensureOrderCreateWebhookRegisteredWithToken } from '@/lib/shopify-webhook-setup'
 import { isAdminRequest } from '@/lib/server-auth'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -66,7 +67,8 @@ export async function POST(req: NextRequest) {
       .select(SHOPIFY_INTEGRATION_PUBLIC_SELECT)
       .single()
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-    return NextResponse.json({ ok: true, integration: data })
+    const webhook = await ensureOrderCreateWebhookRegisteredWithToken(shopDomain, adminToken)
+    return NextResponse.json({ ok: true, integration: data, webhook })
   } catch (error) {
     return NextResponse.json({
       ok: false,

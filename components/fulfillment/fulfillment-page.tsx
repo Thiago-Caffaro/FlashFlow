@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, FlaskConical, Loader2, Package, PackageSearch, PhoneCall, RefreshCw, Settings2 } from 'lucide-react'
 import {
   Account,
@@ -45,6 +45,7 @@ export default function FulfillmentPage() {
   const [shopifyProductsBusyId, setShopifyProductsBusyId] = useState<string | null>(null)
   const [shopifyProductsSyncBusy, setShopifyProductsSyncBusy] = useState(false)
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
+  const webhookEnsureStartedRef = useRef(false)
 
   const load = useCallback(async () => {
     const [accountRes, orderRes, productRes, integrationRes, shopifyIntRes, checkoutRes, shopifyProductRes] = await Promise.all([
@@ -68,11 +69,56 @@ export default function FulfillmentPage() {
 
   useEffect(() => { load() }, [load])
 
+  const refreshOrders = useCallback(async () => {
+    const orderRes = await fetch('/api/fulfillment/orders', { cache: 'no-store' }).then(getJson)
+    if (orderRes.ok) setOrders(orderRes.orders ?? [])
+  }, [])
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshOrders()
+    }
+    const interval = window.setInterval(refreshWhenVisible, 5000)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
+  }, [refreshOrders])
+
+  useEffect(() => {
+    if (loading || shopifyIntegrations.length === 0 || webhookEnsureStartedRef.current) return
+    webhookEnsureStartedRef.current = true
+    fetch('/api/fulfillment/shopify/webhooks/ensure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+      .then(getJson)
+      .then((json) => {
+        const failed = Array.isArray(json.results)
+          ? json.results.filter((result: { ok?: boolean }) => !result.ok).length
+          : 0
+        if (!json.ok) {
+          setMessage({
+            text: failed > 0
+              ? `Webhook Shopify não pôde ser ativado em ${failed} loja(s). Verifique a configuração do Shopify.`
+              : (json.error ?? 'Não foi possível verificar o webhook Shopify.'),
+            error: true,
+          })
+        }
+      })
+      .catch(() => {
+        setMessage({ text: 'Não foi possível verificar o webhook Shopify.', error: true })
+      })
+  }, [loading, shopifyIntegrations.length])
+
   function showResult(json: { ok?: boolean; error?: string }, success: string) {
     setMessage({ text: json.ok ? success : (json.error ?? 'Erro inesperado'), error: !json.ok })
   }
 
   async function updateOrderStatus(id: string, patch: {
+    country?: string
     commercial_status?: CommercialStatus
     send_status?: SendStatus
     delivery_status?: DeliveryStatus
@@ -304,6 +350,7 @@ export default function FulfillmentPage() {
           <QueuePanel
             orders={orders}
             accounts={accounts}
+            integrations={integrations}
             onUpdateOrderStatus={updateOrderStatus}
             onUpdateItems={updateOrderItems}
             onOrderAction={orderAction}

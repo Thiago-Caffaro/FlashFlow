@@ -21,8 +21,10 @@ type OrderItems = FulfillmentOrder['items']
 interface OrderEditModalProps {
   order: FulfillmentOrder
   accounts: Account[]
+  fulfillmentCountries: string[]
   onClose: () => void
   onUpdateStatus: (id: string, patch: {
+    country?: string
     commercial_status?: CommercialStatus
     send_status?: SendStatus
     delivery_status?: DeliveryStatus
@@ -52,7 +54,7 @@ function CommercialBadge({ status }: { status: CommercialStatus }) {
 }
 
 export default function OrderEditModal({
-  order, accounts, onClose, onUpdateStatus, onUpdateItems, onAction, onResendConfirmation,
+  order, accounts, fulfillmentCountries, onClose, onUpdateStatus, onUpdateItems, onAction, onResendConfirmation,
 }: OrderEditModalProps) {
   const [busy, setBusy] = useState(false)
   const [draftItems, setDraftItems] = useState<OrderItems>(order.items)
@@ -61,13 +63,15 @@ export default function OrderEditModal({
   const [catalogProducts, setCatalogProducts] = useState<FulfillmentProduct[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogAllCountries, setCatalogAllCountries] = useState(false)
+  const availableCountries = [...new Set(fulfillmentCountries)].sort()
 
   useEffect(() => {
     setDraftItems(order.items)
   }, [order.id, order.items])
 
   const hasLead = Boolean(order.lead_number)
-  const canSubmit = !hasLead && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
+  const hasCountryIntegration = availableCountries.includes(order.country)
+  const canSubmit = !hasLead && hasCountryIntegration && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
   const canCancelLocal = !hasLead && order.status === 'pending_operator' && order.source === 'manual'
   const canEditItems = !hasLead
   const itemsDirty = canEditItems && JSON.stringify(draftItems) !== JSON.stringify(order.items)
@@ -81,6 +85,12 @@ export default function OrderEditModal({
     setBusy(true)
     await onUpdateStatus(order.id, patch)
     setBusy(false)
+  }
+
+  async function handleCountryChange(country: string) {
+    if (!country || country === order.country) return
+    if (!window.confirm(`Alterar o país de fulfillment deste pedido de ${order.country} para ${country}?`)) return
+    await handleUpdate({ country })
   }
 
   async function handleAction(action: OrderAction) {
@@ -189,6 +199,25 @@ export default function OrderEditModal({
             </div>
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-[#667781]">Status</p>
+              <div>
+                <label className="mb-0.5 block text-xs text-[#667781]">País de fulfillment</label>
+                <select
+                  disabled={busy || hasLead}
+                  value={order.country}
+                  onChange={(e) => handleCountryChange(e.target.value)}
+                  className={`${inputClass} ${hasCountryIntegration ? '' : 'border-red-400'}`}
+                >
+                  {!hasCountryIntegration && (
+                    <option value={order.country}>{order.country} · sem integração</option>
+                  )}
+                  {availableCountries.map((country) => <option key={country} value={country}>{country}</option>)}
+                </select>
+                {!hasCountryIntegration && (
+                  <p className="mt-1 text-xs text-red-600">
+                    O endereço do Shopify usa {order.country}, mas não há integração FenixCOD ativa para esse país.
+                  </p>
+                )}
+              </div>
               <div>
                 <label className="mb-0.5 block text-xs text-[#667781]">Comercial</label>
                 <select
