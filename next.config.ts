@@ -22,7 +22,7 @@ const cspHeader = `
   default-src 'self';
   script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''};
   style-src 'self' 'unsafe-inline';
-  img-src 'self' data: blob:${supabaseOrigin ? ` ${supabaseOrigin}` : ''};
+  img-src 'self' data: blob: https://cdn.shopify.com${supabaseOrigin ? ` ${supabaseOrigin}` : ''};
   font-src 'self';
   connect-src 'self';
   object-src 'none';

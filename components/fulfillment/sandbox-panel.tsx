@@ -2,26 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ChevronDown, ChevronUp, FlaskConical, GitBranch, Loader2, Package, Pencil, Plus,
+  ChevronDown, ChevronUp, FlaskConical, GitBranch, Loader2, Pencil, Plus,
   Radio, RotateCcw, Save, Search, Send, ShoppingCart, Trash2, User, X,
 } from 'lucide-react'
 import { Account, FulfillmentProduct, Message, ShopifyProduct } from '@/types'
 import MessageBubble from '@/components/chat/message-bubble'
 import { SANDBOX_INSTANCE_NAME, SANDBOX_REMOTE_JID } from '@/lib/sandbox'
-import ShopifyProductsTable from './shopify-products-table'
-import ShopifyProductForm, { ShopifyProductFormValues } from './shopify-product-form'
 
 interface SandboxPanelProps {
   products: FulfillmentProduct[]
   accounts: Account[]
   onRefresh: () => Promise<void>
   shopifyProducts: ShopifyProduct[]
-  shopifyProductsBusyId: string | null
-  shopifyProductsSyncBusy: boolean
-  onSyncShopifyProducts: () => Promise<void>
-  onToggleKeepLocalCopy: (product: ShopifyProduct, enabled: boolean) => Promise<void>
-  onSaveShopifyProduct: (values: ShopifyProductFormValues, editingId: string | null) => Promise<void>
-  onDeleteShopifyProduct: (product: ShopifyProduct) => Promise<void>
 }
 
 type FictitiousProductForm = {
@@ -78,8 +70,7 @@ async function getJson(res: Response) {
 
 export default function SandboxPanel({
   products, accounts, onRefresh,
-  shopifyProducts, shopifyProductsBusyId, shopifyProductsSyncBusy,
-  onSyncShopifyProducts, onToggleKeepLocalCopy, onSaveShopifyProduct, onDeleteShopifyProduct,
+  shopifyProducts,
 }: SandboxPanelProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -90,7 +81,8 @@ export default function SandboxPanel({
   const [orderContactId, setOrderContactId] = useState<string | null>(null)
   const [orderBusy, setOrderBusy] = useState(false)
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const chatScrollRef = useRef<HTMLDivElement>(null)
+  const shouldStickToBottomRef = useRef(true)
 
   const [contacts, setContacts] = useState<SandboxContact[]>([])
   const [activeContactId, setActiveContactId] = useState<string | null>(null)
@@ -109,9 +101,6 @@ export default function SandboxPanel({
   const [editingFictitiousId, setEditingFictitiousId] = useState<string | null>(null)
   const [fictitiousBusy, setFictitiousBusy] = useState<string | null>(null)
   const [fictitiousCountryFilter, setFictitiousCountryFilter] = useState('')
-  const [showRealProductForm, setShowRealProductForm] = useState(false)
-  const [editingRealProduct, setEditingRealProduct] = useState<ShopifyProduct | null>(null)
-  const [realProductFormBusy, setRealProductFormBusy] = useState(false)
 
   // Products with keep_local_copy enabled already have a fulfillment_products
   // mirror auto-maintained by the sync — hide those from the manual
@@ -164,14 +153,6 @@ export default function SandboxPanel({
     setFictitiousBusy(null)
   }
 
-  async function handleSaveRealProduct(values: ShopifyProductFormValues) {
-    setRealProductFormBusy(true)
-    await onSaveShopifyProduct(values, editingRealProduct?.id ?? null)
-    setRealProductFormBusy(false)
-    setShowRealProductForm(false)
-    setEditingRealProduct(null)
-  }
-
   function accountLabel(instanceName: string | null) {
     if (!instanceName) return ''
     return accounts.find((a) => a.instanceName === instanceName)?.label ?? instanceName
@@ -201,6 +182,7 @@ export default function SandboxPanel({
   }, [loadChat])
 
   useEffect(() => {
+    shouldStickToBottomRef.current = true
     setOrderContactId(activeContactId)
     const contact = contacts.find((c) => c.id === activeContactId)
     if (contact) {
@@ -213,7 +195,8 @@ export default function SandboxPanel({
   }, [activeContactId, contacts])
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const chat = chatScrollRef.current
+    if (chat && shouldStickToBottomRef.current) chat.scrollTop = chat.scrollHeight
   }, [messages])
 
   function showMsg(text: string, error = false) {
@@ -561,12 +544,18 @@ export default function SandboxPanel({
               O bot só responde se a conta <b>Sandbox de testes</b> tiver um gatilho configurado apontando para um fluxo — igual a qualquer conta WhatsApp real. Envio real desligado — nada sai pro WhatsApp de verdade nesta conversa.
             </div>
           )}
-          <div className="flex-1 space-y-1 overflow-y-auto p-4">
+          <div
+            ref={chatScrollRef}
+            onScroll={(event) => {
+              const chat = event.currentTarget
+              shouldStickToBottomRef.current = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80
+            }}
+            className="flex-1 space-y-1 overflow-y-auto p-4"
+          >
             {messages.length === 0 && (
               <p className="py-8 text-center text-sm text-[#667781]">Nenhuma mensagem ainda. Envie algo abaixo para começar.</p>
             )}
             {messages.map((msg) => <MessageBubble key={msg.id} message={msg} />)}
-            <div ref={messagesEndRef} />
           </div>
           <div className="flex gap-2 border-t border-[#f0f2f5] p-3 dark:border-[#2a3942]">
             <input
@@ -679,7 +668,7 @@ export default function SandboxPanel({
       </div>
 
       {/* Produtos */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="max-w-3xl">
         {/* Produtos fictícios (manuais, só para uso no sandbox) */}
         <div className="space-y-3">
           <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
@@ -827,51 +816,6 @@ export default function SandboxPanel({
           </div>
         </div>
 
-        {/* Produtos reais (Shopify) — mesmas capacidades disponíveis no botão da aba Pedidos */}
-        <div className="space-y-3">
-          <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
-            <div className="flex flex-wrap items-center gap-2 px-5 py-4">
-              <Package size={16} className="shrink-0 text-[#00a884]" />
-              <div className="flex-1">
-                <p className="text-sm font-bold dark:text-[#e9edef]">Produtos reais (Shopify)</p>
-                <p className="text-xs text-[#667781]">
-                  {shopifyProducts.length > 0 ? `${shopifyProducts.length} produto(s) sincronizado(s)` : 'Nenhum produto sincronizado ainda'}
-                </p>
-              </div>
-              <button onClick={onSyncShopifyProducts} disabled={shopifyProductsSyncBusy} className={btnSecondary}>
-                {shopifyProductsSyncBusy ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-                Sincronizar
-              </button>
-              <button
-                onClick={() => { setEditingRealProduct(null); setShowRealProductForm((v) => !v) }}
-                className={btnPrimary}
-              >
-                <Plus size={14} />Adicionar
-              </button>
-            </div>
-
-            {showRealProductForm && (
-              <div className="border-t border-[#f0f2f5] px-5 py-4 dark:border-[#2a3942]">
-                <ShopifyProductForm
-                  editing={editingRealProduct}
-                  busy={realProductFormBusy}
-                  onSave={handleSaveRealProduct}
-                  onCancel={() => { setShowRealProductForm(false); setEditingRealProduct(null) }}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-xl bg-white p-4 shadow-sm dark:bg-[#111b21]">
-            <ShopifyProductsTable
-              products={shopifyProducts}
-              busyId={shopifyProductsBusyId}
-              onToggleKeepLocalCopy={onToggleKeepLocalCopy}
-              onEdit={(product) => { setEditingRealProduct(product); setShowRealProductForm(true) }}
-              onDelete={onDeleteShopifyProduct}
-            />
-          </div>
-        </div>
       </div>
     </div>
   )

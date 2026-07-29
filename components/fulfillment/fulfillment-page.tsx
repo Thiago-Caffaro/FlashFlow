@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, FlaskConical, Loader2, PackageSearch, PhoneCall, RefreshCw, Settings2 } from 'lucide-react'
+import { ArrowLeft, FlaskConical, Loader2, Package, PackageSearch, PhoneCall, RefreshCw, Settings2 } from 'lucide-react'
 import {
   Account,
   FulfillmentOrder,
@@ -20,10 +20,10 @@ import QueuePanel from '@/components/fulfillment/queue-panel'
 import ShopifyConfig from '@/components/fulfillment/shopify-config'
 import FenixCODConfig, { Integration } from '@/components/fulfillment/fenixcod-config'
 import SandboxPanel from '@/components/fulfillment/sandbox-panel'
-import ShopifyProductsModal from '@/components/fulfillment/shopify-products-modal'
+import ShopifyProductsPanel from '@/components/fulfillment/shopify-products-panel'
 import { ShopifyProductFormValues } from '@/components/fulfillment/shopify-product-form'
 
-type Tab = 'queue' | 'orders' | 'settings' | 'sandbox'
+type Tab = 'queue' | 'orders' | 'products' | 'settings' | 'sandbox'
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
 async function getJson(res: Response) {
@@ -44,7 +44,6 @@ export default function FulfillmentPage() {
   const [syncBusy, setSyncBusy] = useState(false)
   const [shopifyProductsBusyId, setShopifyProductsBusyId] = useState<string | null>(null)
   const [shopifyProductsSyncBusy, setShopifyProductsSyncBusy] = useState(false)
-  const [showShopifyProducts, setShowShopifyProducts] = useState(false)
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
 
   const load = useCallback(async () => {
@@ -251,10 +250,11 @@ export default function FulfillmentPage() {
           </button>
         </div>
 
-        <nav className="mt-2 flex gap-1">
+        <nav className="mt-2 flex gap-1 overflow-x-auto">
           {([
             ['queue', 'Fila', PhoneCall],
             ['orders', 'Pedidos', PackageSearch],
+            ['products', 'Produtos', Package],
             ['settings', 'Configurações', Settings2],
             ['sandbox', 'Sandbox', FlaskConical],
           ] as const).map(([id, label, Icon]) => (
@@ -328,7 +328,19 @@ export default function FulfillmentPage() {
             onResendConfirmation={resendConfirmation}
             onUpdateCheckout={updateCheckout}
             onRecoverCheckout={recoverCheckout}
-            onOpenShopifyProducts={() => setShowShopifyProducts(true)}
+            onOpenShopifyProducts={() => setTab('products')}
+          />
+        )}
+
+        {!loading && tab === 'products' && (
+          <ShopifyProductsPanel
+            products={shopifyProducts}
+            busyId={shopifyProductsBusyId}
+            syncBusy={shopifyProductsSyncBusy}
+            onSync={syncShopifyProducts}
+            onToggleKeepLocalCopy={toggleKeepLocalCopy}
+            onSave={saveShopifyProduct}
+            onDelete={deleteShopifyProduct}
           />
         )}
 
@@ -354,28 +366,9 @@ export default function FulfillmentPage() {
             accounts={accounts}
             onRefresh={load}
             shopifyProducts={shopifyProducts}
-            shopifyProductsBusyId={shopifyProductsBusyId}
-            shopifyProductsSyncBusy={shopifyProductsSyncBusy}
-            onSyncShopifyProducts={syncShopifyProducts}
-            onToggleKeepLocalCopy={toggleKeepLocalCopy}
-            onSaveShopifyProduct={saveShopifyProduct}
-            onDeleteShopifyProduct={deleteShopifyProduct}
           />
         )}
       </main>
-
-      {showShopifyProducts && (
-        <ShopifyProductsModal
-          products={shopifyProducts}
-          busyId={shopifyProductsBusyId}
-          syncBusy={shopifyProductsSyncBusy}
-          onClose={() => setShowShopifyProducts(false)}
-          onSync={syncShopifyProducts}
-          onToggleKeepLocalCopy={toggleKeepLocalCopy}
-          onSave={saveShopifyProduct}
-          onDelete={deleteShopifyProduct}
-        />
-      )}
     </div>
   )
 }
