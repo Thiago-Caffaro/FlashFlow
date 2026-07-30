@@ -4,6 +4,7 @@ const mockRpc = jest.fn()
 const mockFrom = jest.fn()
 const mockExecuteFlow = jest.fn()
 const mockRunShopifyOrderTrigger = jest.fn()
+const mockGetShopifyTriggersEnabled = jest.fn()
 
 jest.mock('@/lib/supabase-admin', () => ({
   supabaseAdmin: { rpc: mockRpc, from: mockFrom },
@@ -15,6 +16,10 @@ jest.mock('@/lib/flow-engine', () => ({
 
 jest.mock('@/lib/shopify-confirmation-service', () => ({
   runShopifyOrderTrigger: mockRunShopifyOrderTrigger,
+}))
+
+jest.mock('@/lib/shopify-trigger-settings', () => ({
+  getShopifyTriggersEnabled: mockGetShopifyTriggersEnabled,
 }))
 
 type Result = { data: unknown; error: { message: string } | null }
@@ -76,6 +81,7 @@ function job(overrides: Record<string, unknown> = {}) {
 describe('flow job worker', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockGetShopifyTriggersEnabled.mockResolvedValue(true)
   })
 
   it('returns without work when the atomic claim returns no job', async () => {
@@ -92,7 +98,9 @@ describe('flow job worker', () => {
 
     await expect(runFlowJobWorkerOnce('worker-2')).resolves.toBe(true)
 
-    expect(mockRunShopifyOrderTrigger).toHaveBeenCalledWith('order-1', 'flow-1')
+    expect(mockRunShopifyOrderTrigger).toHaveBeenCalledWith('order-1', 'flow-1', {
+      respectShopifyTriggerSetting: true,
+    })
     expect(completed.updates[0]).toMatchObject({
       status: 'completed',
       locked_at: null,
@@ -115,6 +123,18 @@ describe('flow job worker', () => {
       last_error: 'Evolution indisponivel',
     })
     expect((retried.updates[0] as { next_attempt_at: string }).next_attempt_at).toEqual(expect.any(String))
+  })
+
+  it('completes an automatic Shopify job without sending when triggers were paused', async () => {
+    mockRpc.mockResolvedValue({ data: [job()], error: null })
+    mockGetShopifyTriggersEnabled.mockResolvedValue(false)
+    const completed = updateBuilder()
+    mockFrom.mockReturnValue(completed.chain)
+
+    await runFlowJobWorkerOnce('worker-1')
+
+    expect(mockRunShopifyOrderTrigger).not.toHaveBeenCalled()
+    expect(completed.updates[0]).toMatchObject({ status: 'completed' })
   })
 
   it('resumes a message job with its exact persisted order context', async () => {

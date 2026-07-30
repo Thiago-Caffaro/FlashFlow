@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, FlaskConical, Loader2, Package, PackageSearch, PhoneCall, RefreshCw, Settings2 } from 'lucide-react'
+import { ArrowLeft, FlaskConical, Loader2, Package, PackageSearch, PhoneCall, RefreshCw, Settings2, Zap } from 'lucide-react'
 import {
   Account,
   FulfillmentOrder,
@@ -44,11 +44,14 @@ export default function FulfillmentPage() {
   const [syncBusy, setSyncBusy] = useState(false)
   const [shopifyProductsBusyId, setShopifyProductsBusyId] = useState<string | null>(null)
   const [shopifyProductsSyncBusy, setShopifyProductsSyncBusy] = useState(false)
+  const [shopifyTriggersEnabled, setShopifyTriggersEnabled] = useState(true)
+  const [shopifyTriggersLoaded, setShopifyTriggersLoaded] = useState(false)
+  const [shopifyTriggersBusy, setShopifyTriggersBusy] = useState(false)
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
   const webhookEnsureStartedRef = useRef(false)
 
   const load = useCallback(async () => {
-    const [accountRes, orderRes, productRes, integrationRes, shopifyIntRes, checkoutRes, shopifyProductRes] = await Promise.all([
+    const [accountRes, orderRes, productRes, integrationRes, shopifyIntRes, checkoutRes, shopifyProductRes, triggerSettingRes] = await Promise.all([
       fetch('/api/accounts', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/orders', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/products', { cache: 'no-store' }).then(getJson),
@@ -56,6 +59,7 @@ export default function FulfillmentPage() {
       fetch('/api/fulfillment/shopify/integrations', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/shopify/abandoned-checkouts', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/shopify/products', { cache: 'no-store' }).then(getJson),
+      fetch('/api/settings/shopify-triggers', { cache: 'no-store' }).then(getJson),
     ])
     setAccounts(accountRes.accounts ?? [])
     if (orderRes.ok) setOrders(orderRes.orders ?? [])
@@ -64,6 +68,10 @@ export default function FulfillmentPage() {
     if (shopifyIntRes.ok) setShopifyIntegrations(shopifyIntRes.integrations ?? [])
     if (checkoutRes.ok) setAbandonedCheckouts(checkoutRes.checkouts ?? [])
     if (shopifyProductRes.ok) setShopifyProducts(shopifyProductRes.products ?? [])
+    if (triggerSettingRes.ok) {
+      setShopifyTriggersEnabled(triggerSettingRes.enabled !== false)
+    }
+    setShopifyTriggersLoaded(true)
     setLoading(false)
   }, [])
 
@@ -277,6 +285,33 @@ export default function FulfillmentPage() {
     setShopifyProductsSyncBusy(false)
   }
 
+  async function toggleShopifyTriggers() {
+    if (shopifyTriggersBusy || !shopifyTriggersLoaded) return
+    const nextEnabled = !shopifyTriggersEnabled
+    setShopifyTriggersBusy(true)
+    try {
+      const json = await fetch('/api/settings/shopify-triggers', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: nextEnabled }),
+      }).then(getJson)
+      if (!json.ok) throw new Error(json.error ?? 'Não foi possível alterar os gatilhos Shopify.')
+      setShopifyTriggersEnabled(nextEnabled)
+      setMessage({
+        text: nextEnabled
+          ? 'Gatilhos automáticos do Shopify ativados.'
+          : 'Gatilhos automáticos do Shopify pausados. Novos pedidos continuarão sendo importados.',
+      })
+    } catch (error) {
+      setMessage({
+        text: error instanceof Error ? error.message : 'Não foi possível alterar os gatilhos Shopify.',
+        error: true,
+      })
+    } finally {
+      setShopifyTriggersBusy(false)
+    }
+  }
+
   const queueCount = orders.filter((o) => o.commercial_status === 'Não responde' && !o.is_simulation).length
 
   return (
@@ -304,37 +339,69 @@ export default function FulfillmentPage() {
           </button>
         </div>
 
-        <nav className="mt-2 flex gap-1 overflow-x-auto">
-          {([
-            ['queue', 'Fila', PhoneCall],
-            ['orders', 'Pedidos', PackageSearch],
-            ['products', 'Produtos', Package],
-            ['settings', 'Configurações', Settings2],
-            ['sandbox', 'Sandbox', FlaskConical],
-          ] as const).map(([id, label, Icon]) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                tab === id
-                  ? 'bg-[#00a884] text-white'
-                  : 'text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]'
-              }`}
-            >
-              <Icon size={15} />
-              {label}
-              {id === 'queue' && queueCount > 0 && (
-                <span
-                  className={`rounded-full px-1.5 py-0.5 text-xs font-semibold ${
-                    tab === id ? 'bg-white/25 text-white' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                  }`}
-                >
-                  {queueCount}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+            {([
+              ['queue', 'Fila', PhoneCall],
+              ['orders', 'Pedidos', PackageSearch],
+              ['products', 'Produtos', Package],
+              ['settings', 'Configurações', Settings2],
+              ['sandbox', 'Sandbox', FlaskConical],
+            ] as const).map(([id, label, Icon]) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                  tab === id
+                    ? 'bg-[#00a884] text-white'
+                    : 'text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]'
+                }`}
+              >
+                <Icon size={15} />
+                {label}
+                {id === 'queue' && queueCount > 0 && (
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-xs font-semibold ${
+                      tab === id ? 'bg-white/25 text-white' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                    }`}
+                  >
+                    {queueCount}
+                  </span>
+                )}
+              </button>
+            ))}
+          </nav>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={shopifyTriggersEnabled}
+            onClick={() => void toggleShopifyTriggers()}
+            disabled={shopifyTriggersBusy || !shopifyTriggersLoaded}
+            className={`flex min-h-10 shrink-0 items-center gap-3 rounded-lg border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-60 ${
+              shopifyTriggersEnabled
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
+                : 'border-[#d1d7db] bg-[#f0f2f5] text-[#54656f] hover:bg-[#e4e7e9] dark:border-[#3d4f5a] dark:bg-[#2a3942] dark:text-[#aebac1]'
+            }`}
+            title="Ativa ou pausa os fluxos disparados por novos pedidos Shopify"
+          >
+            {shopifyTriggersBusy
+              ? <Loader2 size={17} className="animate-spin" />
+              : <Zap size={17} />}
+            <span>Gatilhos Shopify</span>
+            <span className={`relative h-6 w-11 rounded-full transition-colors ${
+              shopifyTriggersEnabled ? 'bg-[#00a884]' : 'bg-[#8696a0]'
+            }`}>
+              <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                shopifyTriggersEnabled ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </span>
+            <span className="min-w-14 text-left text-xs">
+              {shopifyTriggersLoaded
+                ? shopifyTriggersEnabled ? 'Ativos' : 'Pausados'
+                : 'Carregando'}
+            </span>
+          </button>
+        </div>
       </header>
 
       {message && (
@@ -357,6 +424,7 @@ export default function FulfillmentPage() {
         {!loading && tab === 'queue' && (
           <QueuePanel
             orders={orders}
+            busyId={busyId}
             accounts={accounts}
             integrations={integrations}
             shopifyProducts={shopifyProducts}

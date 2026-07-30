@@ -9,6 +9,7 @@ import { normalizePhone } from './phone'
 import { syncShopifyProductsForIntegration } from './shopify-products-service'
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
 import { enqueueShopifyOrderFlowJob } from './flow-jobs'
+import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
 import {
   SHOPIFY_INTEGRATION_PUBLIC_SELECT,
   decodeShopifyAdminToken,
@@ -510,7 +511,11 @@ async function resolveConversationForOrder(instanceName: string, phone: string, 
 // Runs the "Pedido Shopify criado" flow trigger configured for the order's
 // account. Replaces the old fixed-template confirmation message — there is
 // no static fallback: if no trigger is configured, nothing is sent, by design.
-export async function runShopifyOrderTrigger(orderId: string, flowIdOverride?: string) {
+export async function runShopifyOrderTrigger(
+  orderId: string,
+  flowIdOverride?: string,
+  options: { respectShopifyTriggerSetting?: boolean } = {}
+) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
     .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation')
@@ -547,6 +552,9 @@ export async function runShopifyOrderTrigger(orderId: string, flowIdOverride?: s
       .update({ conversation_id: conversationId, updated_at: new Date().toISOString() })
       .eq('id', orderId)
     if (conversationUpdateError) throw new Error(conversationUpdateError.message)
+    if (options.respectShopifyTriggerSetting && !(await getShopifyTriggersEnabled())) {
+      return { order, skipped: true }
+    }
 
     if (!isSandboxOrder) {
       await reserveConfirmationSendSlot()

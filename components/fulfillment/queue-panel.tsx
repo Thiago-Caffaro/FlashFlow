@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { CheckCheck, ChevronDown, ChevronUp, Clock, Loader2, Phone, Users, X, XCircle } from 'lucide-react'
+import { CheckCheck, ChevronDown, ChevronUp, Clock, Loader2, MessageCircle, Phone, Send, Users, X, XCircle } from 'lucide-react'
 import {
   Account,
   FulfillmentOrder,
@@ -18,6 +18,7 @@ type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
 interface QueuePanelProps {
   orders: FulfillmentOrder[]
+  busyId: string | null
   accounts: Account[]
   integrations: Array<{ country: string; active: boolean }>
   shopifyProducts: ShopifyProduct[]
@@ -48,13 +49,27 @@ function waitingSince(createdAt: string): string {
 }
 
 function QueueOrderCard({
-  order, accountLabel, selected, onToggleSelect, onClick,
+  order,
+  accountLabel,
+  selected,
+  busy,
+  canSubmit,
+  canRunConfirmation,
+  onToggleSelect,
+  onClick,
+  onSubmit,
+  onRunConfirmation,
 }: {
   order: FulfillmentOrder
   accountLabel: string | undefined
   selected: boolean
+  busy: boolean
+  canSubmit: boolean
+  canRunConfirmation: boolean
   onToggleSelect: () => void
   onClick: () => void
+  onSubmit: () => void
+  onRunConfirmation: () => void
 }) {
   return (
     <div
@@ -99,6 +114,40 @@ function QueueOrderCard({
           {order.items.map((item) => `${item.name || item.sku} × ${item.quantity}`).join(', ')}
         </p>
       )}
+      <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-[#f0f2f5] pt-3 dark:border-[#2a3942]">
+        {canRunConfirmation && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              onRunConfirmation()
+            }}
+            disabled={busy}
+            className="flex min-h-9 items-center gap-2 rounded-lg border border-[#d1d7db] px-3 py-2 text-xs font-semibold text-[#54656f] hover:bg-[#f0f2f5] disabled:opacity-50 dark:border-[#3d4f5a] dark:text-[#e9edef] dark:hover:bg-[#2a3942]"
+            title="Executar manualmente o gatilho de confirmação deste pedido"
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <MessageCircle size={14} />}
+            Rodar confirmação
+          </button>
+        )}
+        {!order.lead_number && !order.is_simulation && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              onSubmit()
+            }}
+            disabled={busy || !canSubmit}
+            className="flex min-h-9 items-center gap-2 rounded-lg bg-[#00a884] px-3 py-2 text-xs font-semibold text-white hover:bg-[#008f72] disabled:cursor-not-allowed disabled:opacity-40"
+            title={canSubmit
+              ? 'Enviar este pedido ao FenixCOD'
+              : 'Configure a integração do país e corrija o pedido antes do envio'}
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            Enviar FenixCOD
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -153,7 +202,7 @@ function QueueGroupHeader({
 }
 
 export default function QueuePanel({
-  orders, accounts, integrations, shopifyProducts, onOpenShopifyProducts,
+  orders, busyId, accounts, integrations, shopifyProducts, onOpenShopifyProducts,
   onUpdateOrderStatus, onUpdateItems, onOrderAction, onResendConfirmation, onBulkUpdateStatus,
 }: QueuePanelProps) {
   const [openOrderId, setOpenOrderId] = useState<string | null>(null)
@@ -284,13 +333,32 @@ export default function QueuePanel({
                 const accountLabel = accounts.find(
                   (a) => a.instanceName === (order.assigned_instance_name || order.instance_name)
                 )?.label
+                const hasCountryIntegration = integrations.some(
+                  (integration) => integration.active && integration.country === order.country
+                )
+                const canSubmit = !order.lead_number
+                  && hasCountryIntegration
+                  && ['pending_operator', 'failed'].includes(order.status)
+                  && !order.is_simulation
+                const canRunConfirmation = order.source === 'shopify' && !order.is_simulation
                 return (
                   <QueueOrderCard
                     order={order}
                     accountLabel={accountLabel}
                     selected={selectedIds.has(order.id)}
+                    busy={busyId === order.id}
+                    canSubmit={canSubmit}
+                    canRunConfirmation={canRunConfirmation}
                     onToggleSelect={() => toggleSelect(order.id)}
                     onClick={() => setOpenOrderId(order.id)}
+                    onRunConfirmation={() => {
+                      if (!window.confirm('Executar o gatilho de confirmação e enviar uma nova mensagem para este cliente?')) return
+                      void onResendConfirmation(order.id)
+                    }}
+                    onSubmit={() => {
+                      if (!window.confirm('Enviar este pedido para o FenixCOD agora?')) return
+                      void onOrderAction(order.id, 'submit')
+                    }}
                   />
                 )
               }}

@@ -6,6 +6,7 @@ const mockDecodeShopifyWebhookSecret = jest.fn(() => 'webhook-secret')
 const mockUpsertShopifyOrder = jest.fn()
 const mockUpsertShopifyAbandonedCheckout = jest.fn()
 const mockGetSetting = jest.fn(async (_key: string) => 'webhook-secret')
+const mockGetShopifyTriggersEnabled = jest.fn(async () => true)
 
 jest.mock('@/lib/shopify-confirmation-service', () => ({
   decodeShopifyWebhookSecret: mockDecodeShopifyWebhookSecret,
@@ -18,6 +19,10 @@ jest.mock('@/lib/shopify-confirmation-service', () => ({
 // lib/supabase-admin.ts (que exige SUPABASE_URL/SERVICE_ROLE_KEY reais) se não mockado.
 jest.mock('@/lib/app-settings', () => ({
   getSetting: mockGetSetting,
+}))
+
+jest.mock('@/lib/shopify-trigger-settings', () => ({
+  getShopifyTriggersEnabled: mockGetShopifyTriggersEnabled,
 }))
 
 function hmac(rawBody: string, secret = 'webhook-secret') {
@@ -93,7 +98,22 @@ describe('Shopify webhooks', () => {
     expect(body).toMatchObject({ ok: true, order: { id: 'order-1' } })
     expect(mockUpsertShopifyOrder).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'shopify-1' }),
-      { id: 123, name: '#1001' }
+      { id: 123, name: '#1001' },
+      { sendConfirmation: true }
+    )
+  })
+
+  it('imports a new order without firing Shopify flows when triggers are paused', async () => {
+    mockGetShopifyTriggersEnabled.mockResolvedValueOnce(false)
+    const rawBody = JSON.stringify({ id: 124, name: '#1002' })
+
+    const response = await orderWebhook.POST(request(rawBody, hmac(rawBody)))
+
+    expect(response.status).toBe(200)
+    expect(mockUpsertShopifyOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'shopify-1' }),
+      { id: 124, name: '#1002' },
+      { sendConfirmation: false }
     )
   })
 

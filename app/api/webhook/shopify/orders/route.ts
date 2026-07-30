@@ -6,6 +6,7 @@ import {
 } from '@/lib/shopify-confirmation-service'
 import { verifyShopifyWebhookHmac } from '@/lib/shopify-client'
 import { getSetting } from '@/lib/app-settings'
+import { getShopifyTriggersEnabled } from '@/lib/shopify-trigger-settings'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,7 +37,10 @@ export async function POST(req: NextRequest) {
     }
 
     const payload = JSON.parse(rawBody) as unknown
-    const order = await upsertShopifyOrder(integration, payload)
+    const triggersEnabled = await getShopifyTriggersEnabled()
+    const order = await upsertShopifyOrder(integration, payload, {
+      sendConfirmation: triggersEnabled,
+    })
     console.log(`[shopify-webhook] orders/create accepted country=${order.country}`)
     return NextResponse.json({ ok: true, order })
   } catch (error) {

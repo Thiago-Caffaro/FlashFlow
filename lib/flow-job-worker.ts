@@ -5,6 +5,7 @@ import type { FlowJob } from './flow-jobs'
 import { executeFlow } from './flow-engine'
 import { runShopifyOrderTrigger } from './shopify-confirmation-service'
 import { supabaseAdmin } from './supabase-admin'
+import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
 
 const POLL_INTERVAL_MS = 1_000
 const globalWorker = globalThis as typeof globalThis & {
@@ -59,7 +60,10 @@ async function failOrRetryJob(job: FlowJob, error: unknown) {
 async function processJob(job: FlowJob) {
   if (job.job_type === 'shopify_order_flow') {
     if (!job.order_id) throw new Error('Job Shopify sem order_id')
-    await runShopifyOrderTrigger(job.order_id, job.flow_id)
+    if (!(await getShopifyTriggersEnabled())) return
+    await runShopifyOrderTrigger(job.order_id, job.flow_id, {
+      respectShopifyTriggerSetting: true,
+    })
     return
   }
 
