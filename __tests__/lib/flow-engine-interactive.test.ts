@@ -209,6 +209,41 @@ describe('interactive flow execution', () => {
     expect(runs.chain.eq).toHaveBeenCalledWith('id', 'run-1')
   })
 
+  it('restarts from the first node when a saved resume node no longer exists', async () => {
+    const flows = builder({ data: { json: flowJson, ativo: true }, error: null })
+    const config = builder({ data: null, error: null })
+    const staleRun = builder()
+    const messages = builder()
+    const conversations = builder()
+    const newRun = builder()
+    setQueues({
+      flows: [flows],
+      instance_ai_config: [config],
+      flow_runs: [staleRun, newRun],
+      messages: [messages],
+      conversations: [conversations],
+    })
+
+    await executeFlow('flow-1', {
+      instanceName: '__sandbox__',
+      remoteJid: '34600000000@s.whatsapp.net',
+      conversationId: 'conv-1',
+      incomingMessage: 'Teste',
+      flowRunId: 'stale-run',
+      isSandbox: true,
+    }, 'deleted-switch')
+
+    expect(staleRun.calls.deleted).toBe(true)
+    expect(staleRun.chain.eq).toHaveBeenCalledWith('id', 'stale-run')
+    expect(messages.calls.inserted[0]).toMatchObject({
+      content: expect.stringContaining('Seu pedido esta correto?'),
+    })
+    expect(newRun.calls.upserted[0]).toMatchObject({
+      status: 'waiting_confirmation',
+      node_id: 'switch',
+    })
+  })
+
   it('sends the message as the first image caption by default', async () => {
     mockFetchEvolution.mockResolvedValue({
       ok: true,

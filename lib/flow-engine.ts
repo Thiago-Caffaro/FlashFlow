@@ -1293,7 +1293,19 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
     return
   }
 
+  let activeFlowRunId = ctx.flowRunId
   let currentId: string | null = resumeNodeId ?? nextNodeId(edges, startNode.id)
+  if (resumeNodeId && !nodeMap.has(resumeNodeId)) {
+    logError('executeFlow: stale resume node, restarting flow', {
+      flowId,
+      nodeId: resumeNodeId,
+    })
+    if (activeFlowRunId) {
+      await supabase.from('flow_runs').delete().eq('id', activeFlowRunId)
+      activeFlowRunId = undefined
+    }
+    currentId = nextNodeId(edges, startNode.id)
+  }
   const visited = new Set<string>()
   let anyMessageSent = false
 
@@ -1603,8 +1615,8 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
     currentId = nextNodeId(edges, currentId)
   }
 
-  if (ctx.flowRunId) {
-    await supabase.from('flow_runs').delete().eq('id', ctx.flowRunId)
+  if (activeFlowRunId) {
+    await supabase.from('flow_runs').delete().eq('id', activeFlowRunId)
   }
   log(`executeFlow done`, { flowId, stepsExecuted: visited.size })
 }

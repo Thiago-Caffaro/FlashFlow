@@ -27,7 +27,7 @@ services:
 
   # ─── Evolution API ──────────────────────────────────────────────────────────
   evolution-api:
-    image: ghcr.io/thiago-caffaro/evolution-api:2.3.7
+    image: ghcr.io/thiago-caffaro/evolution-api-flashflow:2.3.7-buttons.2@sha256:b97612a1f7ce722719705ba332c2ec73c44688936608d97447e74a85636031cc
     container_name: evolution-api
     restart: unless-stopped
     networks:
