@@ -256,8 +256,16 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
   }
 
   if (message.type === 'image') {
-    const src = isImageUrl(message.content)
-      ? message.content
+    const firstLineBreak = message.content.indexOf('\n')
+    const possibleImageUrl = firstLineBreak >= 0
+      ? message.content.slice(0, firstLineBreak)
+      : message.content
+    const inlineImageUrl = isImageUrl(possibleImageUrl) ? possibleImageUrl : null
+    const caption = inlineImageUrl && firstLineBreak >= 0
+      ? message.content.slice(firstLineBreak + 1)
+      : inlineImageUrl ? '' : message.content
+    const src = inlineImageUrl
+      ? inlineImageUrl
       : canLoadMedia
       ? buildMediaProxyUrl(message.wa_message_id!, fromMe, waId!, instanceName!, 'imageMessage')
       : null
@@ -297,9 +305,9 @@ export default function MessageBubble({ message, waId, instanceName, avatarUrl, 
               <span className="text-[#667781] dark:text-[#8696a0] text-xs">imagem</span>
             </div>
           )}
-          {message.content && !isImageUrl(message.content) && message.content !== '[imagem]' && (
+          {caption && caption !== '[imagem]' && (
             <p className="text-[#111b21] dark:text-[#e9edef] text-sm px-2 pt-1 pb-0 whitespace-pre-wrap break-words">
-              {message.content}
+              {caption}
             </p>
           )}
         </div>

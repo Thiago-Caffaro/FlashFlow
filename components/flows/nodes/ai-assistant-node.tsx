@@ -30,7 +30,7 @@ export default function AiAssistantNode({ data, selected }: NodeProps & { data: 
 
       <div className="flex items-center gap-2 mb-1.5">
         <Icon size={12} style={{ color }} className="shrink-0" />
-        <span className="text-[10px] font-semibold text-[#667781] uppercase tracking-wide">IA · {label}</span>
+        <span className="text-[10px] font-semibold text-[#667781] uppercase tracking-wide">Agente · {label}</span>
       </div>
 
       <p className="text-[10px] text-[#aebac1] dark:text-[#667781] font-mono mb-1 truncate">

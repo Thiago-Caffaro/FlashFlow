@@ -51,6 +51,9 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
     (node.data.replyButtons as FlowReplyButton[] | undefined) ?? []
   )
   const [images, setImages] = useState<FlowImage[]>((node.data.images as FlowImage[]) ?? [])
+  const [combineImageAndMessage, setCombineImageAndMessage] = useState(
+    node.data.combineImageAndMessage !== false
+  )
   const [imageTab, setImageTab] = useState<ImageTab>('upload')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -75,6 +78,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
     footer,
     replyButtons,
     images,
+    combineImageAndMessage,
   })
   messageDataRef.current = {
     messageTitle: title,
@@ -82,6 +86,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
     footer,
     replyButtons,
     images,
+    combineImageAndMessage,
   }
 
   // Save on unmount (closing without Salvar)
@@ -319,18 +324,36 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   }
 
   function handleSave() {
-    onChange(node.id, { messageTitle: title, message: text, footer, replyButtons, images })
+    onChange(node.id, {
+      messageTitle: title,
+      message: text,
+      footer,
+      replyButtons,
+      images,
+      combineImageAndMessage,
+    })
     onClose()
   }
 
   function handleOverlayClick(e: React.MouseEvent) {
     if (e.target === e.currentTarget) {
-      onChange(node.id, { messageTitle: title, message: text, footer, replyButtons, images })
+      onChange(node.id, {
+        messageTitle: title,
+        message: text,
+        footer,
+        replyButtons,
+        images,
+        combineImageAndMessage,
+      })
       onClose()
     }
   }
 
   const selectedIds = new Set(images.map((img) => img.id))
+  const hasPreviewMessage = Boolean(
+    title.trim() || text.trim() || footer.trim() || replyButtons.length > 0
+  )
+  const showCombinedPreview = combineImageAndMessage && images.length > 0 && hasPreviewMessage
 
   return (
     <div
@@ -347,7 +370,14 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
           <h2 className="text-base font-bold text-[#111b21] dark:text-[#e9edef]">Editar Mensagem</h2>
           <button
             onClick={() => {
-              onChange(node.id, { messageTitle: title, message: text, footer, replyButtons, images })
+              onChange(node.id, {
+                messageTitle: title,
+                message: text,
+                footer,
+                replyButtons,
+                images,
+                combineImageAndMessage,
+              })
               onClose()
             }}
             className="p-1.5 rounded-lg text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors"
@@ -610,6 +640,32 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
                 </div>
               )}
 
+              {images.length > 0 && (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={combineImageAndMessage}
+                  onClick={() => setCombineImageAndMessage((current) => !current)}
+                  className="flex items-center justify-between gap-4 rounded-lg border border-[#d1d7db] px-3 py-2.5 text-left transition-colors hover:bg-[#f0f2f5] dark:border-[#3d4f5a] dark:hover:bg-[#2a3942]"
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-[#111b21] dark:text-[#e9edef]">
+                      Enviar imagem junto da mensagem
+                    </span>
+                    <span className="block text-xs text-[#667781] dark:text-[#8696a0]">
+                      {combineImageAndMessage ? 'Juntas' : 'Separadas'}
+                    </span>
+                  </span>
+                  <span className={`relative inline-block h-6 w-11 shrink-0 rounded-full transition-colors ${
+                    combineImageAndMessage ? 'bg-[#00a884]' : 'bg-[#8696a0]'
+                  }`}>
+                    <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                      combineImageAndMessage ? 'translate-x-6' : 'translate-x-1'
+                    }`} />
+                  </span>
+                </button>
+              )}
+
               {/* Tab toggle: upload vs gallery */}
               {FEATURES.gallery && <div className="flex items-center gap-1 p-1 bg-[#f0f2f5] dark:bg-[#2a3942] rounded-xl w-fit">
                 <button
@@ -707,8 +763,8 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
             <span className="text-xs font-semibold text-[#667781] uppercase tracking-wide shrink-0">Pré-visualização</span>
 
             <div className="flex flex-col gap-2 flex-1">
-              {images.length > 0 && (
-                <div className="self-end max-w-[85%]">
+              {images.length > 0 && !showCombinedPreview && (
+                <div className="self-end max-w-[85%]" data-preview-layout="separate">
                   <div className="flex flex-wrap gap-1 justify-end">
                     {images.map((img) => (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -723,42 +779,73 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
                 </div>
               )}
 
-              {(title.trim() || text.trim() || footer.trim() || replyButtons.length > 0) && (
-                <div className="self-end max-w-[85%] bg-[#d9fdd3] dark:bg-[#005c4b] px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm">
-                  {title.trim() && (
-                    <p
-                      className="text-sm font-semibold text-[#111b21] dark:text-[#e9edef] break-words mb-1"
-                      dangerouslySetInnerHTML={{ __html: parseWhatsAppText(title) }}
+              {hasPreviewMessage && (
+                <div
+                  data-preview-layout={showCombinedPreview ? 'combined' : 'message'}
+                  className={`self-end max-w-[85%] overflow-hidden bg-[#d9fdd3] dark:bg-[#005c4b] rounded-2xl rounded-tr-sm shadow-sm ${
+                    showCombinedPreview ? 'p-1' : 'px-4 py-2.5'
+                  }`}
+                >
+                  {showCombinedPreview && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={images[0].url}
+                      alt={images[0].filename}
+                      className="block max-h-64 w-full rounded-xl object-cover"
                     />
                   )}
-                  {text.trim() && (
-                    <p
-                      className="text-sm text-[#111b21] dark:text-[#e9edef] break-words"
-                      dangerouslySetInnerHTML={{ __html: parseWhatsAppText(text) }}
-                    />
-                  )}
-                  {footer.trim() && (
-                    <p
-                      className="text-xs text-[#667781] dark:text-[#aebac1] break-words mt-2"
-                      dangerouslySetInnerHTML={{ __html: parseWhatsAppText(footer) }}
-                    />
-                  )}
-                  {replyButtons.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-[#b7dcb2] dark:border-[#287565] flex flex-col">
-                      {replyButtons.map((button, index) => (
-                        <div
-                          key={button.id}
-                          className="text-center text-xs font-semibold text-[#008f72] dark:text-[#53bdeb] py-1.5"
-                        >
-                          {index + 1}. {button.label || 'Opcao sem texto'}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div className={showCombinedPreview ? 'px-3 pb-2 pt-2.5' : ''}>
+                    {title.trim() && (
+                      <p
+                        className="text-sm font-semibold text-[#111b21] dark:text-[#e9edef] break-words mb-1"
+                        dangerouslySetInnerHTML={{ __html: parseWhatsAppText(title) }}
+                      />
+                    )}
+                    {text.trim() && (
+                      <p
+                        className="text-sm text-[#111b21] dark:text-[#e9edef] break-words"
+                        dangerouslySetInnerHTML={{ __html: parseWhatsAppText(text) }}
+                      />
+                    )}
+                    {footer.trim() && (
+                      <p
+                        className="text-xs text-[#667781] dark:text-[#aebac1] break-words mt-2"
+                        dangerouslySetInnerHTML={{ __html: parseWhatsAppText(footer) }}
+                      />
+                    )}
+                    {replyButtons.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-[#b7dcb2] dark:border-[#287565] flex flex-col">
+                        {replyButtons.map((button, index) => (
+                          <div
+                            key={button.id}
+                            className="text-center text-xs font-semibold text-[#008f72] dark:text-[#53bdeb] py-1.5"
+                          >
+                            {index + 1}. {button.label || 'Opcao sem texto'}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
-              {!title.trim() && !text.trim() && !footer.trim() && replyButtons.length === 0 && images.length === 0 && (
+              {showCombinedPreview && images.length > 1 && (
+                <div className="self-end max-w-[85%]">
+                  <div className="flex flex-wrap gap-1 justify-end">
+                    {images.slice(1).map((img) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={img.id}
+                        src={img.url}
+                        alt={img.filename}
+                        className="w-24 h-24 object-cover rounded-lg shadow"
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!hasPreviewMessage && images.length === 0 && (
                 <p className="text-xs text-[#aebac1] dark:text-[#667781] text-center mt-12">
                   A pré-visualização aparecerá aqui
                 </p>
@@ -771,7 +858,14 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
           <button
             onClick={() => {
-              onChange(node.id, { messageTitle: title, message: text, footer, replyButtons, images })
+              onChange(node.id, {
+                messageTitle: title,
+                message: text,
+                footer,
+                replyButtons,
+                images,
+                combineImageAndMessage,
+              })
               onClose()
             }}
             className="px-4 py-2 text-sm text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors"

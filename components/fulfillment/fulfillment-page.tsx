@@ -388,7 +388,7 @@ export default function FulfillmentPage() {
               ? <Loader2 size={17} className="animate-spin" />
               : <Zap size={17} />}
             <span>Gatilhos Shopify</span>
-            <span className={`relative h-6 w-11 rounded-full transition-colors ${
+            <span className={`relative inline-block h-6 w-11 shrink-0 rounded-full transition-colors ${
               shopifyTriggersEnabled ? 'bg-[#00a884]' : 'bg-[#8696a0]'
             }`}>
               <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${

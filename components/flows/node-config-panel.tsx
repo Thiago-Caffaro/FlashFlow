@@ -560,7 +560,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
     sendMessage:  'Enviar Mensagem',
     condition:    'Condição',
     switchCase:   'Switch Case',
-    aiAssistant:  'IA Assistente',
+    aiAssistant:  'Agente',
   }
 
   return (

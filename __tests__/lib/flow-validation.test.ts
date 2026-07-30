@@ -130,6 +130,17 @@ describe('validateFlowJson', () => {
     expect(result.error).toMatch(/3 respostas/)
   })
 
+  it('rejeita configuração inválida para combinar imagem e mensagem', () => {
+    const result = validateFlowJson({
+      nodes: [node('message', 'sendMessage', {
+        combineImageAndMessage: 'sim',
+      })],
+      edges: [],
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/imagem/)
+  })
+
   it('valida variáveis automáticas e personalizadas existentes', () => {
     const json = {
       nodes: [node('message', 'sendMessage', {

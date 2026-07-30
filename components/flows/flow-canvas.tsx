@@ -17,9 +17,11 @@ import {
   EdgeMouseHandler,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { ArrowLeft, Save, Plus, Trash2, Copy, Lock } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Save, Plus, Trash2, Copy, Lock } from 'lucide-react'
 import { Flow, FlowNode, FlowEdge, FlowNodeData, FlowNodeType, SwitchCase } from '@/types'
 import { FEATURES } from '@/lib/features'
+import { findReplyConnectionIssue } from '@/lib/flow-connection-validation'
+import { buildReplyCasesForConnection } from '@/lib/flow-switch-cases'
 import StartNode from './nodes/start-node'
 import SendMessageNode from './nodes/send-message-node'
 import ConditionNode from './nodes/condition-node'
@@ -44,7 +46,7 @@ const nodeTypes = {
 const BASE_PALETTE: { type: FlowNodeType; label: string; color: string }[] = [
   { type: 'sendMessage', label: 'Enviar Msg',   color: '#00a884' },
   { type: 'condition',   label: 'Condição',     color: '#f59e0b' },
-  { type: 'aiAssistant', label: 'IA (Gemini)',  color: '#8b5cf6' },
+  { type: 'aiAssistant', label: 'Agente',       color: '#8b5cf6' },
   { type: 'fulfillmentStock', label: 'Estoque', color: '#0ea5e9' },
   { type: 'fulfillmentStatus', label: 'Status Pedido', color: '#6366f1' },
   { type: 'end',         label: 'Fim',          color: '#f87171' },
@@ -104,8 +106,30 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
+
+  const serializedNodes = useMemo<FlowNode[]>(() => nodes.map((node) => ({
+    id: node.id,
+    type: node.type as FlowNodeType,
+    position: node.position,
+    data: node.data as FlowNodeData,
+  })), [nodes])
+
+  const serializedEdges = useMemo<FlowEdge[]>(() => edges.map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    sourceHandle: edge.sourceHandle ?? null,
+    targetHandle: edge.targetHandle ?? null,
+    label: typeof edge.label === 'string' ? edge.label : undefined,
+  })), [edges])
+
+  const replyConnectionIssue = useMemo(
+    () => findReplyConnectionIssue(serializedNodes, serializedEdges),
+    [serializedNodes, serializedEdges]
+  )
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -121,9 +145,21 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
         )
         if (taken) return
       }
+      const replyCases = buildReplyCasesForConnection(
+        serializedNodes,
+        params.source,
+        params.target
+      )
+      if (replyCases) {
+        setNodes((current) => current.map((node) => (
+          node.id === params.target
+            ? { ...node, data: { ...node.data, cases: replyCases } }
+            : node
+        )))
+      }
       setEdges((eds) => addEdge(params, eds))
     },
-    [setEdges, edges]
+    [setEdges, setNodes, edges, serializedNodes]
   )
 
   // Close context menu on outside click
@@ -228,28 +264,27 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
   }
 
   async function handleSave() {
+    if (replyConnectionIssue) {
+      setSaveError(replyConnectionIssue.error)
+      return
+    }
+
     setSaving(true)
+    setSaveError(null)
     const serialized: Flow = {
       ...flow,
       json: {
-        nodes: nodes.map((n) => ({
-          id: n.id,
-          type: n.type as FlowNodeType,
-          position: n.position,
-          data: n.data as FlowNodeData,
-        })),
-        edges: edges.map((e) => ({
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          sourceHandle: e.sourceHandle ?? null,
-          targetHandle: e.targetHandle ?? null,
-          label: typeof e.label === 'string' ? e.label : undefined,
-        })),
+        nodes: serializedNodes,
+        edges: serializedEdges,
       },
     }
-    await onSave(serialized)
-    setSaving(false)
+    try {
+      await onSave(serialized)
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Não foi possível salvar o fluxo.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -297,13 +332,37 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
 
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || Boolean(replyConnectionIssue)}
+          title={replyConnectionIssue?.error}
           className="flex items-center gap-2 text-sm font-semibold px-5 py-2.5 rounded-xl bg-[#00a884] text-white hover:bg-[#008f72] transition-colors disabled:opacity-60 shrink-0 shadow-sm"
         >
           <Save size={16} />
           {saving ? 'Salvando...' : 'Salvar'}
         </button>
       </div>
+
+      {(replyConnectionIssue || saveError) && (
+        <div className="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-3 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+          <AlertTriangle size={17} className="shrink-0" />
+          <p className="min-w-0 flex-1 text-sm">
+            {replyConnectionIssue
+              ? `${replyConnectionIssue.error} Nó: ${replyConnectionIssue.nodeId}.`
+              : saveError}
+          </p>
+          {replyConnectionIssue && (
+            <button
+              type="button"
+              onClick={() => setNodes((current) => current.map((node) => ({
+                ...node,
+                selected: node.id === replyConnectionIssue.nodeId,
+              })))}
+              className="shrink-0 text-sm font-semibold underline underline-offset-2"
+            >
+              Destacar nó
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Canvas ── */}
       <div className="flex-1 relative" ref={wrapperRef}>

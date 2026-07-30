@@ -19,11 +19,16 @@ interface Props {
   instanceName: string
 }
 
+interface FlowUpdateResult {
+  ok: boolean
+  error?: string
+}
+
 // ─── Context panel ────────────────────────────────────────────────────────────
 
 interface PanelProps {
   flow: Flow
-  onUpdate: (id: string, changes: Partial<Flow>) => Promise<void>
+  onUpdate: (id: string, changes: Partial<Flow>) => Promise<FlowUpdateResult>
   onDelete: (id: string) => Promise<void>
   onEdit: (flow: Flow) => void
   onExport: (flow: Flow) => void
@@ -204,10 +209,15 @@ export default function FlowsTab({ instanceName }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...changes, instance_name: instanceName }),
     })
-    const json = await res.json()
-    if (json.ok) {
-      setFlows((prev) => prev.map((f) => (f.id === id ? json.flow : f)))
-      if (editingFlow?.id === id) setEditingFlow(json.flow)
+    const json = await res.json() as { ok?: boolean; flow?: Flow; error?: unknown }
+    if (json.ok && json.flow) {
+      const updatedFlow = json.flow
+      setFlows((prev) => prev.map((f) => (f.id === id ? updatedFlow : f)))
+      if (editingFlow?.id === id) setEditingFlow(updatedFlow)
+    }
+    return {
+      ok: Boolean(json.ok),
+      error: typeof json.error === 'string' ? json.error : undefined,
     }
   }
 
@@ -221,7 +231,8 @@ export default function FlowsTab({ instanceName }: Props) {
   }
 
   async function handleSaveCanvas(flow: Flow) {
-    await handleUpdate(flow.id, { name: flow.name, json: flow.json })
+    const result = await handleUpdate(flow.id, { name: flow.name, json: flow.json })
+    if (!result.ok) throw new Error(result.error ?? 'Não foi possível salvar o fluxo.')
   }
 
   function handleExportSingle(flow: Flow) {

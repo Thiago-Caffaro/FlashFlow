@@ -1,6 +1,7 @@
 import 'server-only'
 import type { FlowEdge, FlowNode } from '@/types'
 import { getMessagePlaceholders, validateMessagePlaceholders } from './message-template'
+import { findReplyConnectionIssue } from './flow-connection-validation'
 
 const MAX_NODES = 200
 const MAX_EDGES = 400
@@ -86,8 +87,6 @@ export function validateFlowJson(json: unknown): FlowValidationResult {
   if (edges.length > MAX_EDGES) return { ok: false, error: `fluxo excede o limite de ${MAX_EDGES} conexões` }
 
   const seenNodeIds = new Set<string>()
-  const nodeTypes = new Map<string, string>()
-  const replyNodes = new Set<string>()
   let startNodeCount = 0
 
   for (const raw of nodes) {
@@ -100,7 +99,6 @@ export function validateFlowJson(json: unknown): FlowValidationResult {
     if (typeof node.type !== 'string' || !KNOWN_NODE_TYPES.has(node.type)) {
       return { ok: false, error: `tipo de nó desconhecido: ${String(node.type)}` }
     }
-    nodeTypes.set(node.id, node.type)
     if (node.type === 'start') startNodeCount++
 
     if (node.data !== undefined) {
@@ -116,6 +114,12 @@ export function validateFlowJson(json: unknown): FlowValidationResult {
 
       if (node.type === 'sendMessage') {
         const data = node.data as FlowNode['data']
+        if (
+          data.combineImageAndMessage !== undefined
+          && typeof data.combineImageAndMessage !== 'boolean'
+        ) {
+          return { ok: false, error: `opcao de imagem do no "${node.id}" deve ser booleana` }
+        }
         if (data.replyButtons !== undefined && !Array.isArray(data.replyButtons)) {
           return { ok: false, error: `respostas do no "${node.id}" devem ser um array` }
         }
@@ -136,7 +140,6 @@ export function validateFlowJson(json: unknown): FlowValidationResult {
           }
           buttonIds.add(button.id)
         }
-        if (buttons.length > 0) replyNodes.add(node.id)
       }
     }
   }
@@ -161,13 +164,11 @@ export function validateFlowJson(json: unknown): FlowValidationResult {
     }
   }
 
-  for (const nodeId of replyNodes) {
-    const outgoing = (edges as FlowEdge[]).filter((edge) => edge.source === nodeId)
-    if (outgoing.length !== 1 || nodeTypes.get(outgoing[0].target) !== 'switchCase') {
-      return {
-        ok: false,
-        error: `mensagem com respostas no no "${nodeId}" deve ter uma unica conexao para um Switch Case`,
-      }
+  const connectionIssue = findReplyConnectionIssue(nodes as FlowNode[], edges as FlowEdge[])
+  if (connectionIssue) {
+    return {
+      ok: false,
+      error: `${connectionIssue.error} Nó: "${connectionIssue.nodeId}".`,
     }
   }
 

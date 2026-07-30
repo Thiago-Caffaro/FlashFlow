@@ -112,6 +112,7 @@ export interface FlowNodeData {
   footer?: string
   replyButtons?: FlowReplyButton[]
   images?: FlowImage[]
+  combineImageAndMessage?: boolean
   // condition
   conditionType?: 'contains' | 'exact'
   conditionValue?: string

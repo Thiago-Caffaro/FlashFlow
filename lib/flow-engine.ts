@@ -108,14 +108,19 @@ export async function sendWhatsApp(ctx: FlowContext, text: string) {
 
 export async function sendWhatsAppReplyOptions(
   ctx: FlowContext,
-  content: RenderedMessageContent
+  content: RenderedMessageContent,
+  options: { thumbnailUrl?: string } = {}
 ): Promise<'native' | 'text'> {
   const persistedText = formatTextReplyMessage(content)
   const realSendTarget = resolveRealSendTarget(ctx)
   const nativeEnabled = process.env.EVOLUTION_REPLY_BUTTONS_ENABLED === 'true'
 
   if (!realSendTarget || !nativeEnabled) {
-    await sendWhatsApp(ctx, persistedText)
+    if (options.thumbnailUrl) {
+      await sendWhatsAppImage(ctx, options.thumbnailUrl, persistedText)
+    } else {
+      await sendWhatsApp(ctx, persistedText)
+    }
     return 'text'
   }
 
@@ -127,6 +132,7 @@ export async function sendWhatsAppReplyOptions(
       title: content.title.trim() || 'Escolha uma opcao',
       description: content.message,
       footer: content.footer,
+      ...(options.thumbnailUrl ? { thumbnailUrl: options.thumbnailUrl } : {}),
       buttons: content.replyButtons.map((button) => ({
         type: 'reply',
         displayText: button.label,
@@ -139,7 +145,11 @@ export async function sendWhatsAppReplyOptions(
     logError('sendWhatsAppReplyOptions: native send failed, using text fallback', {
       status: response.status,
     })
-    await sendWhatsApp(ctx, persistedText)
+    if (options.thumbnailUrl) {
+      await sendWhatsAppImage(ctx, options.thumbnailUrl, persistedText)
+    } else {
+      await sendWhatsApp(ctx, persistedText)
+    }
     return 'text'
   }
 
@@ -152,8 +162,10 @@ export async function sendWhatsAppReplyOptions(
   await supabase.from('messages').insert({
     conversation_id: ctx.conversationId,
     wa_message_id: typeof key.id === 'string' ? key.id : null,
-    content: persistedText,
-    type: 'text',
+    content: options.thumbnailUrl
+      ? `${options.thumbnailUrl}\n${persistedText}`
+      : persistedText,
+    type: options.thumbnailUrl ? 'image' : 'text',
     direction: 'outbound',
     status: 'sent',
     sender_type: 'ai',
@@ -165,14 +177,24 @@ export async function sendWhatsAppReplyOptions(
   return 'native'
 }
 
-export async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
+export async function sendWhatsAppImage(
+  ctx: FlowContext,
+  imageUrl: string,
+  caption?: string
+) {
   let waMessageId: string | null = null
+  const normalizedCaption = caption?.trim() ?? ''
   const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
     const response = await fetchEvolution(`/message/sendMedia/${encodeURIComponent(realSendTarget)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ number: ctx.remoteJid, mediatype: 'image', media: imageUrl }),
+      body: JSON.stringify({
+        number: ctx.remoteJid,
+        mediatype: 'image',
+        media: imageUrl,
+        ...(normalizedCaption ? { caption: normalizedCaption } : {}),
+      }),
     }, 15_000)
     if (!response.ok) {
       throw new Error(`Falha ao enviar imagem do fluxo (${response.status}): ${response.text.slice(0, 300)}`)
@@ -189,7 +211,7 @@ export async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
   await supabase.from('messages').insert({
     conversation_id: ctx.conversationId,
     wa_message_id: waMessageId,
-    content: imageUrl,
+    content: normalizedCaption ? `${imageUrl}\n${normalizedCaption}` : imageUrl,
     type: 'image',
     direction: 'outbound',
     status: 'sent',
@@ -197,7 +219,7 @@ export async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
   })
 
   await supabase.from('conversations').update({
-    last_message: '📷 Imagem',
+    last_message: normalizedCaption || '📷 Imagem',
     last_message_at: new Date().toISOString(),
   }).eq('id', ctx.conversationId)
 }
@@ -1303,6 +1325,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
         ? node.data.replyButtons as FlowReplyButton[]
         : []
       const images = (node.data.images as FlowImage[] | undefined) ?? []
+      const combineImageAndMessage = node.data.combineImageAndMessage !== false
       const templates = [messageTitle, msg, footer, ...replyButtons.map((button) => button.label)]
       log(`executeFlow sendMessage`, {
         messageLength: msg.length,
@@ -1349,13 +1372,30 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
         throw error
       }
 
-      for (const img of images) {
-        await sendWhatsAppImage(ctx, img.url)
-      }
       const renderedText = formatTextReplyMessage(rendered)
+      const nativeReplyOptionsEnabled = replyButtons.length > 0
+        && process.env.EVOLUTION_REPLY_BUTTONS_ENABLED === 'true'
+        && Boolean(resolveRealSendTarget(ctx))
+      const imageCaption = combineImageAndMessage
+        && images.length > 0
+        && renderedText.trim()
+        && !nativeReplyOptionsEnabled
+        ? renderedText
+        : ''
+      const nativeReplyThumbnail = combineImageAndMessage && nativeReplyOptionsEnabled
+        ? images[0]?.url
+        : undefined
+      const imagesToSendSeparately = nativeReplyThumbnail ? images.slice(1) : images
+
+      if (replyButtons.length > 0 && nativeReplyThumbnail) {
+        await sendWhatsAppReplyOptions(ctx, rendered, { thumbnailUrl: nativeReplyThumbnail })
+      }
+      for (const [index, img] of imagesToSendSeparately.entries()) {
+        await sendWhatsAppImage(ctx, img.url, index === 0 ? imageCaption : undefined)
+      }
       if (replyButtons.length > 0) {
-        await sendWhatsAppReplyOptions(ctx, rendered)
-      } else if (renderedText.trim()) {
+        if (!imageCaption && !nativeReplyThumbnail) await sendWhatsAppReplyOptions(ctx, rendered)
+      } else if (renderedText.trim() && !imageCaption) {
         await sendWhatsApp(ctx, renderedText)
       }
       if (renderedText.trim() || images.length > 0) anyMessageSent = true
