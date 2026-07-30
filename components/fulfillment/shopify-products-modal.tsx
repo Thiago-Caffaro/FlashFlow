@@ -23,13 +23,22 @@ export default function ShopifyProductsModal({
   const [editing, setEditing] = useState<ShopifyProduct | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [formBusy, setFormBusy] = useState(false)
+  const [formSaveState, setFormSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
+  const [formSaveError, setFormSaveError] = useState<string | null>(null)
 
   async function handleSave(values: ShopifyProductFormValues) {
     setFormBusy(true)
-    await onSave(values, editing?.id ?? null)
-    setFormBusy(false)
-    setShowForm(false)
-    setEditing(null)
+    setFormSaveState('saving')
+    setFormSaveError(null)
+    try {
+      await onSave(values, editing?.id ?? null)
+      setFormSaveState('success')
+    } catch (error) {
+      setFormSaveState('error')
+      setFormSaveError(error instanceof Error ? error.message : 'Não foi possível salvar o produto.')
+    } finally {
+      setFormBusy(false)
+    }
   }
 
   return (
@@ -65,8 +74,15 @@ export default function ShopifyProductsModal({
             <ShopifyProductForm
               editing={editing}
               busy={formBusy}
+              saveState={formSaveState}
+              saveError={formSaveError}
               onSave={handleSave}
-              onCancel={() => { setShowForm(false); setEditing(null) }}
+              onCancel={() => {
+                setShowForm(false)
+                setEditing(null)
+                setFormSaveState('idle')
+                setFormSaveError(null)
+              }}
             />
           </div>
         )}
@@ -76,7 +92,12 @@ export default function ShopifyProductsModal({
             products={products}
             busyId={busyId}
             onToggleKeepLocalCopy={onToggleKeepLocalCopy}
-            onEdit={(product) => { setEditing(product); setShowForm(true) }}
+            onEdit={(product) => {
+              setEditing(product)
+              setShowForm(true)
+              setFormSaveState('idle')
+              setFormSaveError(null)
+            }}
             onDelete={onDelete}
           />
         </div>

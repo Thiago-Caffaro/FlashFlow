@@ -97,6 +97,15 @@ export async function DELETE(
     const { error: runErr } = await supabaseAdmin.from('flow_runs').delete().eq('instance_name', name)
     if (runErr) { console.error('[DELETE accounts] flow_runs:', runErr.message); failedSteps.push('flow_runs') }
 
+    const { error: jobErr } = await supabaseAdmin.from('flow_jobs').delete().eq('instance_name', name)
+    if (jobErr) { console.error('[DELETE accounts] flow_jobs:', jobErr.message); failedSteps.push('flow_jobs') }
+
+    const { error: variableErr } = await supabaseAdmin.from('message_variables').delete().eq('instance_name', name)
+    if (variableErr) {
+      console.error('[DELETE accounts] message_variables:', variableErr.message)
+      failedSteps.push('message_variables')
+    }
+
     // ── 3. agent_memory_blocks ──────────────────────────────────────────────────
     const { error: memErr } = await supabaseAdmin.from('agent_memory_blocks').delete().eq('instance_name', name)
     if (memErr) { console.error('[DELETE accounts] agent_memory_blocks:', memErr.message); failedSteps.push('agent_memory_blocks') }

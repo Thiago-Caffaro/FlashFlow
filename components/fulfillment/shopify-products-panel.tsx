@@ -51,6 +51,8 @@ export default function ShopifyProductsPanel({
   const [editing, setEditing] = useState<ShopifyProduct | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [formBusy, setFormBusy] = useState(false)
+  const [formSaveState, setFormSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
+  const [formSaveError, setFormSaveError] = useState<string | null>(null)
 
   const filteredProducts = useMemo(
     () => filterShopifyProducts(products, {
@@ -82,15 +84,24 @@ export default function ShopifyProductsPanel({
 
   async function handleSave(values: ShopifyProductFormValues) {
     setFormBusy(true)
-    await onSave(values, editing?.id ?? null)
-    setFormBusy(false)
-    setShowForm(false)
-    setEditing(null)
+    setFormSaveState('saving')
+    setFormSaveError(null)
+    try {
+      await onSave(values, editing?.id ?? null)
+      setFormSaveState('success')
+    } catch (error) {
+      setFormSaveState('error')
+      setFormSaveError(error instanceof Error ? error.message : 'Não foi possível salvar o produto.')
+    } finally {
+      setFormBusy(false)
+    }
   }
 
   function openEditor(product: ShopifyProduct | null) {
     setEditing(product)
     setShowForm(true)
+    setFormSaveState('idle')
+    setFormSaveError(null)
   }
 
   return (
@@ -131,8 +142,15 @@ export default function ShopifyProductsPanel({
             <ShopifyProductForm
               editing={editing}
               busy={formBusy}
+              saveState={formSaveState}
+              saveError={formSaveError}
               onSave={handleSave}
-              onCancel={() => { setShowForm(false); setEditing(null) }}
+              onCancel={() => {
+                setShowForm(false)
+                setEditing(null)
+                setFormSaveState('idle')
+                setFormSaveError(null)
+              }}
             />
           </div>
         </div>

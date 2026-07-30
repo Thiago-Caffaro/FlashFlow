@@ -1,4 +1,4 @@
-import { validateFlowJson } from '@/lib/flow-validation'
+import { validateFlowJson, validateFlowMessagePlaceholders } from '@/lib/flow-validation'
 
 function node(id: string, type = 'sendMessage', data: unknown = {}) {
   return { id, type, position: { x: 0, y: 0 }, data }
@@ -84,5 +84,60 @@ describe('validateFlowJson', () => {
   it('rejeita nó sem id válido', () => {
     const result = validateFlowJson({ nodes: [{ type: 'sendMessage' }], edges: [] })
     expect(result.ok).toBe(false)
+  })
+
+  it('aceita até três opções conectadas diretamente a um Switch Case', () => {
+    const result = validateFlowJson({
+      nodes: [
+        node('start', 'start'),
+        node('message', 'sendMessage', {
+          message: 'Escolha',
+          replyButtons: [
+            { id: 'confirm', label: 'CONFIRMAR' },
+            { id: 'change', label: 'MODIFICAR' },
+          ],
+        }),
+        node('switch', 'switchCase'),
+      ],
+      edges: [edge('e1', 'start', 'message'), edge('e2', 'message', 'switch')],
+    })
+    expect(result).toEqual({ ok: true })
+  })
+
+  it('rejeita opções sem uma única conexão para Switch Case', () => {
+    const result = validateFlowJson({
+      nodes: [
+        node('message', 'sendMessage', {
+          message: 'Escolha',
+          replyButtons: [{ id: 'confirm', label: 'CONFIRMAR' }],
+        }),
+        node('end', 'end'),
+      ],
+      edges: [edge('e1', 'message', 'end')],
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/Switch Case/)
+  })
+
+  it('rejeita mais de três opções', () => {
+    const result = validateFlowJson({
+      nodes: [node('message', 'sendMessage', {
+        replyButtons: [1, 2, 3, 4].map((value) => ({ id: String(value), label: String(value) })),
+      })],
+      edges: [],
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/3 respostas/)
+  })
+
+  it('valida variáveis automáticas e personalizadas existentes', () => {
+    const json = {
+      nodes: [node('message', 'sendMessage', {
+        message: 'Oi {{contato.primeiro_nome}}, {{personalizada.nome_loja}}',
+      })],
+      edges: [],
+    }
+    expect(validateFlowMessagePlaceholders(json, ['nome_loja'])).toEqual({ ok: true })
+    expect(validateFlowMessagePlaceholders(json, [])).toMatchObject({ ok: false })
   })
 })

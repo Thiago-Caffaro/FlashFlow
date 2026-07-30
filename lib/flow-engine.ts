@@ -1,9 +1,17 @@
 import { createClient } from '@supabase/supabase-js'
-import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession, SwitchCase, FlowNodeData } from '@/types'
+import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession, SwitchCase, FlowNodeData, FlowReplyButton } from '@/types'
 import { decrypt } from './ai-crypto'
 import { getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import { fetchEvolution } from './evolution-api'
+import {
+  formatTextReplyMessage,
+  getMessagePlaceholders,
+  renderMessageContent,
+  type RenderedMessageContent,
+} from './message-template'
+import { OrderContextPendingError, resolveMessageTemplateContext } from './message-context'
+import { enqueueFlowMessageResumeJob } from './flow-jobs'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -15,6 +23,9 @@ export interface FlowContext {
   remoteJid: string
   conversationId: string
   incomingMessage: string
+  orderId?: string
+  flowRunId?: string
+  jobId?: string
   // True when this conversation belongs to the sandbox test account.
   // Real Evolution/WhatsApp sends and real FenixCOD stock lookups are
   // intercepted for sandbox conversations; everything else (AI calls,
@@ -93,6 +104,65 @@ export async function sendWhatsApp(ctx: FlowContext, text: string) {
     last_message: text,
     last_message_at: new Date().toISOString(),
   }).eq('id', ctx.conversationId)
+}
+
+export async function sendWhatsAppReplyOptions(
+  ctx: FlowContext,
+  content: RenderedMessageContent
+): Promise<'native' | 'text'> {
+  const persistedText = formatTextReplyMessage(content)
+  const realSendTarget = resolveRealSendTarget(ctx)
+  const nativeEnabled = process.env.EVOLUTION_REPLY_BUTTONS_ENABLED === 'true'
+
+  if (!realSendTarget || !nativeEnabled) {
+    await sendWhatsApp(ctx, persistedText)
+    return 'text'
+  }
+
+  const response = await fetchEvolution(`/message/sendButtons/${encodeURIComponent(realSendTarget)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      number: ctx.remoteJid,
+      title: content.title.trim() || 'Escolha uma opcao',
+      description: content.message,
+      footer: content.footer,
+      buttons: content.replyButtons.map((button) => ({
+        type: 'reply',
+        displayText: button.label,
+        id: button.id,
+      })),
+    }),
+  }, 15_000)
+
+  if (!response.ok) {
+    logError('sendWhatsAppReplyOptions: native send failed, using text fallback', {
+      status: response.status,
+    })
+    await sendWhatsApp(ctx, persistedText)
+    return 'text'
+  }
+
+  const record = response.body && typeof response.body === 'object'
+    ? response.body as Record<string, unknown>
+    : {}
+  const key = record.key && typeof record.key === 'object'
+    ? record.key as Record<string, unknown>
+    : {}
+  await supabase.from('messages').insert({
+    conversation_id: ctx.conversationId,
+    wa_message_id: typeof key.id === 'string' ? key.id : null,
+    content: persistedText,
+    type: 'text',
+    direction: 'outbound',
+    status: 'sent',
+    sender_type: 'ai',
+  })
+  await supabase.from('conversations').update({
+    last_message: persistedText,
+    last_message_at: new Date().toISOString(),
+  }).eq('id', ctx.conversationId)
+  return 'native'
 }
 
 export async function sendWhatsAppImage(ctx: FlowContext, imageUrl: string) {
@@ -1226,16 +1296,90 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
     }
 
     if (node.type === 'sendMessage') {
-      const msg = (node.data.message as string) ?? ''
+      const messageTitle = typeof node.data.messageTitle === 'string' ? node.data.messageTitle : ''
+      const msg = typeof node.data.message === 'string' ? node.data.message : ''
+      const footer = typeof node.data.footer === 'string' ? node.data.footer : ''
+      const replyButtons = Array.isArray(node.data.replyButtons)
+        ? node.data.replyButtons as FlowReplyButton[]
+        : []
       const images = (node.data.images as FlowImage[] | undefined) ?? []
-      log(`executeFlow sendMessage`, { messageLength: msg.length, imageCount: images.length })
+      const templates = [messageTitle, msg, footer, ...replyButtons.map((button) => button.label)]
+      log(`executeFlow sendMessage`, {
+        messageLength: msg.length,
+        imageCount: images.length,
+        replyButtonCount: replyButtons.length,
+      })
+
+      let rendered: RenderedMessageContent
+      try {
+        const hasVariables = getMessagePlaceholders(...templates).length > 0
+        const templateContext = hasVariables
+          ? await resolveMessageTemplateContext({
+            instanceName: ctx.instanceName,
+            conversationId: ctx.conversationId,
+            remoteJid: ctx.remoteJid,
+            orderId: ctx.orderId,
+            templates,
+          })
+          : {
+            contact: { name: null, number: ctx.remoteJid },
+            customVariables: {},
+          }
+        rendered = renderMessageContent({
+          title: messageTitle,
+          message: msg,
+          footer,
+          replyButtons,
+        }, templateContext)
+      } catch (error) {
+        if (error instanceof OrderContextPendingError && !ctx.jobId) {
+          await enqueueFlowMessageResumeJob({
+            instanceName: ctx.instanceName,
+            flowId,
+            nodeId: node.id,
+            conversationId: ctx.conversationId,
+            remoteJid: ctx.remoteJid,
+            orderId: ctx.orderId,
+            isSandbox: ctx.isSandbox,
+            realSendInstanceName: ctx.realSendInstanceName,
+          })
+          log('executeFlow sendMessage: waiting for local order context', { nodeId: node.id })
+          return
+        }
+        throw error
+      }
+
       for (const img of images) {
         await sendWhatsAppImage(ctx, img.url)
       }
-      if (msg.trim()) {
-        await sendWhatsApp(ctx, msg)
+      const renderedText = formatTextReplyMessage(rendered)
+      if (replyButtons.length > 0) {
+        await sendWhatsAppReplyOptions(ctx, rendered)
+      } else if (renderedText.trim()) {
+        await sendWhatsApp(ctx, renderedText)
       }
-      if (msg.trim() || images.length > 0) anyMessageSent = true
+      if (renderedText.trim() || images.length > 0) anyMessageSent = true
+
+      if (replyButtons.length > 0) {
+        const resumeAt = nextNodeId(edges, node.id)
+        if (!resumeAt) throw new Error('Mensagem com respostas nao possui proximo no')
+        const { error: runError } = await supabase.from('flow_runs').upsert({
+          instance_name: ctx.instanceName,
+          remote_jid: ctx.remoteJid,
+          conversation_id: ctx.conversationId,
+          flow_id: flowId,
+          node_id: resumeAt,
+          status: 'waiting_confirmation',
+          variables: {
+            orderId: ctx.orderId ?? null,
+            replyButtons: rendered.replyButtons,
+          },
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'instance_name,remote_jid' })
+        if (runError) throw new Error(`Falha ao pausar fluxo: ${runError.message}`)
+        log('executeFlow sendMessage: waiting for reply', { nodeId: node.id, resumeAt })
+        return
+      }
       currentId = nextNodeId(edges, node.id)
       continue
     }
@@ -1419,5 +1563,8 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
     currentId = nextNodeId(edges, currentId)
   }
 
+  if (ctx.flowRunId) {
+    await supabase.from('flow_runs').delete().eq('id', ctx.flowRunId)
+  }
   log(`executeFlow done`, { flowId, stepsExecuted: visited.size })
 }

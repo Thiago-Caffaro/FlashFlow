@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2, Save } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Loader2, Save } from 'lucide-react'
 import { ShopifyProduct } from '@/types'
 
 export interface ShopifyProductFormValues {
@@ -24,11 +24,20 @@ const btnSecondary = 'flex items-center gap-2 rounded-lg bg-[#f0f2f5] px-3 py-2.
 interface ShopifyProductFormProps {
   editing: ShopifyProduct | null
   busy: boolean
-  onSave: (values: ShopifyProductFormValues) => void
+  saveState: 'idle' | 'saving' | 'success' | 'error'
+  saveError: string | null
+  onSave: (values: ShopifyProductFormValues) => Promise<void>
   onCancel: () => void
 }
 
-export default function ShopifyProductForm({ editing, busy, onSave, onCancel }: ShopifyProductFormProps) {
+export default function ShopifyProductForm({
+  editing,
+  busy,
+  saveState,
+  saveError,
+  onSave,
+  onCancel,
+}: ShopifyProductFormProps) {
   const [form, setForm] = useState<ShopifyProductFormValues>(emptyForm)
 
   useEffect(() => {
@@ -43,64 +52,86 @@ export default function ShopifyProductForm({ editing, busy, onSave, onCancel }: 
   }, [editing])
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" aria-busy={busy}>
       {editing?.source === 'shopify' && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
           Este produto vem do Shopify. Para enviar ao FenixCOD, use exatamente o mesmo SKU nos dois sistemas.
           Alterações feitas apenas aqui valem até a próxima sincronização.
         </p>
       )}
-      <input
-        className={inputClass}
-        placeholder="Nome do produto"
-        value={form.title}
-        onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-      />
-      <input
-        className={inputClass}
-        placeholder="Variante (opcional, ex: Grande / Azul)"
-        value={form.variant_title}
-        onChange={(e) => setForm((f) => ({ ...f, variant_title: e.target.value }))}
-      />
-      <input
-        className={inputClass}
-        placeholder="SKU usado no FenixCOD"
-        value={form.sku}
-        onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
-      />
-      <div className="grid grid-cols-[1fr_80px] gap-2">
+      <fieldset disabled={busy} className="space-y-3 disabled:opacity-70">
         <input
           className={inputClass}
-          placeholder="Preço"
-          type="number"
-          min={0}
-          step="0.01"
-          value={form.price}
-          onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+          placeholder="Nome do produto"
+          value={form.title}
+          onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
         />
         <input
           className={inputClass}
-          placeholder="EUR"
-          value={form.currency}
-          onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
+          placeholder="Variante (opcional, ex: Grande / Azul)"
+          value={form.variant_title}
+          onChange={(e) => setForm((f) => ({ ...f, variant_title: e.target.value }))}
         />
+        <input
+          className={inputClass}
+          placeholder="SKU usado no FenixCOD"
+          value={form.sku}
+          onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
+        />
+        <div className="grid grid-cols-[1fr_80px] gap-2">
+          <input
+            className={inputClass}
+            placeholder="Preço"
+            type="number"
+            min={0}
+            step="0.01"
+            value={form.price}
+            onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+          />
+          <input
+            className={inputClass}
+            placeholder="EUR"
+            value={form.currency}
+            onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value.toUpperCase() }))}
+          />
+        </div>
+        <input
+          className={inputClass}
+          placeholder="URL da imagem (opcional)"
+          value={form.image_url}
+          onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))}
+        />
+      </fieldset>
+      <div aria-live="polite" className="min-h-5">
+        {saveState === 'saving' && (
+          <p className="flex items-center gap-2 text-sm font-medium text-[#54656f] dark:text-[#aebac1]">
+            <Loader2 size={15} className="animate-spin text-[#00a884]" />
+            Salvando alterações...
+          </p>
+        )}
+        {saveState === 'success' && (
+          <p className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+            <CheckCircle2 size={15} />
+            Alterações salvas com sucesso.
+          </p>
+        )}
+        {saveState === 'error' && (
+          <p className="flex items-center gap-2 text-sm font-medium text-red-600 dark:text-red-400" role="alert">
+            <AlertCircle size={15} />
+            {saveError ?? 'Não foi possível salvar. Tente novamente.'}
+          </p>
+        )}
       </div>
-      <input
-        className={inputClass}
-        placeholder="URL da imagem (opcional)"
-        value={form.image_url}
-        onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))}
-      />
       <div className="flex gap-2 pt-1">
         <button
-          onClick={() => onSave(form)}
+          onClick={() => void onSave(form)}
           disabled={busy || !form.title.trim() || !form.price}
           className={btnPrimary}
         >
           {busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-          {editing ? 'Salvar' : 'Adicionar produto'}
+          {busy ? 'Salvando...' : editing ? 'Salvar' : 'Adicionar produto'}
         </button>
-        <button onClick={onCancel} className={btnSecondary}>
+        <button onClick={onCancel} disabled={busy} className={btnSecondary}>
           Cancelar
         </button>
       </div>

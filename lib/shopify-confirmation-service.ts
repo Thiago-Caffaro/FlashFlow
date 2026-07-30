@@ -8,6 +8,7 @@ import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import { normalizePhone } from './phone'
 import { syncShopifyProductsForIntegration } from './shopify-products-service'
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
+import { enqueueShopifyOrderFlowJob } from './flow-jobs'
 import {
   SHOPIFY_INTEGRATION_PUBLIC_SELECT,
   decodeShopifyAdminToken,
@@ -41,20 +42,22 @@ export type { ShopifyIntegrationCredentialRow }
 
 export const MIN_CONFIRMATION_SEND_GAP_MS = 1_500
 
-let nextConfirmationSendAt = 0
-
 export async function reserveConfirmationSendSlot(): Promise<void> {
-  const now = Date.now()
-  const reservedAt = Math.max(now, nextConfirmationSendAt)
-  nextConfirmationSendAt = reservedAt + MIN_CONFIRMATION_SEND_GAP_MS
-  const waitMs = reservedAt - now
+  const { data, error } = await supabaseAdmin.rpc('reserve_flow_send_slot', {
+    p_key: 'confirmation_send',
+    p_gap_ms: MIN_CONFIRMATION_SEND_GAP_MS,
+  })
+  if (error) throw new Error(`Falha ao reservar intervalo de envio: ${error.message}`)
+  const reservedAt = new Date(String(data)).getTime()
+  if (!Number.isFinite(reservedAt)) throw new Error('Banco retornou intervalo de envio invalido')
+  const waitMs = reservedAt - Date.now()
   if (waitMs > 0) {
     await new Promise<void>((resolve) => setTimeout(resolve, waitMs))
   }
 }
 
 export function _resetConfirmationSendPacingForTests(): void {
-  nextConfirmationSendAt = 0
+  // Pacing is persisted in PostgreSQL. Tests reset their RPC mock instead.
 }
 
 type ShopifyIntegrationContext = {
@@ -339,29 +342,31 @@ export async function upsertShopifyOrder(
   }
 
   if (isNewOrder && options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
-    // Claim atômico: a Shopify pode reentregar o mesmo webhook (ela mesma
-    // documenta isso). Sem um UPDATE condicional aqui, duas entregas
-    // concorrentes leriam confirmation_message_sent_at=null antes de
-    // qualquer uma escrever, e ambas disparariam a mensagem de confirmação
-    // para o cliente. Só quem vencer o claim (linha afetada = 1) dispara.
-    const { data: claimed } = await supabaseAdmin
-      .from('fulfillment_orders')
-      .update({ confirmation_message_sent_at: now })
-      .eq('id', result.data.id)
-      .is('confirmation_message_sent_at', null)
-      .select('id')
+    const instanceName = String(result.data.assigned_instance_name || result.data.instance_name || '')
+    const { data: trigger, error: triggerError } = await supabaseAdmin
+      .from('triggers')
+      .select('action_payload')
+      .eq('instance_name', instanceName)
+      .eq('source', 'shopify_order')
+      .eq('action', 'flow')
+      .limit(1)
       .maybeSingle()
-
-    if (claimed) {
-      await runShopifyOrderTrigger(result.data.id).catch(async (error) => {
-        console.error('[shopify-confirmation] failed to run order-created trigger:', error)
-        // Libera o claim para permitir nova tentativa em webhook futuro.
-        await supabaseAdmin
-          .from('fulfillment_orders')
-          .update({ confirmation_message_sent_at: null })
-          .eq('id', result.data.id)
-          .eq('confirmation_message_sent_at', now)
+    if (triggerError) throw new Error(`Falha ao consultar gatilho Shopify: ${triggerError.message}`)
+    const flowId = trigger?.action_payload?.flow_id as string | undefined
+    if (flowId) {
+      await enqueueShopifyOrderFlowJob({
+        orderId: result.data.id,
+        instanceName,
+        flowId,
       })
+    } else {
+      await supabaseAdmin
+        .from('fulfillment_orders')
+        .update({
+          confirmation_message_error: 'Nenhum gatilho "Pedido Shopify criado" configurado para esta conta',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', result.data.id)
     }
   }
 
@@ -505,7 +510,7 @@ async function resolveConversationForOrder(instanceName: string, phone: string, 
 // Runs the "Pedido Shopify criado" flow trigger configured for the order's
 // account. Replaces the old fixed-template confirmation message — there is
 // no static fallback: if no trigger is configured, nothing is sent, by design.
-export async function runShopifyOrderTrigger(orderId: string) {
+export async function runShopifyOrderTrigger(orderId: string, flowIdOverride?: string) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
     .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation')
@@ -520,21 +525,28 @@ export async function runShopifyOrderTrigger(orderId: string) {
   if (!phone) throw new Error('Pedido sem telefone para confirmação')
 
   try {
-    const { data: trigger } = await supabaseAdmin
-      .from('triggers')
-      .select('action_payload')
-      .eq('instance_name', instanceName)
-      .eq('source', 'shopify_order')
-      .eq('action', 'flow')
-      .limit(1)
-      .maybeSingle()
-
-    const flowId = trigger?.action_payload?.flow_id as string | undefined
+    let flowId = flowIdOverride
+    if (!flowId) {
+      const { data: trigger } = await supabaseAdmin
+        .from('triggers')
+        .select('action_payload')
+        .eq('instance_name', instanceName)
+        .eq('source', 'shopify_order')
+        .eq('action', 'flow')
+        .limit(1)
+        .maybeSingle()
+      flowId = trigger?.action_payload?.flow_id as string | undefined
+    }
     if (!flowId) throw new Error('Nenhum gatilho "Pedido Shopify criado" configurado para esta conta')
 
     const { conversationId, remoteJid, realSendInstanceName } = await resolveConversationForOrder(
       instanceName, phone, String(order.customer_name || '')
     )
+    const { error: conversationUpdateError } = await supabaseAdmin
+      .from('fulfillment_orders')
+      .update({ conversation_id: conversationId, updated_at: new Date().toISOString() })
+      .eq('id', orderId)
+    if (conversationUpdateError) throw new Error(conversationUpdateError.message)
 
     if (!isSandboxOrder) {
       await reserveConfirmationSendSlot()
@@ -545,6 +557,7 @@ export async function runShopifyOrderTrigger(orderId: string) {
       remoteJid,
       conversationId,
       incomingMessage: '',
+      orderId,
       isSandbox: isSandboxOrder,
       realSendInstanceName: isSandboxOrder ? realSendInstanceName : undefined,
     })

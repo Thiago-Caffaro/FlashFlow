@@ -75,6 +75,11 @@ export interface FlowImage {
   filename: string
 }
 
+export interface FlowReplyButton {
+  id: string
+  label: string
+}
+
 export interface FlowMedia {
   id: string
   instance_name: string
@@ -103,6 +108,9 @@ export interface AgentMemoryBlock {
 export interface FlowNodeData {
   label?: string
   message?: string
+  messageTitle?: string
+  footer?: string
+  replyButtons?: FlowReplyButton[]
   images?: FlowImage[]
   // condition
   conditionType?: 'contains' | 'exact'
@@ -253,6 +261,16 @@ export interface ShopifyProduct {
   hidden: boolean
   keep_local_copy: boolean
   local_product_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MessageVariable {
+  id: string
+  instance_name: string
+  key: string
+  label: string
+  value: string
   created_at: string
   updated_at: string
 }

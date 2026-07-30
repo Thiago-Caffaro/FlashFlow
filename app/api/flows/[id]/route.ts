@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { belongsToInstance } from '@/lib/instance-guard'
-import { validateFlowJson } from '@/lib/flow-validation'
+import {
+  getFlowCustomVariableKeys,
+  validateFlowJson,
+  validateFlowMessagePlaceholders,
+} from '@/lib/flow-validation'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,6 +37,23 @@ export async function PUT(
       const validation = validateFlowJson(body.json)
       if (!validation.ok) {
         return NextResponse.json({ ok: false, error: validation.error }, { status: 422 })
+      }
+      const customKeys = getFlowCustomVariableKeys(body.json)
+      let persistedCustomKeys: string[] = []
+      if (customKeys.length > 0) {
+        const { data: variables, error: variableError } = await supabaseAdmin
+          .from('message_variables')
+          .select('key')
+          .eq('instance_name', instanceName)
+          .in('key', customKeys)
+        if (variableError) {
+          return NextResponse.json({ ok: false, error: variableError.message }, { status: 500 })
+        }
+        persistedCustomKeys = (variables ?? []).map((variable) => String(variable.key))
+      }
+      const placeholderValidation = validateFlowMessagePlaceholders(body.json, persistedCustomKeys)
+      if (!placeholderValidation.ok) {
+        return NextResponse.json({ ok: false, error: placeholderValidation.error }, { status: 422 })
       }
       patch.json = body.json
     }

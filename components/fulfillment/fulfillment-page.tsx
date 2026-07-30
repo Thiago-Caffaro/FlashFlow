@@ -240,14 +240,22 @@ export default function FulfillmentPage() {
 
   async function saveShopifyProduct(values: ShopifyProductFormValues, editingId: string | null) {
     setShopifyProductsBusyId(editingId ?? 'new')
-    const json = await fetch('/api/fulfillment/shopify/products', {
-      method: editingId ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...values, id: editingId ?? undefined, price: Number(values.price) }),
-    }).then(getJson)
-    showResult(json, editingId ? 'Produto atualizado.' : 'Produto adicionado.')
-    await load()
-    setShopifyProductsBusyId(null)
+    try {
+      const json = await fetch('/api/fulfillment/shopify/products', {
+        method: editingId ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...values, id: editingId ?? undefined, price: Number(values.price) }),
+      }).then(getJson)
+      showResult(json, editingId ? 'Produto atualizado.' : 'Produto adicionado.')
+      if (!json.ok) throw new Error(json.error ?? 'Não foi possível salvar o produto.')
+      await load()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível salvar o produto.'
+      setMessage({ text: message, error: true })
+      throw error
+    } finally {
+      setShopifyProductsBusyId(null)
+    }
   }
 
   async function deleteShopifyProduct(product: ShopifyProduct) {

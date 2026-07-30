@@ -9,6 +9,9 @@ import {
   readEvolutionWebhookBody,
   verifyEvolutionWebhookSecret,
 } from '@/lib/evolution-api'
+import { extractInteractiveReplyText } from '@/lib/evolution-message'
+import { normalizeReplyInput } from '@/lib/message-template'
+import type { FlowReplyButton } from '@/types'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -421,8 +424,12 @@ export async function POST(req: NextRequest) {
 
     let content = ''
     let type = 'text'
+    const interactiveReply = extractInteractiveReplyText(msgObj)
 
-    if (msgObj.conversation || msgObj.extendedTextMessage?.text) {
+    if (interactiveReply) {
+      content = interactiveReply
+      type = 'text'
+    } else if (msgObj.conversation || msgObj.extendedTextMessage?.text) {
       content = msgObj.conversation || msgObj.extendedTextMessage.text
       type = 'text'
     } else if (msgObj.imageMessage) {
@@ -450,6 +457,18 @@ export async function POST(req: NextRequest) {
     } else {
       content = '[mídia]'
       type = 'media'
+    }
+
+    let preloadedFlowRun: Awaited<ReturnType<typeof checkActiveFlowRun>> | null = null
+    if (interactiveReply && data.key.fromMe !== true) {
+      preloadedFlowRun = await checkActiveFlowRun(instanceName, effectiveRemoteJid)
+      const variables = preloadedFlowRun?.variables && typeof preloadedFlowRun.variables === 'object'
+        ? preloadedFlowRun.variables as Record<string, unknown>
+        : {}
+      const replyButtons = Array.isArray(variables.replyButtons)
+        ? variables.replyButtons as FlowReplyButton[]
+        : []
+      content = normalizeReplyInput(content, replyButtons)
     }
 
     const { data: conversation, error: convError } = await supabase
@@ -509,13 +528,22 @@ export async function POST(req: NextRequest) {
     if (data.key.fromMe !== true && type === 'text') {
       void (async () => {
         try {
-          const flowRun = await checkActiveFlowRun(instanceName, effectiveRemoteJid)
+          const flowRun = preloadedFlowRun ?? await checkActiveFlowRun(instanceName, effectiveRemoteJid)
           if (flowRun) {
+            const variables = flowRun.variables && typeof flowRun.variables === 'object'
+              ? flowRun.variables as Record<string, unknown>
+              : {}
+            const replyButtons = Array.isArray(variables.replyButtons)
+              ? variables.replyButtons as FlowReplyButton[]
+              : []
+            const normalizedContent = normalizeReplyInput(content, replyButtons)
             await executeFlow(flowRun.flow_id, {
               instanceName,
               remoteJid: effectiveRemoteJid,
               conversationId: conversation.id,
-              incomingMessage: content,
+              incomingMessage: normalizedContent,
+              orderId: typeof variables.orderId === 'string' ? variables.orderId : undefined,
+              flowRunId: typeof flowRun.id === 'string' ? flowRun.id : undefined,
             }, flowRun.node_id)
           } else {
             const session = await checkActiveSession(instanceName, effectiveRemoteJid)

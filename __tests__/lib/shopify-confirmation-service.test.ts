@@ -6,13 +6,19 @@ const mockRecordOrderEvent = jest.fn()
 const mockSendWhatsAppText = jest.fn()
 const mockDecryptSecret = jest.fn(() => 'decoded-secret')
 const mockExecuteFlow = jest.fn()
+const mockRpc = jest.fn()
+const mockEnqueueShopifyOrderFlowJob = jest.fn()
 
 jest.mock('@/lib/supabase-admin', () => ({
-  supabaseAdmin: { from: mockFrom },
+  supabaseAdmin: { from: mockFrom, rpc: mockRpc },
 }))
 
 jest.mock('@/lib/flow-engine', () => ({
   executeFlow: mockExecuteFlow,
+}))
+
+jest.mock('@/lib/flow-jobs', () => ({
+  enqueueShopifyOrderFlowJob: mockEnqueueShopifyOrderFlowJob,
 }))
 
 jest.mock('@/lib/fulfillment-service', () => ({
@@ -151,6 +157,7 @@ describe('shopify-confirmation-service', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     _resetConfirmationSendPacingForTests()
+    mockEnqueueShopifyOrderFlowJob.mockResolvedValue({ id: 'job-1' })
     mockSubmitFulfillmentOrder.mockResolvedValue({ id: 'order-1', status: 'created', send_status: 'Enviado' })
   })
 
@@ -315,6 +322,9 @@ describe('shopify-confirmation-service', () => {
   it('reserves confirmation starts at least 1.5 seconds apart', async () => {
     jest.useFakeTimers()
     jest.setSystemTime(Date.parse('2026-07-28T12:00:00.000Z'))
+    mockRpc
+      .mockResolvedValueOnce({ data: '2026-07-28T12:00:00.000Z', error: null })
+      .mockResolvedValueOnce({ data: '2026-07-28T12:00:01.500Z', error: null })
 
     await reserveConfirmationSendSlot()
     let secondResolved = false
@@ -335,63 +345,50 @@ describe('shopify-confirmation-service', () => {
     jest.useRealTimers()
   })
 
-  it('reivindica confirmation_message_sent_at atomicamente antes de disparar o gatilho de confirmação', async () => {
+  it('enfileira uma única confirmação durável para um pedido realmente novo', async () => {
     const account = queryBuilder({ data: { instance_name: 'wa-country' }, error: null })
     const existing = queryBuilder({ data: null, error: null }) // pedido novo, nunca confirmado
     const inserted = queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country' }, error: null })
-    const claim = queryBuilder({ data: { id: 'order-1' }, error: null }) // claim vence
-    const orderForTrigger = queryBuilder({
-      data: {
-        id: 'order-1',
-        customer_name: 'Cliente Teste',
-        contact_phone: '351900000000',
-        assigned_instance_name: 'wa-country',
-        instance_name: 'wa-country',
-        is_simulation: false,
-      },
-      error: null,
-    })
-    const triggerLookup = queryBuilder({ data: null, error: null }) // nenhum gatilho configurado -> lança erro
-    // runShopifyOrderTrigger tem seu próprio catch interno que grava
-    // confirmation_message_error antes de relançar o erro.
-    const internalErrorUpdate = queryBuilder({ data: null, error: null })
-    const unclaim = queryBuilder({ data: null, error: null })
+    const triggerLookup = queryBuilder({ data: { action_payload: { flow_id: 'flow-1' } }, error: null })
 
     setTableQueues({
       accounts: [account],
-      fulfillment_orders: [existing, inserted, claim, orderForTrigger, internalErrorUpdate, unclaim],
+      fulfillment_orders: [existing, inserted],
       triggers: [triggerLookup],
     })
 
     await upsertShopifyOrder(integrationRow(), shopifyOrder())
 
-    // O claim é um UPDATE condicional: só afeta a linha se confirmation_message_sent_at ainda for null.
-    expect(claim.update).toHaveBeenCalledWith({ confirmation_message_sent_at: expect.any(String) })
-    // is('confirmation_message_sent_at', null) é implementado via .eq no mock genérico de query builder,
-    // mas o importante aqui é que o claim ocorreu ANTES da tentativa de disparo do gatilho.
     expect(triggerLookup.eq).toHaveBeenCalledWith('source', 'shopify_order')
-
-    // Sem gatilho configurado, runShopifyOrderTrigger lança e o catch libera o claim.
-    expect(unclaim.updates[0]).toMatchObject({ confirmation_message_sent_at: null })
+    expect(mockEnqueueShopifyOrderFlowJob).toHaveBeenCalledTimes(1)
+    expect(mockEnqueueShopifyOrderFlowJob).toHaveBeenCalledWith({
+      orderId: 'order-1',
+      instanceName: 'wa-country',
+      flowId: 'flow-1',
+    })
+    expect(mockExecuteFlow).not.toHaveBeenCalled()
   })
 
-  it('não reivindica nem tenta disparar confirmação de novo quando confirmation_message_sent_at já foi setado por outra entrega concorrente do webhook', async () => {
+  it('não enfileira confirmação quando um pedido existente é reprocessado, mesmo sem sent_at', async () => {
     const account = queryBuilder({ data: { instance_name: 'wa-country' }, error: null })
-    const existing = queryBuilder({ data: null, error: null })
-    const inserted = queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country' }, error: null })
-    // Simula outra entrega do webhook já ter vencido a corrida — o UPDATE
-    // condicional (WHERE confirmation_message_sent_at IS NULL) não afeta
-    // nenhuma linha e retorna null.
-    const claimLost = queryBuilder({ data: null, error: null })
+    const existing = queryBuilder({
+      data: {
+        id: 'order-1',
+        assigned_instance_name: 'wa-country',
+        confirmation_message_sent_at: null,
+      },
+      error: null,
+    })
+    const updated = queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country' }, error: null })
 
     setTableQueues({
       accounts: [account],
-      fulfillment_orders: [existing, inserted, claimLost],
+      fulfillment_orders: [existing, updated],
     })
 
     await upsertShopifyOrder(integrationRow(), shopifyOrder())
 
-    // Sem vencer o claim, o gatilho de confirmação nunca deve ser consultado/disparado.
+    expect(mockEnqueueShopifyOrderFlowJob).not.toHaveBeenCalled()
     expect(mockExecuteFlow).not.toHaveBeenCalled()
   })
 

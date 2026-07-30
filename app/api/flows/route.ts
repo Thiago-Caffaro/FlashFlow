@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { validateFlowJson } from '@/lib/flow-validation'
+import {
+  getFlowCustomVariableKeys,
+  validateFlowJson,
+  validateFlowMessagePlaceholders,
+} from '@/lib/flow-validation'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +39,23 @@ export async function POST(req: NextRequest) {
     const validation = validateFlowJson(jsonToSave)
     if (!validation.ok) {
       return NextResponse.json({ ok: false, error: validation.error }, { status: 422 })
+    }
+    const customKeys = getFlowCustomVariableKeys(jsonToSave)
+    let persistedCustomKeys: string[] = []
+    if (customKeys.length > 0) {
+      const { data: variables, error: variableError } = await supabaseAdmin
+        .from('message_variables')
+        .select('key')
+        .eq('instance_name', instance_name)
+        .in('key', customKeys)
+      if (variableError) {
+        return NextResponse.json({ ok: false, error: variableError.message }, { status: 500 })
+      }
+      persistedCustomKeys = (variables ?? []).map((variable) => String(variable.key))
+    }
+    const placeholderValidation = validateFlowMessagePlaceholders(jsonToSave, persistedCustomKeys)
+    if (!placeholderValidation.ok) {
+      return NextResponse.json({ ok: false, error: placeholderValidation.error }, { status: 422 })
     }
 
     const { data, error } = await supabaseAdmin
