@@ -1,8 +1,15 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Plus, Search, GitBranch, Power, PowerOff, Pencil, Trash2, ExternalLink, Calendar, Hash, Download, Upload } from 'lucide-react'
-import { Flow } from '@/types'
+import { Plus, Search, GitBranch, Power, PowerOff, Pencil, Trash2, ExternalLink, Calendar, Hash, Download, Upload, AlertCircle, CheckCircle2, Loader2, X } from 'lucide-react'
+import { Flow, MessageVariable } from '@/types'
+import {
+  FlowTransferItem,
+  FlowTransferVariable,
+  getReferencedCustomVariableKeys,
+  parseFlowTransfer,
+  selectTransferVariables,
+} from '@/lib/flow-transfer'
 import FlowCanvas from './flow-canvas'
 
 function downloadJson(data: unknown, filename: string) {
@@ -22,6 +29,13 @@ interface Props {
 interface FlowUpdateResult {
   ok: boolean
   error?: string
+}
+
+interface PendingImport {
+  flows: FlowTransferItem[]
+  variablesToCreate: FlowTransferVariable[]
+  unresolvedKeys: string[]
+  values: Record<string, string>
 }
 
 // ─── Context panel ────────────────────────────────────────────────────────────
@@ -175,6 +189,8 @@ export default function FlowsTab({ instanceName }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editingFlow, setEditingFlow] = useState<Flow | null>(null)
   const [importing, setImporting] = useState(false)
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null)
+  const [transferNotice, setTransferNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
 
   const fetchFlows = useCallback(async () => {
@@ -235,24 +251,84 @@ export default function FlowsTab({ instanceName }: Props) {
     if (!result.ok) throw new Error(result.error ?? 'Não foi possível salvar o fluxo.')
   }
 
-  function handleExportSingle(flow: Flow) {
-    const slug = flow.name.replace(/\s+/g, '-').toLowerCase()
-    downloadJson(
-      { flashflow_export: 'flow', version: 1, name: flow.name, ativo: flow.ativo, json: flow.json },
-      `${slug}.json`
-    )
+  async function fetchMessageVariables(): Promise<MessageVariable[]> {
+    const response = await fetch(`/api/message-variables?instance=${encodeURIComponent(instanceName)}`, { cache: 'no-store' })
+    const json = await response.json()
+    if (!response.ok || !json.ok) throw new Error(json.error ?? 'Falha ao carregar variaveis da conta.')
+    return json.variables ?? []
   }
 
-  function handleExportAll() {
+  async function handleExportSingle(flow: Flow) {
+    const slug = flow.name.replace(/\s+/g, '-').toLowerCase()
+    try {
+      const transferFlow = { name: flow.name, ativo: flow.ativo, json: flow.json }
+      const variables = selectTransferVariables([transferFlow], await fetchMessageVariables())
+      downloadJson(
+        { flashflow_export: 'flow', version: 2, ...transferFlow, variables },
+        `${slug}.json`
+      )
+      setTransferNotice(null)
+    } catch (error) {
+      setTransferNotice({ type: 'error', message: error instanceof Error ? error.message : 'Falha ao exportar fluxo.' })
+    }
+  }
+
+  async function handleExportAll() {
     const date = new Date().toISOString().slice(0, 10)
-    downloadJson(
-      {
-        flashflow_export: 'flows',
-        version: 1,
-        flows: flows.map((f) => ({ name: f.name, ativo: f.ativo, json: f.json })),
-      },
-      `flashflow-flows-${instanceName}-${date}.json`
-    )
+    try {
+      const transferFlows = flows.map((flow) => ({ name: flow.name, ativo: flow.ativo, json: flow.json }))
+      const variables = selectTransferVariables(transferFlows, await fetchMessageVariables())
+      downloadJson(
+        { flashflow_export: 'flows', version: 2, flows: transferFlows, variables },
+        `flashflow-flows-${instanceName}-${date}.json`
+      )
+      setTransferNotice(null)
+    } catch (error) {
+      setTransferNotice({ type: 'error', message: error instanceof Error ? error.message : 'Falha ao exportar fluxos.' })
+    }
+  }
+
+  async function createTransferVariables(variables: FlowTransferVariable[]) {
+    for (const variable of variables) {
+      const response = await fetch('/api/message-variables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instance_name: instanceName, ...variable }),
+      })
+      const json = await response.json()
+      if (response.status === 409) continue
+      if (!response.ok || !json.ok) {
+        throw new Error(`Variavel "${variable.key}": ${json.error ?? 'nao foi possivel criar'}`)
+      }
+    }
+  }
+
+  async function importFlows(flowsToImport: FlowTransferItem[], variablesToCreate: FlowTransferVariable[]) {
+    await createTransferVariables(variablesToCreate)
+    let importedCount = 0
+    for (const flow of flowsToImport) {
+      const flowName = flow.name?.trim() || 'Fluxo importado'
+      const response = await fetch('/api/flows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instance_name: instanceName,
+          name: flowName,
+          json: flow.json,
+          ativo: flow.ativo ?? true,
+        }),
+      })
+      const json = await response.json()
+      if (!response.ok || !json.ok) {
+        throw new Error(`"${flowName}": ${json.error ?? `falha HTTP ${response.status}`}`)
+      }
+      importedCount++
+    }
+    await fetchFlows()
+    setTransferNotice({
+      type: 'success',
+      message: `${importedCount} fluxo${importedCount === 1 ? '' : 's'} importado${importedCount === 1 ? '' : 's'} com sucesso.`,
+    })
   }
 
   async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -260,38 +336,55 @@ export default function FlowsTab({ instanceName }: Props) {
     if (!file) return
     e.target.value = ''
     setImporting(true)
+    setTransferNotice(null)
     try {
-      const text = await file.text()
-      const data = JSON.parse(text)
+      const parsed = parseFlowTransfer(JSON.parse(await file.text()))
+      const existingVariables = await fetchMessageVariables()
+      const existingKeys = new Set(existingVariables.map((variable) => variable.key))
+      const exportedByKey = new Map(parsed.variables.map((variable) => [variable.key, variable]))
+      const missingKeys = getReferencedCustomVariableKeys(parsed.flows)
+        .filter((key) => !existingKeys.has(key))
+      const variablesToCreate = missingKeys
+        .map((key) => exportedByKey.get(key))
+        .filter((variable): variable is FlowTransferVariable => Boolean(variable))
+      const unresolvedKeys = missingKeys.filter((key) => !exportedByKey.has(key))
 
-      type FlowPayload = { name?: string; ativo?: boolean; json?: Flow['json'] }
-      let toImport: FlowPayload[] = []
-
-      if (data.flashflow_export === 'flow') {
-        toImport = [{ name: data.name, ativo: data.ativo, json: data.json }]
-      } else if (data.flashflow_export === 'flows') {
-        toImport = data.flows ?? []
-      } else {
-        alert('Arquivo inválido. Use um JSON exportado pelo FlashFlow.')
+      if (unresolvedKeys.length > 0) {
+        setPendingImport({
+          flows: parsed.flows,
+          variablesToCreate,
+          unresolvedKeys,
+          values: Object.fromEntries(unresolvedKeys.map((key) => [key, ''])),
+        })
         return
       }
+      await importFlows(parsed.flows, variablesToCreate)
+    } catch (error) {
+      setTransferNotice({
+        type: 'error',
+        message: error instanceof SyntaxError
+          ? 'O arquivo selecionado nao e um JSON valido.'
+          : error instanceof Error ? error.message : 'Falha ao importar fluxo.',
+      })
+    } finally {
+      setImporting(false)
+    }
+  }
 
-      for (const f of toImport) {
-        await fetch('/api/flows', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            instance_name: instanceName,
-            name: f.name ?? 'Fluxo importado',
-            json: f.json,
-            ativo: f.ativo ?? true,
-          }),
-        })
-      }
-
-      await fetchFlows()
-    } catch {
-      alert('Erro ao ler o arquivo. Verifique se é um JSON válido.')
+  async function completePendingImport() {
+    if (!pendingImport) return
+    setImporting(true)
+    setTransferNotice(null)
+    try {
+      const manuallyConfigured = pendingImport.unresolvedKeys.map((key) => ({
+        key,
+        label: key.replace(/_/g, ' '),
+        value: pendingImport.values[key],
+      }))
+      await importFlows(pendingImport.flows, [...pendingImport.variablesToCreate, ...manuallyConfigured])
+      setPendingImport(null)
+    } catch (error) {
+      setTransferNotice({ type: 'error', message: error instanceof Error ? error.message : 'Falha ao importar fluxo.' })
     } finally {
       setImporting(false)
     }
@@ -314,7 +407,67 @@ export default function FlowsTab({ instanceName }: Props) {
   const selectedFlow = flows.find((f) => f.id === selectedId) ?? null
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="relative flex h-full min-h-0">
+      {pendingImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+          <div className="flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-lg bg-white shadow-xl dark:bg-[#233138]">
+            <div className="flex items-center justify-between border-b border-[#e4e7e9] px-5 py-4 dark:border-[#3d4f5a]">
+              <div>
+                <h2 className="text-base font-bold text-[#111b21] dark:text-[#e9edef]">Completar variaveis</h2>
+                <p className="mt-1 text-xs text-[#667781] dark:text-[#aebac1]">Este arquivo antigo nao inclui os valores usados pelo fluxo.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingImport(null)}
+                disabled={importing}
+                title="Fechar"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-[#667781] hover:bg-[#f0f2f5] disabled:opacity-50 dark:text-[#aebac1] dark:hover:bg-[#2a3942]"
+              >
+                <X size={17} />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              {pendingImport.unresolvedKeys.map((key) => (
+                <div key={key}>
+                  <label htmlFor={`import-variable-${key}`} className="mb-1.5 block text-xs font-semibold uppercase text-[#667781] dark:text-[#aebac1]">
+                    {key.replace(/_/g, ' ')}
+                  </label>
+                  <input
+                    id={`import-variable-${key}`}
+                    value={pendingImport.values[key]}
+                    onChange={(event) => setPendingImport((current) => current ? {
+                      ...current,
+                      values: { ...current.values, [key]: event.target.value },
+                    } : null)}
+                    placeholder={`Valor para {{personalizada.${key}}}`}
+                    maxLength={2000}
+                    className="w-full rounded-lg border border-[#d1d7db] bg-[#f0f2f5] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#00a884] dark:border-[#3d4f5a] dark:bg-[#2a3942] dark:text-[#e9edef]"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 border-t border-[#e4e7e9] px-5 py-4 dark:border-[#3d4f5a]">
+              <button
+                type="button"
+                onClick={() => setPendingImport(null)}
+                disabled={importing}
+                className="flex-1 rounded-lg border border-[#d1d7db] py-2.5 text-sm font-medium text-[#54656f] hover:bg-[#f0f2f5] disabled:opacity-50 dark:border-[#3d4f5a] dark:text-[#aebac1] dark:hover:bg-[#2a3942]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void completePendingImport()}
+                disabled={importing || pendingImport.unresolvedKeys.some((key) => !pendingImport.values[key]?.trim())}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#00a884] py-2.5 text-sm font-semibold text-white hover:bg-[#008f72] disabled:opacity-50"
+              >
+                {importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+                {importing ? 'Importando...' : 'Importar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ── Left: table ── */}
       <div className="flex flex-col w-1/2 border-r border-[#f0f2f5] dark:border-[#2a3942] min-h-0">
         {/* Toolbar */}
@@ -330,7 +483,7 @@ export default function FlowsTab({ instanceName }: Props) {
             />
           </div>
           <button
-            onClick={handleExportAll}
+            onClick={() => void handleExportAll()}
             title="Exportar todos os fluxos"
             disabled={flows.length === 0}
             className="p-2 rounded-xl text-[#aebac1] dark:text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors disabled:opacity-30 shrink-0"
@@ -343,7 +496,7 @@ export default function FlowsTab({ instanceName }: Props) {
             disabled={importing}
             className="p-2 rounded-xl text-[#aebac1] dark:text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors disabled:opacity-30 shrink-0"
           >
-            <Upload size={16} />
+            {importing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
           </button>
           <input ref={importRef} type="file" accept=".json" onChange={handleImportFile} className="hidden" />
           <button
@@ -354,6 +507,16 @@ export default function FlowsTab({ instanceName }: Props) {
             Novo
           </button>
         </div>
+
+        {transferNotice && (
+          <div className={`flex items-start gap-2 border-b px-4 py-3 text-xs ${transferNotice.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-300' : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-300'}`} role={transferNotice.type === 'error' ? 'alert' : 'status'}>
+            {transferNotice.type === 'success' ? <CheckCircle2 size={15} className="shrink-0" /> : <AlertCircle size={15} className="shrink-0" />}
+            <span className="min-w-0 flex-1">{transferNotice.message}</span>
+            <button type="button" onClick={() => setTransferNotice(null)} title="Fechar" className="shrink-0 opacity-70 hover:opacity-100">
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         {/* Column headers */}
         <div className="grid grid-cols-[1fr_auto_auto] items-center gap-4 px-4 py-2 border-b border-[#f0f2f5] dark:border-[#2a3942] bg-[#fafafa] dark:bg-[#182229] shrink-0">
