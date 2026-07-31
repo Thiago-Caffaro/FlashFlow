@@ -10,6 +10,7 @@ const MAX_NODE_DATA_JSON_LENGTH = 20000
 const KNOWN_NODE_TYPES = new Set<string>([
   'start',
   'sendMessage',
+  'notify',
   'condition',
   'switchCase',
   'aiAssistant',
@@ -24,6 +25,9 @@ export interface FlowValidationResult {
 }
 
 function messageTemplates(node: FlowNode): string[] {
+  if (node.type === 'notify') {
+    return [typeof node.data.notificationMessage === 'string' ? node.data.notificationMessage : '']
+  }
   return [
     typeof node.data.messageTitle === 'string' ? node.data.messageTitle : '',
     typeof node.data.message === 'string' ? node.data.message : '',
@@ -44,7 +48,7 @@ export function getFlowCustomVariableKeys(json: unknown): string[] {
   for (const rawNode of nodes) {
     if (!rawNode || typeof rawNode !== 'object') continue
     const node = rawNode as FlowNode
-    if (node.type !== 'sendMessage' || !node.data) continue
+    if ((node.type !== 'sendMessage' && node.type !== 'notify') || !node.data) continue
     for (const placeholder of getMessagePlaceholders(...messageTemplates(node))) {
       if (placeholder.startsWith('personalizada.')) {
         keys.add(placeholder.slice('personalizada.'.length))
@@ -66,7 +70,7 @@ export function validateFlowMessagePlaceholders(
   for (const rawNode of nodes) {
     if (!rawNode || typeof rawNode !== 'object') continue
     const node = rawNode as FlowNode
-    if (node.type !== 'sendMessage' || !node.data) continue
+    if ((node.type !== 'sendMessage' && node.type !== 'notify') || !node.data) continue
     const validation = validateMessagePlaceholders(messageTemplates(node), customKeys)
     if (!validation.ok) {
       return { ok: false, error: `${validation.error} no no "${node.id}"` }
@@ -139,6 +143,16 @@ export function validateFlowJson(json: unknown): FlowValidationResult {
             return { ok: false, error: `texto de resposta invalido no no "${node.id}"` }
           }
           buttonIds.add(button.id)
+        }
+      }
+
+      if (node.type === 'notify') {
+        const message = (node.data as FlowNode['data']).notificationMessage
+        if (typeof message !== 'string' || !message.trim()) {
+          return { ok: false, error: `mensagem da notificacao no no "${node.id}" e obrigatoria` }
+        }
+        if (message.length > 2000) {
+          return { ok: false, error: `mensagem da notificacao no no "${node.id}" excede 2000 caracteres` }
         }
       }
     }

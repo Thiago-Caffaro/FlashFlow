@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { X, Zap, AlertCircle, CheckCircle, BookOpen, Plus, Tag, Info, Trash2, Shuffle } from 'lucide-react'
 import { FlowNode, FlowNodeData, Trigger, AIProvider, AgentMemoryBlock, SwitchCase, FulfillmentProduct } from '@/types'
+import NotificationConfig from './notification-config'
 
 // ─── Models per provider ──────────────────────────────────────────────────────
 
@@ -558,6 +559,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
     start:        'Início do Fluxo',
     end:          'Fim do Fluxo',
     sendMessage:  'Enviar Mensagem',
+    notify:       'Notificar',
     condition:    'Condição',
     switchCase:   'Switch Case',
     aiAssistant:  'Agente',
@@ -594,6 +596,10 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
               className={inputClass}
             />
           </div>
+        )}
+
+        {type === 'notify' && (
+          <NotificationConfig node={node} instanceName={instanceName} onChange={onChange} />
         )}
 
         {type === 'condition' && (

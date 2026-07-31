@@ -6,6 +6,7 @@ import TriggersTab from '@/components/sidebar-right/triggers-tab'
 import FlowsTab from '@/components/flows/flows-tab'
 import AiSettingsTab from '@/components/settings/ai-settings-tab'
 import GeneralSettingsTab from '@/components/settings/general-settings-tab'
+import NotificationsTab from '@/components/notifications/notifications-tab'
 import MemoryTab from '@/components/memory/memory-tab'
 import GalleryTab from '@/components/gallery/gallery-tab'
 import AccountDropdown from '@/components/chat/account-dropdown'
@@ -18,12 +19,13 @@ import { FEATURES } from '@/lib/features'
 // Panel positions — fixed regardless of gallery feature flag
 const TAB_INDEX: Record<View, number> = {
   chats:        0,
-  gatilhos:     1,
-  fluxos:       2,
-  memoria:      3,
-  galeria:      4,
-  ia:           5,
-  'conf-gerais': 6,
+  notificacoes: 1,
+  gatilhos:     2,
+  fluxos:       3,
+  memoria:      4,
+  galeria:      5,
+  ia:           6,
+  'conf-gerais': 7,
 }
 
 function getStoredView(): View {
@@ -32,7 +34,7 @@ function getStoredView(): View {
   return stored && stored in TAB_INDEX ? stored as View : 'chats'
 }
 
-function playEscalationSound() {
+function playNotificationSound() {
   try {
     const AC = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!AC) return
@@ -59,39 +61,42 @@ function playEscalationSound() {
 function ChatApp() {
   const { activeAccount } = useAccount()
   const [activeView, setActiveView] = useState<View>(getStoredView)
-  const [escalationCount, setEscalationCount] = useState(0)
-  const prevEscalationRef = useRef(0)
-  const escalationInitialized = useRef(false)
+  const [notificationCount, setNotificationCount] = useState(0)
+  const prevNotificationRef = useRef(0)
+  const notificationsInitialized = useRef(false)
 
   const handleTabChange = (v: View) => {
     setActiveView(v)
     localStorage.setItem('activeView', v)
   }
 
-  // Escalation badge polling
+  // Poll the authenticated API because direct browser access to protected
+  // Supabase tables is intentionally disabled.
   useEffect(() => {
-    if (!activeAccount) { setEscalationCount(0); return }
+    if (!activeAccount) { setNotificationCount(0); return }
     const instanceName = activeAccount.instanceName
 
-    const fetchEscalationCount = async () => {
-      const res = await fetch(`/api/ai-sessions?instance=${encodeURIComponent(instanceName)}`, { cache: 'no-store' })
-      const json = await res.json()
-      const newCount: number = json.ok
-        ? (json.sessions as { session: { requires_human: boolean } }[]).filter((s) => s.session.requires_human).length
-        : 0
-      if (escalationInitialized.current && newCount > prevEscalationRef.current) {
-        playEscalationSound()
+    const fetchNotificationCount = async () => {
+      try {
+        const response = await fetch(`/api/notifications?instance=${encodeURIComponent(instanceName)}`, { cache: 'no-store' })
+        const json = await response.json()
+        if (!response.ok || !json.ok) return
+        const newCount = Number(json.unreadCount ?? 0)
+        if (notificationsInitialized.current && newCount > prevNotificationRef.current) {
+          playNotificationSound()
+        }
+        prevNotificationRef.current = newCount
+        notificationsInitialized.current = true
+        setNotificationCount(newCount)
+      } catch {
+        // Preserve the current badge during a transient network failure.
       }
-      prevEscalationRef.current = newCount
-      escalationInitialized.current = true
-      setEscalationCount(newCount)
     }
 
-    fetchEscalationCount()
-
-    // Sem Realtime via anon key — a tabela "ai_sessions" não tem mais leitura
-    // anônima (ver P5 da varredura de segurança). Atualização por polling.
-    const poll = setInterval(fetchEscalationCount, 10000)
+    notificationsInitialized.current = false
+    prevNotificationRef.current = 0
+    void fetchNotificationCount()
+    const poll = setInterval(fetchNotificationCount, 5000)
 
     return () => {
       clearInterval(poll)
@@ -141,8 +146,17 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 1: Gatilhos */}
+        {/* Panel 1: Notificacoes */}
         {panel(1,
+          <div className="h-full bg-white dark:bg-[#111b21]">
+            {activeAccount?.instanceName
+              ? <NotificationsTab instanceName={activeAccount.instanceName} onUnreadCountChange={setNotificationCount} />
+              : noAccount}
+          </div>
+        )}
+
+        {/* Panel 2: Gatilhos */}
+        {panel(2,
           <div className="h-full bg-white dark:bg-[#111b21]">
             {activeAccount?.instanceName
               ? <TriggersTab instanceName={activeAccount.instanceName} />
@@ -150,8 +164,8 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 2: Fluxos */}
-        {panel(2,
+        {/* Panel 3: Fluxos */}
+        {panel(3,
           <div className="h-full bg-white dark:bg-[#111b21]">
             {activeAccount?.instanceName
               ? <FlowsTab instanceName={activeAccount.instanceName} />
@@ -159,8 +173,8 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 3: Memória */}
-        {panel(3,
+        {/* Panel 4: Memória */}
+        {panel(4,
           <div className="h-full bg-white dark:bg-[#111b21]">
             {activeAccount?.instanceName
               ? <MemoryTab instanceName={activeAccount.instanceName} />
@@ -168,8 +182,8 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 4: Galeria (conditional) */}
-        {FEATURES.gallery && panel(4,
+        {/* Panel 5: Galeria (conditional) */}
+        {FEATURES.gallery && panel(5,
           <div className="h-full bg-white dark:bg-[#111b21]">
             {activeAccount?.instanceName
               ? <GalleryTab instanceName={activeAccount.instanceName} />
@@ -177,11 +191,11 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 5: Config. IA */}
-        {panel(5, <AiSettingsTab />)}
+        {/* Panel 6: Config. IA */}
+        {panel(6, <AiSettingsTab />)}
 
-        {/* Panel 6: Conf. Gerais */}
-        {panel(6,
+        {/* Panel 7: Conf. Gerais */}
+        {panel(7,
           activeAccount?.instanceName
             ? <GeneralSettingsTab instanceName={activeAccount.instanceName} />
             : noAccount
@@ -192,7 +206,7 @@ function ChatApp() {
       <VerticalTabBar
         activeTab={activeView}
         onTabChange={handleTabChange}
-        badges={{ chats: escalationCount }}
+        badges={{ notificacoes: notificationCount }}
       />
     </div>
   )

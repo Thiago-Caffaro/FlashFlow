@@ -449,4 +449,47 @@ describe('interactive flow execution', () => {
       content: 'Pedido correto?\n\n1. CONFIRMAR',
     })
   })
+
+  it('creates an internal notification without sending WhatsApp', async () => {
+    const notificationFlow = {
+      nodes: [
+        { id: 'start', type: 'start', position: { x: 0, y: 0 }, data: {} },
+        {
+          id: 'notify',
+          type: 'notify',
+          position: { x: 0, y: 0 },
+          data: { notificationMessage: 'Revisar esta conversa' },
+        },
+        { id: 'end', type: 'end', position: { x: 0, y: 0 }, data: {} },
+      ],
+      edges: [
+        { id: 'e1', source: 'start', target: 'notify' },
+        { id: 'e2', source: 'notify', target: 'end' },
+      ],
+    }
+    const notifications = builder()
+    setQueues({
+      flows: [builder({ data: { json: notificationFlow, ativo: true }, error: null })],
+      instance_ai_config: [builder({ data: null, error: null })],
+      notifications: [notifications],
+    })
+
+    await executeFlow('flow-1', {
+      instanceName: 'wa-1',
+      remoteJid: '34600000000@s.whatsapp.net',
+      conversationId: 'conv-1',
+      incomingMessage: '',
+    })
+
+    expect(mockFetchEvolution).not.toHaveBeenCalled()
+    expect(notifications.calls.inserted[0]).toMatchObject({
+      instance_name: 'wa-1',
+      type: 'flow',
+      title: 'Notificacao do fluxo',
+      message: 'Revisar esta conversa',
+      conversation_id: 'conv-1',
+      flow_id: 'flow-1',
+      flow_node_id: 'notify',
+    })
+  })
 })

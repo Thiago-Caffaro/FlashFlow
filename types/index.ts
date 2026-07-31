@@ -61,7 +61,7 @@ export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>
 
 // ─── Flows ────────────────────────────────────────────────────────────────────
 
-export type FlowNodeType = 'start' | 'sendMessage' | 'condition' | 'switchCase' | 'aiAssistant' | 'fulfillmentStock' | 'fulfillmentStatus' | 'end'
+export type FlowNodeType = 'start' | 'sendMessage' | 'notify' | 'condition' | 'switchCase' | 'aiAssistant' | 'fulfillmentStock' | 'fulfillmentStatus' | 'end'
 
 export interface SwitchCase {
   id: string
@@ -113,6 +113,8 @@ export interface FlowNodeData {
   replyButtons?: FlowReplyButton[]
   images?: FlowImage[]
   combineImageAndMessage?: boolean
+  // notification
+  notificationMessage?: string
   // condition
   conditionType?: 'contains' | 'exact'
   conditionValue?: string
@@ -274,6 +276,23 @@ export interface MessageVariable {
   value: string
   created_at: string
   updated_at: string
+}
+
+export type NotificationType = 'flow' | 'escalation'
+
+export interface AppNotification {
+  id: string
+  instance_name: string
+  type: NotificationType
+  title: string
+  message: string
+  conversation_id: string | null
+  flow_id: string | null
+  flow_node_id: string | null
+  source_key: string | null
+  metadata: Record<string, unknown>
+  read_at: string | null
+  created_at: string
 }
 
 export interface ShopifyAbandonedCheckout {

@@ -151,4 +151,29 @@ describe('validateFlowJson', () => {
     expect(validateFlowMessagePlaceholders(json, ['nome_loja'])).toEqual({ ok: true })
     expect(validateFlowMessagePlaceholders(json, [])).toMatchObject({ ok: false })
   })
+
+  it('aceita o no Notificar e valida sua mensagem e variaveis', () => {
+    const json = {
+      nodes: [node('notify', 'notify', {
+        notificationMessage: 'Atender {{contato.nome_completo}} em {{pedido.numero}}',
+      })],
+      edges: [],
+    }
+    expect(validateFlowJson(json)).toEqual({ ok: true })
+    expect(validateFlowMessagePlaceholders(json, [])).toEqual({ ok: true })
+    expect(validateFlowJson({
+      nodes: [node('notify', 'notify', { notificationMessage: '   ' })],
+      edges: [],
+    }).error).toMatch(/obrigatoria/)
+  })
+
+  it('rejeita variavel personalizada desconhecida no no Notificar', () => {
+    const json = {
+      nodes: [node('notify', 'notify', {
+        notificationMessage: '{{personalizada.inexistente}}',
+      })],
+      edges: [],
+    }
+    expect(validateFlowMessagePlaceholders(json, [])).toMatchObject({ ok: false })
+  })
 })

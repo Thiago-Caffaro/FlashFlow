@@ -24,6 +24,7 @@ import { findReplyConnectionIssue } from '@/lib/flow-connection-validation'
 import { buildReplyCasesForConnection } from '@/lib/flow-switch-cases'
 import StartNode from './nodes/start-node'
 import SendMessageNode from './nodes/send-message-node'
+import NotificationNode from './nodes/notification-node'
 import ConditionNode from './nodes/condition-node'
 import SwitchCaseNode from './nodes/switch-case-node'
 import AiAssistantNode from './nodes/ai-assistant-node'
@@ -35,6 +36,7 @@ import MessageEditorModal from './message-editor-modal'
 const nodeTypes = {
   start: StartNode,
   sendMessage: SendMessageNode,
+  notify: NotificationNode,
   condition: ConditionNode,
   switchCase: SwitchCaseNode,
   aiAssistant: AiAssistantNode,
@@ -45,6 +47,7 @@ const nodeTypes = {
 
 const BASE_PALETTE: { type: FlowNodeType; label: string; color: string }[] = [
   { type: 'sendMessage', label: 'Enviar Msg',   color: '#00a884' },
+  { type: 'notify',      label: 'Notificar',     color: '#e11d48' },
   { type: 'condition',   label: 'Condição',     color: '#f59e0b' },
   { type: 'aiAssistant', label: 'Agente',       color: '#8b5cf6' },
   { type: 'fulfillmentStock', label: 'Estoque', color: '#0ea5e9' },
@@ -253,6 +256,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
     const defaults: Record<FlowNodeType, FlowNodeData> = {
       start:        {},
       sendMessage:  { message: '' },
+      notify:       { notificationMessage: '' },
       condition:    { conditionType: 'contains', conditionValue: '' },
       switchCase:   { cases: [] },
       aiAssistant:  { systemPrompt: '', historyLimit: 10, temperature: 0.7, model: 'gemini-2.5-flash', continueConversation: true },
@@ -397,6 +401,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
               if (n.type === 'end') return '#f87171'
               if (n.type === 'condition') return '#f59e0b'
               if (n.type === 'aiAssistant') return '#8b5cf6'
+              if (n.type === 'notify') return '#e11d48'
               return '#d1d7db'
             }}
             className="!bg-white dark:!bg-[#182229] !border !border-[#f0f2f5] dark:!border-[#2a3942]"

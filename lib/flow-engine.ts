@@ -1188,6 +1188,34 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
           .update({ requires_human: true, pending_messages: [] })
           .eq('id', session.id)
         if (escalationErr) logError(`handleActiveSession: failed to set requires_human`, { sessionId: session.id, error: escalationErr.message })
+        if (!escalationErr) {
+          const { data: conversation } = await supabase
+            .from('conversations')
+            .select('contact_name, contact_phone')
+            .eq('id', ctx.conversationId)
+            .maybeSingle()
+          const contact = String(
+            conversation?.contact_name
+            || conversation?.contact_phone
+            || ctx.remoteJid.replace(/@.+$/, '')
+          ).trim()
+          const { error: notificationError } = await supabase.from('notifications').upsert({
+            instance_name: ctx.instanceName,
+            type: 'escalation',
+            title: 'Chat escalado',
+            message: `${contact} precisa de atendimento humano.`,
+            conversation_id: ctx.conversationId,
+            flow_id: session.flow_id,
+            source_key: `escalation:${session.id}`,
+            metadata: { remoteJid: ctx.remoteJid, sessionId: session.id },
+          }, { onConflict: 'instance_name,source_key', ignoreDuplicates: true })
+          if (notificationError) {
+            logError('handleActiveSession: failed to create escalation notification', {
+              sessionId: session.id,
+              error: notificationError.message,
+            })
+          }
+        }
       }
 
       if (reply.trim()) {
@@ -1432,6 +1460,67 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
         log('executeFlow sendMessage: waiting for reply', { nodeId: node.id, resumeAt })
         return
       }
+      currentId = nextNodeId(edges, node.id)
+      continue
+    }
+
+    if (node.type === 'notify') {
+      const template = typeof node.data.notificationMessage === 'string'
+        ? node.data.notificationMessage.trim()
+        : ''
+      if (!template) throw new Error(`Notificacao sem mensagem no no ${node.id}`)
+
+      let renderedMessage: string
+      try {
+        const hasVariables = getMessagePlaceholders(template).length > 0
+        const templateContext = hasVariables
+          ? await resolveMessageTemplateContext({
+            instanceName: ctx.instanceName,
+            conversationId: ctx.conversationId,
+            remoteJid: ctx.remoteJid,
+            orderId: ctx.orderId,
+            templates: [template],
+          })
+          : {
+            contact: { name: null, number: ctx.remoteJid },
+            customVariables: {},
+          }
+        renderedMessage = renderMessageContent({ message: template }, templateContext).message
+      } catch (error) {
+        if (error instanceof OrderContextPendingError && !ctx.jobId) {
+          await enqueueFlowMessageResumeJob({
+            instanceName: ctx.instanceName,
+            flowId,
+            nodeId: node.id,
+            conversationId: ctx.conversationId,
+            remoteJid: ctx.remoteJid,
+            orderId: ctx.orderId,
+            isSandbox: ctx.isSandbox,
+            realSendInstanceName: ctx.realSendInstanceName,
+          })
+          log('executeFlow notify: waiting for local order context', { nodeId: node.id })
+          return
+        }
+        throw error
+      }
+
+      const { error: notificationError } = await supabase.from('notifications').insert({
+        instance_name: ctx.instanceName,
+        type: 'flow',
+        title: 'Notificacao do fluxo',
+        message: renderedMessage,
+        conversation_id: ctx.conversationId,
+        flow_id: flowId,
+        flow_node_id: node.id,
+        metadata: {
+          remoteJid: ctx.remoteJid,
+          orderId: ctx.orderId ?? null,
+        },
+      })
+      if (notificationError) {
+        throw new Error(`Falha ao criar notificacao: ${notificationError.message}`)
+      }
+      log('executeFlow notify: notification created', { nodeId: node.id })
       currentId = nextNodeId(edges, node.id)
       continue
     }
