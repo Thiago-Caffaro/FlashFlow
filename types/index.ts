@@ -182,6 +182,8 @@ export const DELIVERY_STATUSES = [
 
 export type DeliveryStatus = typeof DELIVERY_STATUSES[number]
 
+export type ConfirmationTriggerState = 'pending' | 'sent' | 'failed'
+
 export const ABANDONED_CHECKOUT_STATUSES = ['Pendente', 'Enviado', 'Não enviar', 'Convertido'] as const
 export type AbandonedCheckoutStatus = typeof ABANDONED_CHECKOUT_STATUSES[number]
 
@@ -292,6 +294,7 @@ export interface AppNotification {
   source_key: string | null
   metadata: Record<string, unknown>
   read_at: string | null
+  dismissed_at: string | null
   created_at: string
 }
 

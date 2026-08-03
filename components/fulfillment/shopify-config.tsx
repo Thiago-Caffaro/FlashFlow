@@ -277,6 +277,8 @@ export default function ShopifyConfig({
                 <label className="mb-1 block text-xs font-semibold text-[#667781]">Client ID</label>
                 <input
                   className={inputClass}
+                  name="shopify-client-id"
+                  autoComplete="off"
                   placeholder="abc123..."
                   value={creds.clientId}
                   onChange={(e) => setCreds((c) => ({ ...c, clientId: e.target.value.trim() }))}
@@ -287,6 +289,8 @@ export default function ShopifyConfig({
                 <input
                   className={inputClass}
                   type="password"
+                  name="shopify-client-secret"
+                  autoComplete="new-password"
                   placeholder="Deixe vazio para manter o atual"
                   value={creds.clientSecret}
                   onChange={(e) => setCreds((c) => ({ ...c, clientSecret: e.target.value }))}

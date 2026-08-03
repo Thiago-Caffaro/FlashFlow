@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, FlaskConical, Loader2, Package, PackageSearch, PhoneCall, RefreshCw, Settings2, Zap } from 'lucide-react'
+import { ArrowLeft, FlaskConical, Loader2, MessageSquareText, Package, PackageSearch, PhoneCall, RefreshCw, Settings2, Zap } from 'lucide-react'
 import {
   Account,
   FulfillmentOrder,
@@ -13,6 +13,7 @@ import {
   type AbandonedCheckoutStatus,
   type CommercialStatus,
   type DeliveryStatus,
+  type ConfirmationTriggerState,
   type SendStatus,
 } from '@/types'
 import OrdersSection from '@/components/fulfillment/orders-section'
@@ -22,6 +23,7 @@ import FenixCODConfig, { Integration } from '@/components/fulfillment/fenixcod-c
 import SandboxPanel from '@/components/fulfillment/sandbox-panel'
 import ShopifyProductsPanel from '@/components/fulfillment/shopify-products-panel'
 import { ShopifyProductFormValues } from '@/components/fulfillment/shopify-product-form'
+import ShopifyOrderAccountSettings from '@/components/fulfillment/shopify-order-account-settings'
 
 type Tab = 'queue' | 'orders' | 'products' | 'settings' | 'sandbox'
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
@@ -44,14 +46,17 @@ export default function FulfillmentPage() {
   const [syncBusy, setSyncBusy] = useState(false)
   const [shopifyProductsBusyId, setShopifyProductsBusyId] = useState<string | null>(null)
   const [shopifyProductsSyncBusy, setShopifyProductsSyncBusy] = useState(false)
+  const [shopifyProductsBulkBusy, setShopifyProductsBulkBusy] = useState(false)
   const [shopifyTriggersEnabled, setShopifyTriggersEnabled] = useState(true)
   const [shopifyTriggersLoaded, setShopifyTriggersLoaded] = useState(false)
   const [shopifyTriggersBusy, setShopifyTriggersBusy] = useState(false)
+  const [defaultOrderInstanceName, setDefaultOrderInstanceName] = useState('')
+  const [defaultOrderAccountBusy, setDefaultOrderAccountBusy] = useState(false)
   const [message, setMessage] = useState<{ text: string; error?: boolean } | null>(null)
   const webhookEnsureStartedRef = useRef(false)
 
   const load = useCallback(async () => {
-    const [accountRes, orderRes, productRes, integrationRes, shopifyIntRes, checkoutRes, shopifyProductRes, triggerSettingRes] = await Promise.all([
+    const [accountRes, orderRes, productRes, integrationRes, shopifyIntRes, checkoutRes, shopifyProductRes, triggerSettingRes, defaultAccountRes] = await Promise.all([
       fetch('/api/accounts', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/orders', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/products', { cache: 'no-store' }).then(getJson),
@@ -60,6 +65,7 @@ export default function FulfillmentPage() {
       fetch('/api/fulfillment/shopify/abandoned-checkouts', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/shopify/products', { cache: 'no-store' }).then(getJson),
       fetch('/api/settings/shopify-triggers', { cache: 'no-store' }).then(getJson),
+      fetch('/api/settings/shopify-order-account', { cache: 'no-store' }).then(getJson),
     ])
     setAccounts(accountRes.accounts ?? [])
     if (orderRes.ok) setOrders(orderRes.orders ?? [])
@@ -70,6 +76,9 @@ export default function FulfillmentPage() {
     if (shopifyProductRes.ok) setShopifyProducts(shopifyProductRes.products ?? [])
     if (triggerSettingRes.ok) {
       setShopifyTriggersEnabled(triggerSettingRes.enabled !== false)
+    }
+    if (defaultAccountRes.ok) {
+      setDefaultOrderInstanceName(defaultAccountRes.instanceName ?? '')
     }
     setShopifyTriggersLoaded(true)
     setLoading(false)
@@ -131,6 +140,7 @@ export default function FulfillmentPage() {
     send_status?: SendStatus
     delivery_status?: DeliveryStatus
     assigned_instance_name?: string
+    confirmation_trigger_state?: ConfirmationTriggerState
   }) {
     setBusyId(id)
     const json = await fetch(`/api/fulfillment/orders/${id}`, {
@@ -246,6 +256,29 @@ export default function FulfillmentPage() {
     setShopifyProductsBusyId(null)
   }
 
+  async function bulkToggleKeepLocalCopy(productIds: string[], enabled: boolean) {
+    if (shopifyProductsBulkBusy || productIds.length === 0) return
+    setShopifyProductsBulkBusy(true)
+    try {
+      const json = await fetch('/api/fulfillment/shopify/products', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: productIds, keep_local_copy: enabled }),
+      }).then(getJson)
+      if (!json.ok) throw new Error(json.error ?? 'Não foi possível atualizar os produtos.')
+      showResult(json, `${json.updated ?? productIds.length} produto(s) atualizado(s).`)
+      await load()
+    } catch (error) {
+      setMessage({
+        text: error instanceof Error ? error.message : 'Não foi possível atualizar os produtos.',
+        error: true,
+      })
+      throw error
+    } finally {
+      setShopifyProductsBulkBusy(false)
+    }
+  }
+
   async function saveShopifyProduct(values: ShopifyProductFormValues, editingId: string | null) {
     setShopifyProductsBusyId(editingId ?? 'new')
     try {
@@ -312,6 +345,32 @@ export default function FulfillmentPage() {
     }
   }
 
+  async function updateDefaultOrderAccount(instanceName: string) {
+    if (defaultOrderAccountBusy) return
+    setDefaultOrderAccountBusy(true)
+    try {
+      const json = await fetch('/api/settings/shopify-order-account', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instanceName: instanceName || null }),
+      }).then(getJson)
+      if (!json.ok) throw new Error(json.error ?? 'Não foi possível salvar a conta padrão.')
+      setDefaultOrderInstanceName(json.instanceName ?? '')
+      setMessage({
+        text: json.instanceName
+          ? 'Conta padrão dos novos pedidos atualizada.'
+          : 'Conta padrão removida. A seleção por país será utilizada.',
+      })
+    } catch (error) {
+      setMessage({
+        text: error instanceof Error ? error.message : 'Não foi possível salvar a conta padrão.',
+        error: true,
+      })
+    } finally {
+      setDefaultOrderAccountBusy(false)
+    }
+  }
+
   const queueCount = orders.filter((o) => o.commercial_status === 'Não responde' && !o.is_simulation).length
 
   return (
@@ -371,6 +430,25 @@ export default function FulfillmentPage() {
               </button>
             ))}
           </nav>
+          <label className="relative flex min-h-10 min-w-48 max-w-60 shrink-0 items-center">
+            <MessageSquareText size={16} className="pointer-events-none absolute left-3 text-[#667781] dark:text-[#aebac1]" />
+            <select
+              value={defaultOrderInstanceName}
+              onChange={(event) => void updateDefaultOrderAccount(event.target.value)}
+              disabled={defaultOrderAccountBusy || loading}
+              aria-label="Conta padrão dos novos pedidos"
+              title="Conta padrão dos novos pedidos Shopify"
+              className="min-h-10 w-full rounded-lg border border-[#d1d7db] bg-white py-2 pl-9 pr-8 text-sm font-semibold text-[#54656f] outline-none focus:border-[#00a884] disabled:opacity-60 dark:border-[#3d4f5a] dark:bg-[#111b21] dark:text-[#e9edef]"
+            >
+              <option value="">Conta por país</option>
+              {accounts.filter((account) => !account.isSandbox).map((account) => (
+                <option key={account.instanceName} value={account.instanceName}>
+                  {account.label || account.instanceName}
+                </option>
+              ))}
+            </select>
+            {defaultOrderAccountBusy && <Loader2 size={15} className="pointer-events-none absolute right-8 animate-spin text-[#00a884]" />}
+          </label>
           <button
             type="button"
             role="switch"
@@ -391,8 +469,8 @@ export default function FulfillmentPage() {
             <span className={`relative inline-block h-6 w-11 shrink-0 rounded-full transition-colors ${
               shopifyTriggersEnabled ? 'bg-[#00a884]' : 'bg-[#8696a0]'
             }`}>
-              <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                shopifyTriggersEnabled ? 'translate-x-6' : 'translate-x-1'
+              <span className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                shopifyTriggersEnabled ? 'translate-x-5' : 'translate-x-0'
               }`} />
             </span>
             <span className="min-w-14 text-left text-xs">
@@ -463,8 +541,10 @@ export default function FulfillmentPage() {
             products={shopifyProducts}
             busyId={shopifyProductsBusyId}
             syncBusy={shopifyProductsSyncBusy}
+            bulkBusy={shopifyProductsBulkBusy}
             onSync={syncShopifyProducts}
             onToggleKeepLocalCopy={toggleKeepLocalCopy}
+            onBulkToggleKeepLocalCopy={bulkToggleKeepLocalCopy}
             onSave={saveShopifyProduct}
             onDelete={deleteShopifyProduct}
           />
@@ -472,6 +552,12 @@ export default function FulfillmentPage() {
 
         {!loading && tab === 'settings' && (
           <div className="space-y-10">
+            <ShopifyOrderAccountSettings
+              accounts={accounts}
+              value={defaultOrderInstanceName}
+              busy={defaultOrderAccountBusy}
+              onChange={updateDefaultOrderAccount}
+            />
             <ShopifyConfig
               shopifyIntegrations={shopifyIntegrations}
               accounts={accounts}

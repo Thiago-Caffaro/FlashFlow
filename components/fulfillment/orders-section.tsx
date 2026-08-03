@@ -15,6 +15,7 @@ import {
   ShopifyProduct,
   type AbandonedCheckoutStatus,
   type CommercialStatus,
+  type ConfirmationTriggerState,
   type DeliveryStatus,
   type SendStatus,
 } from '@/types'
@@ -22,6 +23,7 @@ import OrderEditModal from './order-edit-modal'
 import CustomerOrderGroup from './customer-order-group'
 import { groupOrdersByCustomer, type CustomerGroup } from '@/lib/fulfillment-grouping'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
+import ConfirmationTriggerStatus from './confirmation-trigger-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
@@ -49,6 +51,7 @@ interface OrdersSectionProps {
     send_status?: SendStatus
     delivery_status?: DeliveryStatus
     assigned_instance_name?: string
+    confirmation_trigger_state?: ConfirmationTriggerState
   }) => Promise<void>
   onUpdateItems: (id: string, items: FulfillmentOrder['items']) => Promise<void>
   onOrderAction: (id: string, action: OrderAction) => Promise<void>
@@ -136,6 +139,9 @@ function OrderRow({
       </div>
       <div>
         <CommercialBadge status={order.commercial_status} />
+        {order.source === 'shopify' && (
+          <div className="mt-1.5"><ConfirmationTriggerStatus order={order} compact /></div>
+        )}
       </div>
       <div>
         <SendBadge status={order.send_status} />

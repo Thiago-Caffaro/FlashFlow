@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminRequest } from '@/lib/server-auth'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { hideShopifyProduct, setKeepLocalCopy } from '@/lib/shopify-products-service'
+import { hideShopifyProduct, setKeepLocalCopies, setKeepLocalCopy } from '@/lib/shopify-products-service'
 
 export const dynamic = 'force-dynamic'
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function parseCreatePatch(body: Record<string, unknown>) {
   const title = String(body.title ?? '').trim()
@@ -53,6 +55,29 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   const body = await req.json()
+
+  if (Array.isArray(body.ids)) {
+    if (typeof body.keep_local_copy !== 'boolean') {
+      return NextResponse.json({ ok: false, error: 'keep_local_copy invalido' }, { status: 400 })
+    }
+    const ids = body.ids
+      .filter((id: unknown): id is string => typeof id === 'string')
+      .map((id: string) => id.trim())
+      .filter(Boolean)
+    if (ids.length === 0 || ids.length !== body.ids.length || ids.some((id: string) => !UUID_PATTERN.test(id))) {
+      return NextResponse.json({ ok: false, error: 'ids invalidos' }, { status: 400 })
+    }
+    try {
+      const updated = await setKeepLocalCopies(ids, body.keep_local_copy)
+      return NextResponse.json({ ok: true, updated })
+    } catch (error) {
+      return NextResponse.json({
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao atualizar copias locais',
+      }, { status: 500 })
+    }
+  }
+
   const id = String(body.id ?? '')
   if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
 

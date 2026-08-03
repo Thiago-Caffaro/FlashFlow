@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Bell, BellRing, Check, CheckCheck, Loader2, UserRoundCheck } from 'lucide-react'
+import { Bell, BellRing, Check, CheckCheck, Loader2, Trash2, UserRoundCheck } from 'lucide-react'
 import { AppNotification } from '@/types'
 
 interface Props {
@@ -23,6 +23,8 @@ export default function NotificationsTab({ instanceName, onUnreadCountChange }: 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [updating, setUpdating] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deletingAll, setDeletingAll] = useState(false)
 
   const loadNotifications = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true)
@@ -64,6 +66,25 @@ export default function NotificationsTab({ instanceName, onUnreadCountChange }: 
     }
   }
 
+  async function deleteNotifications(id?: string) {
+    if (!id && !window.confirm('Excluir todas as notificações desta conta?')) return
+    if (id) setDeletingId(id)
+    else setDeletingAll(true)
+    try {
+      const params = new URLSearchParams({ instance: instanceName })
+      if (id) params.set('id', id)
+      const response = await fetch(`/api/notifications?${params.toString()}`, { method: 'DELETE' })
+      const json = await response.json()
+      if (!response.ok || !json.ok) throw new Error(json.error ?? 'Falha ao excluir notificações')
+      await loadNotifications()
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Falha ao excluir notificações')
+    } finally {
+      setDeletingId(null)
+      setDeletingAll(false)
+    }
+  }
+
   const unreadCount = notifications.filter((notification) => !notification.read_at).length
 
   return (
@@ -87,6 +108,16 @@ export default function NotificationsTab({ instanceName, onUnreadCountChange }: 
         >
           <CheckCheck size={16} />
           <span className="hidden sm:inline">Marcar todas</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => void deleteNotifications()}
+          disabled={deletingAll || notifications.length === 0}
+          title="Excluir todas as notificações"
+          className="flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-950/20"
+        >
+          {deletingAll ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+          <span className="hidden sm:inline">Excluir todas</span>
         </button>
       </header>
 
@@ -125,17 +156,30 @@ export default function NotificationsTab({ instanceName, onUnreadCountChange }: 
                     </div>
                     <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-[#54656f] dark:text-[#aebac1]">{notification.message}</p>
                   </div>
-                  {!notification.read_at && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    {!notification.read_at && (
+                      <button
+                        type="button"
+                        onClick={() => void markRead(notification.id)}
+                        disabled={updating || deletingId === notification.id}
+                        title="Marcar como lida"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-[#667781] hover:bg-white disabled:opacity-50 dark:text-[#8696a0] dark:hover:bg-[#2a3942]"
+                      >
+                        <Check size={16} />
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => void markRead(notification.id)}
-                      disabled={updating}
-                      title="Marcar como lida"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#667781] hover:bg-white disabled:opacity-50 dark:text-[#8696a0] dark:hover:bg-[#2a3942]"
+                      onClick={() => void deleteNotifications(notification.id)}
+                      disabled={deletingId === notification.id || deletingAll}
+                      title="Excluir notificação"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/20"
                     >
-                      <Check size={16} />
+                      {deletingId === notification.id
+                        ? <Loader2 size={15} className="animate-spin" />
+                        : <Trash2 size={15} />}
                     </button>
-                  )}
+                  </div>
                 </article>
               )
             })}

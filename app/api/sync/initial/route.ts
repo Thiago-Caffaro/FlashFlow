@@ -25,10 +25,6 @@ export interface SyncProgress {
 
 const progress = new Map<string, SyncProgress>()
 
-export function getProgress(instanceName: string): SyncProgress | null {
-  return progress.get(instanceName) ?? null
-}
-
 // ─── contacts sync ────────────────────────────────────────────────────────────
 
 async function syncContacts(instanceName: string): Promise<string[]> {
