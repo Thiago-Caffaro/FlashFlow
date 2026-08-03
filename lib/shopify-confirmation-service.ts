@@ -10,6 +10,7 @@ import { syncShopifyProductsForIntegration } from './shopify-products-service'
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
 import { enqueueShopifyOrderFlowJob } from './flow-jobs'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
+import { getDefaultShopifyOrderInstance } from './shopify-order-settings'
 import {
   SHOPIFY_INTEGRATION_PUBLIC_SELECT,
   decodeShopifyAdminToken,
@@ -215,6 +216,9 @@ function mapLineItems(value: unknown): ShopifyOrderMappedFields['items'] {
 }
 
 export async function assignConfirmationAccount(country: string): Promise<string | null> {
+  const defaultInstanceName = await getDefaultShopifyOrderInstance()
+  if (defaultInstanceName) return defaultInstanceName
+
   const normalizedCountry = country.trim().toUpperCase()
   if (!normalizedCountry) return null
   const { data, error } = await supabaseAdmin
@@ -701,6 +705,22 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
     patch.assigned_instance_name = assigned || null
     patch.instance_name = assigned
   }
+  if (body.confirmation_trigger_state !== undefined) {
+    const state = String(body.confirmation_trigger_state)
+    if (!['pending', 'sent', 'failed'].includes(state)) {
+      throw new Error('Estado do gatilho de confirmacao invalido')
+    }
+    if (state === 'sent') {
+      patch.confirmation_message_sent_at = new Date().toISOString()
+      patch.confirmation_message_error = null
+    } else if (state === 'failed') {
+      patch.confirmation_message_sent_at = null
+      patch.confirmation_message_error = 'Marcado manualmente como falha'
+    } else {
+      patch.confirmation_message_sent_at = null
+      patch.confirmation_message_error = null
+    }
+  }
   if (body.items !== undefined) {
     const { data: existing, error: existingError } = await supabaseAdmin
       .from('fulfillment_orders')
@@ -741,11 +761,17 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
     })
   }
 
+  if (body.confirmation_trigger_state !== undefined) {
+    await recordOrderEvent(orderId, 'confirmation_trigger_state_updated', {
+      state: body.confirmation_trigger_state,
+    })
+  }
+
   // A correção de país é uma preparação para o envio, não uma autorização
   // implícita para disparar uma operação externa no FenixCOD.
-  const autoSubmit = body.country !== undefined && body.commercial_status === undefined
-    ? { submitted: false, order: data }
-    : await maybeAutoSubmitConfirmedOrder(orderId)
+  const autoSubmit = body.commercial_status !== undefined
+    ? await maybeAutoSubmitConfirmedOrder(orderId)
+    : { submitted: false, order: data }
   return { order: autoSubmit.order ?? data, autoSubmit }
 }
 

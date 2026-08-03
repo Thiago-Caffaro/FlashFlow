@@ -100,6 +100,19 @@ export async function setKeepLocalCopy(shopifyProductId: string, enabled: boolea
   }
 }
 
+export async function setKeepLocalCopies(shopifyProductIds: string[], enabled: boolean): Promise<number> {
+  const ids = [...new Set(shopifyProductIds.map((id) => id.trim()).filter(Boolean))]
+  if (ids.length === 0) return 0
+  if (ids.length > 1000) throw new Error('No maximo 1000 produtos podem ser alterados por vez')
+
+  const { data, error } = await supabaseAdmin.rpc('set_shopify_products_local_copy', {
+    p_ids: ids,
+    p_enabled: enabled,
+  })
+  if (error) throw new Error(`Falha ao atualizar copias locais: ${error.message}`)
+  return Number(data ?? 0)
+}
+
 // Shopify-sourced rows are never hard-deleted (a resync would just bring them
 // back) — hiding also forces the local-copy toggle off, since a hidden
 // product shouldn't keep feeding the AI's operational catalog.

@@ -11,10 +11,12 @@ import {
   SEND_STATUSES,
   ShopifyProduct,
   type CommercialStatus,
+  type ConfirmationTriggerState,
   type DeliveryStatus,
   type SendStatus,
 } from '@/types'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
+import ConfirmationTriggerStatus, { getConfirmationTriggerState } from './confirmation-trigger-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 type OrderItems = FulfillmentOrder['items']
@@ -32,6 +34,7 @@ interface OrderEditModalProps {
     send_status?: SendStatus
     delivery_status?: DeliveryStatus
     assigned_instance_name?: string
+    confirmation_trigger_state?: ConfirmationTriggerState
   }) => Promise<void>
   onUpdateItems: (id: string, items: OrderItems) => Promise<void>
   onAction: (id: string, action: OrderAction) => Promise<void>
@@ -467,21 +470,29 @@ export default function OrderEditModal({
               )}
             </div>
             {order.source === 'shopify' && (
-              <div>
+              <div className="space-y-2">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">Gatilho de confirmação</p>
-                {order.confirmation_message_sent_at ? (
-                  <>
-                    <p className="text-sm text-[#00a884]">✓ Disparado</p>
-                    <p className="mt-0.5 text-xs text-[#667781]">
-                      {new Date(order.confirmation_message_sent_at).toLocaleString('pt-BR')}
-                    </p>
-                  </>
-                ) : order.confirmation_message_error ? (
-                  <p className="text-sm text-red-500" title={order.confirmation_message_error ?? undefined}>
-                    {order.confirmation_message_error}
+                <ConfirmationTriggerStatus order={order} />
+                <select
+                  disabled={busy}
+                  value={getConfirmationTriggerState(order)}
+                  onChange={(event) => handleUpdate({
+                    confirmation_trigger_state: event.target.value as ConfirmationTriggerState,
+                  })}
+                  className={inputClass}
+                  aria-label="Estado do gatilho de confirmacao"
+                >
+                  <option value="pending">Pendente</option>
+                  <option value="sent">Disparado</option>
+                  <option value="failed">Falhou</option>
+                </select>
+                {order.confirmation_message_sent_at && (
+                  <p className="text-xs text-[#667781]">
+                    {new Date(order.confirmation_message_sent_at).toLocaleString('pt-BR')}
                   </p>
-                ) : (
-                  <p className="text-sm text-[#667781]">Pendente</p>
+                )}
+                {order.confirmation_message_error && (
+                  <p className="text-xs text-red-500">{order.confirmation_message_error}</p>
                 )}
               </div>
             )}

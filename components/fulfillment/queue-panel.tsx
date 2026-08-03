@@ -7,12 +7,14 @@ import {
   FulfillmentOrder,
   ShopifyProduct,
   type CommercialStatus,
+  type ConfirmationTriggerState,
   type DeliveryStatus,
   type SendStatus,
 } from '@/types'
 import OrderEditModal from './order-edit-modal'
 import CustomerOrderGroup from './customer-order-group'
 import { groupOrdersByCustomer, type CustomerGroup } from '@/lib/fulfillment-grouping'
+import ConfirmationTriggerStatus from './confirmation-trigger-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
@@ -29,6 +31,7 @@ interface QueuePanelProps {
     send_status?: SendStatus
     delivery_status?: DeliveryStatus
     assigned_instance_name?: string
+    confirmation_trigger_state?: ConfirmationTriggerState
   }) => Promise<void>
   onUpdateItems: (id: string, items: FulfillmentOrder['items']) => Promise<void>
   onOrderAction: (id: string, action: OrderAction) => Promise<void>
@@ -107,6 +110,9 @@ function QueueOrderCard({
             {order.currency} {Number(order.total).toFixed(2)}
           </p>
           {accountLabel && <p className="text-xs text-[#667781]">{accountLabel}</p>}
+          <div className="mt-1.5 flex justify-end">
+            <ConfirmationTriggerStatus order={order} compact />
+          </div>
         </div>
       </div>
       {order.items?.length > 0 && (

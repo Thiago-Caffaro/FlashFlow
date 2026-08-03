@@ -8,6 +8,7 @@ const mockDecryptSecret = jest.fn(() => 'decoded-secret')
 const mockExecuteFlow = jest.fn()
 const mockRpc = jest.fn()
 const mockEnqueueShopifyOrderFlowJob = jest.fn()
+const mockGetDefaultShopifyOrderInstance = jest.fn()
 
 jest.mock('@/lib/supabase-admin', () => ({
   supabaseAdmin: { from: mockFrom, rpc: mockRpc },
@@ -19,6 +20,10 @@ jest.mock('@/lib/flow-engine', () => ({
 
 jest.mock('@/lib/flow-jobs', () => ({
   enqueueShopifyOrderFlowJob: mockEnqueueShopifyOrderFlowJob,
+}))
+
+jest.mock('@/lib/shopify-order-settings', () => ({
+  getDefaultShopifyOrderInstance: mockGetDefaultShopifyOrderInstance,
 }))
 
 jest.mock('@/lib/fulfillment-service', () => ({
@@ -149,6 +154,7 @@ const {
   updateConfirmationOrder,
   upsertShopifyAbandonedCheckout,
   upsertShopifyOrder,
+  runShopifyOrderTrigger,
   reserveConfirmationSendSlot,
   _resetConfirmationSendPacingForTests,
 } = require('@/lib/shopify-confirmation-service')
@@ -159,6 +165,7 @@ describe('shopify-confirmation-service', () => {
     _resetConfirmationSendPacingForTests()
     mockEnqueueShopifyOrderFlowJob.mockResolvedValue({ id: 'job-1' })
     mockSubmitFulfillmentOrder.mockResolvedValue({ id: 'order-1', status: 'created', send_status: 'Enviado' })
+    mockGetDefaultShopifyOrderInstance.mockResolvedValue(null)
   })
 
   it('assigns WhatsApp accounts by country and confirmation priority', async () => {
@@ -172,6 +179,15 @@ describe('shopify-confirmation-service', () => {
     expect(accounts.eq).toHaveBeenCalledWith('confirmation_enabled', true)
     expect(accounts.order).toHaveBeenCalledWith('confirmation_priority', { ascending: true })
     expect(accounts.limit).toHaveBeenCalledWith(1)
+  })
+
+  it('uses the configured default account before the country priority', async () => {
+    mockGetDefaultShopifyOrderInstance.mockResolvedValue('wa-default')
+
+    const assigned = await assignConfirmationAccount('spain')
+
+    expect(assigned).toBe('wa-default')
+    expect(mockFrom).not.toHaveBeenCalled()
   })
 
   it('maps a Shopify order payload to the local fulfillment order shape', async () => {
@@ -471,6 +487,79 @@ describe('shopify-confirmation-service', () => {
     })
     expect(mockSubmitFulfillmentOrder).toHaveBeenCalledWith('order-1')
     expect(result.autoSubmit).toMatchObject({ submitted: true })
+  })
+
+  it('updates the confirmation trigger state without submitting to FenixCOD', async () => {
+    const updated = queryBuilder({
+      data: {
+        id: 'order-1',
+        commercial_status: 'Confirmado',
+        confirmation_message_sent_at: '2026-08-03T10:00:00.000Z',
+        confirmation_message_error: null,
+      },
+      error: null,
+    })
+    setTableQueues({ fulfillment_orders: [updated] })
+
+    await updateConfirmationOrder('order-1', { confirmation_trigger_state: 'sent' })
+
+    expect(updated.updates[0]).toMatchObject({
+      confirmation_message_sent_at: expect.any(String),
+      confirmation_message_error: null,
+    })
+    expect(mockRecordOrderEvent).toHaveBeenCalledWith(
+      'order-1',
+      'confirmation_trigger_state_updated',
+      { state: 'sent' },
+    )
+    expect(mockSubmitFulfillmentOrder).not.toHaveBeenCalled()
+  })
+
+  it('stores the sent timestamp after a manually executed order trigger', async () => {
+    const order = queryBuilder({
+      data: {
+        id: 'order-1',
+        customer_name: 'Cliente',
+        contact_phone: '351900000000',
+        assigned_instance_name: 'wa-1',
+        instance_name: 'wa-1',
+        is_simulation: false,
+      },
+      error: null,
+    })
+    const trigger = queryBuilder({ data: { action_payload: { flow_id: 'flow-1' } }, error: null })
+    const conversation = queryBuilder({
+      data: {
+        id: 'conversation-1',
+        wa_id: '351900000000@s.whatsapp.net',
+        sandbox_source_instance: null,
+        sandbox_real_send_enabled: false,
+      },
+      error: null,
+    })
+    const conversationUpdate = queryBuilder({ data: null, error: null })
+    const sentUpdate = queryBuilder({
+      data: { id: 'order-1', confirmation_message_sent_at: '2026-08-03T10:00:00.000Z' },
+      error: null,
+    })
+    setTableQueues({
+      fulfillment_orders: [order, conversationUpdate, sentUpdate],
+      triggers: [trigger],
+      conversations: [conversation],
+    })
+    mockRpc.mockResolvedValue({ data: '2026-08-03T10:00:00.000Z', error: null })
+
+    await runShopifyOrderTrigger('order-1')
+
+    expect(mockExecuteFlow).toHaveBeenCalledWith('flow-1', expect.objectContaining({
+      instanceName: 'wa-1',
+      orderId: 'order-1',
+      conversationId: 'conversation-1',
+    }))
+    expect(sentUpdate.updates[0]).toMatchObject({
+      confirmation_message_sent_at: expect.any(String),
+      confirmation_message_error: null,
+    })
   })
 
   it('allows correcting the fulfillment country to an active integration without auto-submitting', async () => {

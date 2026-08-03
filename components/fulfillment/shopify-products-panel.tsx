@@ -1,11 +1,13 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
   Loader2,
   Package,
+  Minus,
   Plus,
   RefreshCw,
   Search,
@@ -25,8 +27,10 @@ interface ShopifyProductsPanelProps {
   products: ShopifyProduct[]
   busyId: string | null
   syncBusy: boolean
+  bulkBusy: boolean
   onSync: () => Promise<void>
   onToggleKeepLocalCopy: (product: ShopifyProduct, enabled: boolean) => Promise<void>
+  onBulkToggleKeepLocalCopy: (productIds: string[], enabled: boolean) => Promise<void>
   onSave: (values: ShopifyProductFormValues, editingId: string | null) => Promise<void>
   onDelete: (product: ShopifyProduct) => Promise<void>
 }
@@ -39,8 +43,10 @@ export default function ShopifyProductsPanel({
   products,
   busyId,
   syncBusy,
+  bulkBusy,
   onSync,
   onToggleKeepLocalCopy,
+  onBulkToggleKeepLocalCopy,
   onSave,
   onDelete,
 }: ShopifyProductsPanelProps) {
@@ -53,6 +59,7 @@ export default function ShopifyProductsPanel({
   const [formBusy, setFormBusy] = useState(false)
   const [formSaveState, setFormSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
   const [formSaveError, setFormSaveError] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const filteredProducts = useMemo(
     () => filterShopifyProducts(products, {
@@ -66,6 +73,16 @@ export default function ShopifyProductsPanel({
   const firstVisible = filteredProducts.length === 0 ? 0 : (paginated.page - 1) * PAGE_SIZE + 1
   const lastVisible = Math.min(paginated.page * PAGE_SIZE, filteredProducts.length)
   const localCopyCount = products.filter((product) => product.keep_local_copy).length
+  const visibleIds = paginated.products.map((product) => product.id)
+  const filteredIds = filteredProducts.map((product) => product.id)
+  const selectedCount = selectedIds.size
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id))
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id))
+
+  useEffect(() => {
+    const validIds = new Set(products.map((product) => product.id))
+    setSelectedIds((current) => new Set([...current].filter((id) => validIds.has(id))))
+  }, [products])
 
   function updateSearch(value: string) {
     setSearch(value)
@@ -102,6 +119,42 @@ export default function ShopifyProductsPanel({
     setShowForm(true)
     setFormSaveState('idle')
     setFormSaveError(null)
+  }
+
+  function toggleSelected(productId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(productId)) next.delete(productId)
+      else next.add(productId)
+      return next
+    })
+  }
+
+  function toggleVisibleSelection() {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      visibleIds.forEach((id) => allVisibleSelected ? next.delete(id) : next.add(id))
+      return next
+    })
+  }
+
+  function toggleFilteredSelection() {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      filteredIds.forEach((id) => allFilteredSelected ? next.delete(id) : next.add(id))
+      return next
+    })
+  }
+
+  async function updateSelectedCopies(enabled: boolean, ids = [...selectedIds]) {
+    if (ids.length === 0) return
+    if (!enabled && !window.confirm(`Remover a cópia local de ${ids.length} produto(s)?`)) return
+    try {
+      await onBulkToggleKeepLocalCopy(ids, enabled)
+      setSelectedIds(new Set())
+    } catch {
+      // The parent keeps the selection and shows the server error.
+    }
   }
 
   return (
@@ -188,6 +241,51 @@ export default function ShopifyProductsPanel({
         </select>
       </div>
 
+      {filteredProducts.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 border-y border-[#d1d7db] py-3 dark:border-[#2a3942]">
+          <label className="flex items-center gap-2 text-xs font-semibold text-[#54656f] dark:text-[#aebac1]">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={toggleVisibleSelection}
+              disabled={bulkBusy}
+              className="h-4 w-4 accent-[#00a884]"
+            />
+            Esta página
+          </label>
+          <button
+            type="button"
+            onClick={toggleFilteredSelection}
+            disabled={bulkBusy}
+            className={btnSecondary}
+          >
+            <CheckSquare size={15} />
+            {allFilteredSelected ? 'Limpar resultados' : `Selecionar resultados (${filteredProducts.length})`}
+          </button>
+          <span className="min-w-24 flex-1 text-xs text-[#667781]">
+            {selectedCount > 0 ? `${selectedCount} selecionado(s)` : 'Nenhum selecionado'}
+          </span>
+          <button
+            type="button"
+            onClick={() => void updateSelectedCopies(true)}
+            disabled={bulkBusy || selectedCount === 0}
+            className="flex items-center gap-2 rounded-lg bg-[#00a884] px-3 py-2 text-xs font-semibold text-white hover:bg-[#008f72] disabled:opacity-40"
+          >
+            {bulkBusy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            Criar cópia local
+          </button>
+          <button
+            type="button"
+            onClick={() => void updateSelectedCopies(false)}
+            disabled={bulkBusy || selectedCount === 0}
+            className="flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-40 dark:border-red-900/50 dark:hover:bg-red-950/20"
+          >
+            <Minus size={14} />
+            Remover cópia local
+          </button>
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-lg border border-[#d1d7db] bg-white dark:border-[#2a3942] dark:bg-[#111b21]">
         <div className="border-b border-[#f0f2f5] px-4 py-2.5 text-xs text-[#667781] dark:border-[#2a3942]">
           {filteredProducts.length === products.length
@@ -198,6 +296,9 @@ export default function ShopifyProductsPanel({
           <ShopifyProductsTable
             products={paginated.products}
             busyId={busyId}
+            bulkBusy={bulkBusy}
+            selectedIds={selectedIds}
+            onToggleSelected={toggleSelected}
             onToggleKeepLocalCopy={onToggleKeepLocalCopy}
             onEdit={openEditor}
             onDelete={onDelete}
