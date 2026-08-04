@@ -2,6 +2,7 @@ import 'server-only'
 import type { FlowEdge, FlowNode } from '@/types'
 import { getMessagePlaceholders, validateMessagePlaceholders } from './message-template'
 import { findReplyConnectionIssue } from './flow-connection-validation'
+import { isOrderStateField, isOrderStateValue } from './order-state'
 
 const MAX_NODES = 200
 const MAX_EDGES = 400
@@ -14,6 +15,8 @@ const KNOWN_NODE_TYPES = new Set<string>([
   'condition',
   'switchCase',
   'aiAssistant',
+  'captureOrderData',
+  // Legacy types remain valid so existing automations are not broken.
   'fulfillmentStock',
   'fulfillmentStatus',
   'end',
@@ -153,6 +156,16 @@ export function validateFlowJson(json: unknown): FlowValidationResult {
         }
         if (message.length > 2000) {
           return { ok: false, error: `mensagem da notificacao no no "${node.id}" excede 2000 caracteres` }
+        }
+      }
+
+      if (node.type === 'captureOrderData') {
+        const data = node.data as FlowNode['data']
+        if (!isOrderStateField(data.orderStateField)) {
+          return { ok: false, error: `campo de estado invalido no no "${node.id}"` }
+        }
+        if (!isOrderStateValue(data.orderStateField, data.orderStateValue)) {
+          return { ok: false, error: `valor de estado invalido no no "${node.id}"` }
         }
       }
     }

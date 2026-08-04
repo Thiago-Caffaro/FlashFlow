@@ -61,7 +61,20 @@ export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>
 
 // ─── Flows ────────────────────────────────────────────────────────────────────
 
-export type FlowNodeType = 'start' | 'sendMessage' | 'notify' | 'condition' | 'switchCase' | 'aiAssistant' | 'fulfillmentStock' | 'fulfillmentStatus' | 'end'
+export type FlowNodeType =
+  | 'start'
+  | 'sendMessage'
+  | 'notify'
+  | 'condition'
+  | 'switchCase'
+  | 'aiAssistant'
+  | 'captureOrderData'
+  // Kept only so existing saved flows continue to load and execute.
+  | 'fulfillmentStock'
+  | 'fulfillmentStatus'
+  | 'end'
+
+export type OrderStateField = 'commercial_status' | 'send_status' | 'delivery_status'
 
 export interface SwitchCase {
   id: string
@@ -141,6 +154,9 @@ export interface FlowNodeData {
   productId?: string
   successMessage?: string
   failureMessage?: string
+  // order state capture
+  orderStateField?: OrderStateField
+  orderStateValue?: string
   [key: string]: unknown
 }
 
