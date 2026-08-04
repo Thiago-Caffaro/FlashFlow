@@ -232,8 +232,13 @@ export class FulfillmentClient {
     return this.request<Record<string, unknown>>(`/api/products/get-stock/${encodeURIComponent(sku)}`)
   }
 
+  getLeadsPage(country: string, page = 1) {
+    const params = new URLSearchParams({ country, page: String(Math.max(1, Math.trunc(page))) })
+    return this.request<unknown>(`/api/leads?${params.toString()}`)
+  }
+
   getLeads(country: string) {
-    return this.request<unknown>(`/api/leads?country=${encodeURIComponent(country)}`)
+    return this.getLeadsPage(country, 1)
   }
 
   createLead(payload: CreateFulfillmentLead) {

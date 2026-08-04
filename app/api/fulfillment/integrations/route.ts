@@ -6,7 +6,23 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 
-const INTEGRATION_SELECT = 'id, country, environment, active, token_expires_at, created_at, updated_at'
+const INTEGRATION_SELECT = [
+  'id',
+  'country',
+  'environment',
+  'active',
+  'token_expires_at',
+  'delivery_sync_enabled',
+  'delivery_sync_interval_minutes',
+  'delivery_sync_next_at',
+  'delivery_sync_last_started_at',
+  'delivery_sync_last_completed_at',
+  'delivery_sync_last_error',
+  'delivery_sync_last_stats',
+  'created_at',
+  'updated_at',
+].join(', ')
+const DELIVERY_SYNC_INTERVALS = new Set([5, 10, 15, 30])
 const TEST_ENVIRONMENT_ERROR = 'O teste documentado está indisponível/stale; use credenciais de produção.'
 
 function parseEnvironment(value: unknown): FulfillmentEnvironment | null {
@@ -83,7 +99,7 @@ export async function PUT(req: NextRequest) {
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from('fulfillment_integrations')
-      .select('id, country, environment, active')
+      .select('id, country, environment, active, delivery_sync_enabled, delivery_sync_interval_minutes')
       .eq('id', id)
       .single()
     if (existingError || !existing) {
@@ -112,11 +128,27 @@ export async function PUT(req: NextRequest) {
     if (body.active !== undefined && typeof body.active !== 'boolean') {
       return NextResponse.json({ ok: false, error: 'Status ativo inválido' }, { status: 400 })
     }
+    if (body.delivery_sync_enabled !== undefined && typeof body.delivery_sync_enabled !== 'boolean') {
+      return NextResponse.json({ ok: false, error: 'Status de sincronização inválido' }, { status: 400 })
+    }
+    const deliverySyncInterval = body.delivery_sync_interval_minutes === undefined
+      ? Number(existing.delivery_sync_interval_minutes ?? 10)
+      : Number(body.delivery_sync_interval_minutes)
+    if (!DELIVERY_SYNC_INTERVALS.has(deliverySyncInterval)) {
+      return NextResponse.json({ ok: false, error: 'Intervalo de sincronização inválido' }, { status: 400 })
+    }
 
     const patch: Record<string, unknown> = {
       environment,
       active: typeof body.active === 'boolean' ? body.active : existing.active,
+      delivery_sync_enabled: typeof body.delivery_sync_enabled === 'boolean'
+        ? body.delivery_sync_enabled
+        : existing.delivery_sync_enabled,
+      delivery_sync_interval_minutes: deliverySyncInterval,
       updated_at: new Date().toISOString(),
+    }
+    if (body.delivery_sync_enabled === true || body.delivery_sync_interval_minutes !== undefined) {
+      patch.delivery_sync_next_at = new Date().toISOString()
     }
 
     if (credentialsProvided || environmentChanged) {

@@ -462,6 +462,17 @@ export default function OrderEditModal({
                 <p className="text-sm text-[#667781]">Não submetido ainda</p>
               )}
               <p className="mt-0.5 text-xs text-[#667781]">{order.status}</p>
+              {order.external_delivery_status && (
+                <p className="mt-1 text-xs text-[#667781]">
+                  Entrega FenixCOD: <span className="font-semibold">{order.external_delivery_status}</span>
+                  {order.delivery_status_synced_at
+                    ? ` · ${new Date(order.delivery_status_synced_at).toLocaleString('pt-BR')}`
+                    : ''}
+                </p>
+              )}
+              {order.delivery_status_sync_error && (
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{order.delivery_status_sync_error}</p>
+              )}
               {order.last_error && (
                 <p className="mt-1 text-xs text-red-600">{order.last_error}</p>
               )}

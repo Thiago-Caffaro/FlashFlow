@@ -58,4 +58,16 @@ describe('normalizeExternalFulfillmentLeads', () => {
       status: 'new',
     })
   })
+
+  it('recognizes the documented n_lead and status_livrison fields', () => {
+    const leads = normalizeExternalFulfillmentLeads({
+      data: [{ n_lead: 'AR-00103', status_livrison: 'unpacked' }],
+    }, 'SPAIN')
+
+    expect(leads[0]).toMatchObject({
+      lead_number: 'AR-00103',
+      status: 'unpacked',
+      country: 'SPAIN',
+    })
+  })
 })

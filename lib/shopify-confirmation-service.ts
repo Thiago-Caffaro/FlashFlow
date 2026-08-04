@@ -487,6 +487,69 @@ async function resolveConversationForOrder(instanceName: string, phone: string, 
   return { conversationId: created.id as string, remoteJid, realSendInstanceName: undefined }
 }
 
+type OrderFlowOrder = {
+  id: string
+  customer_name: string | null
+  contact_phone: string | null
+  assigned_instance_name: string | null
+  instance_name: string | null
+  is_simulation: boolean
+}
+
+async function executeOrderFlowForOrder(
+  orderId: string,
+  flowId: string,
+  order: OrderFlowOrder,
+  options: { paceAutomatedSend?: boolean } = {}
+) {
+  const instanceName = String(order.assigned_instance_name || order.instance_name || '')
+  const phone = String(order.contact_phone || '')
+  const isSandboxOrder = instanceName === SANDBOX_INSTANCE_NAME
+  if (order.is_simulation && !isSandboxOrder) throw new Error('Pedido de simulação não envia WhatsApp real')
+  if (!instanceName) throw new Error('Pedido sem conta WhatsApp atribuída')
+  if (!phone) throw new Error('Pedido sem telefone para executar o fluxo')
+
+  const { conversationId, remoteJid, realSendInstanceName } = await resolveConversationForOrder(
+    instanceName,
+    phone,
+    String(order.customer_name || '')
+  )
+  const { error: conversationUpdateError } = await supabaseAdmin
+    .from('fulfillment_orders')
+    .update({ conversation_id: conversationId, updated_at: new Date().toISOString() })
+    .eq('id', orderId)
+  if (conversationUpdateError) throw new Error(conversationUpdateError.message)
+
+  if (!isSandboxOrder && options.paceAutomatedSend !== false) {
+    await reserveConfirmationSendSlot()
+  }
+
+  await executeFlow(flowId, {
+    instanceName,
+    remoteJid,
+    conversationId,
+    incomingMessage: '',
+    orderId,
+    isSandbox: isSandboxOrder,
+    realSendInstanceName: isSandboxOrder ? realSendInstanceName : undefined,
+  })
+  return { order, conversationId, remoteJid }
+}
+
+export async function runOrderFlow(
+  orderId: string,
+  flowId: string,
+  options: { paceAutomatedSend?: boolean } = {}
+) {
+  const { data: order, error } = await supabaseAdmin
+    .from('fulfillment_orders')
+    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation')
+    .eq('id', orderId)
+    .single()
+  if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
+  return executeOrderFlowForOrder(orderId, flowId, order as OrderFlowOrder, options)
+}
+
 // Runs the "Pedido Shopify criado" flow trigger configured for the order's
 // account. Replaces the old fixed-template confirmation message — there is
 // no static fallback: if no trigger is configured, nothing is sent, by design.
@@ -523,31 +586,10 @@ export async function runShopifyOrderTrigger(
     }
     if (!flowId) throw new Error('Nenhum gatilho "Pedido Shopify criado" configurado para esta conta')
 
-    const { conversationId, remoteJid, realSendInstanceName } = await resolveConversationForOrder(
-      instanceName, phone, String(order.customer_name || '')
-    )
-    const { error: conversationUpdateError } = await supabaseAdmin
-      .from('fulfillment_orders')
-      .update({ conversation_id: conversationId, updated_at: new Date().toISOString() })
-      .eq('id', orderId)
-    if (conversationUpdateError) throw new Error(conversationUpdateError.message)
     if (options.respectShopifyTriggerSetting && !(await getShopifyTriggersEnabled())) {
       return { order, skipped: true }
     }
-
-    if (!isSandboxOrder) {
-      await reserveConfirmationSendSlot()
-    }
-
-    await executeFlow(flowId, {
-      instanceName,
-      remoteJid,
-      conversationId,
-      incomingMessage: '',
-      orderId,
-      isSandbox: isSandboxOrder,
-      realSendInstanceName: isSandboxOrder ? realSendInstanceName : undefined,
-    })
+    await executeOrderFlowForOrder(orderId, flowId, order as OrderFlowOrder)
 
     const { data: updated, error: updateError } = await supabaseAdmin
       .from('fulfillment_orders')
@@ -646,6 +688,8 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
   if (body.delivery_status !== undefined) {
     if (!isDeliveryStatus(body.delivery_status)) throw new Error('Status de entrega inválido')
     patch.delivery_status = body.delivery_status
+    patch.delivery_status_source = 'manual'
+    patch.delivery_status_changed_at = new Date().toISOString()
   }
   if (body.assigned_instance_name !== undefined) {
     const assigned = String(body.assigned_instance_name ?? '').trim()

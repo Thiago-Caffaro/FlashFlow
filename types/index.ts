@@ -41,7 +41,7 @@ export interface Message {
 
 export type TriggerTipo = 'contains' | 'exact'
 export type TriggerAction = 'send_message' | 'flow'
-export type TriggerSource = 'message' | 'shopify_order'
+export type TriggerSource = 'message' | 'shopify_order' | 'delivery_status'
 
 export interface Trigger {
   id: string
@@ -51,7 +51,7 @@ export interface Trigger {
   valor: string
   delay_ms: number
   action: TriggerAction
-  action_payload: { message?: string; flow_id?: string }
+  action_payload: { message?: string; flow_id?: string; statuses?: DeliveryStatus[] }
   source: TriggerSource
   created_at: string
   updated_at: string
@@ -243,6 +243,12 @@ export interface FulfillmentOrder {
   commercial_status: CommercialStatus
   send_status: SendStatus
   delivery_status: DeliveryStatus
+  external_delivery_status?: string | null
+  external_delivery_status_key?: string | null
+  delivery_status_source?: 'local' | 'manual' | 'flow' | 'fenixcod'
+  delivery_status_synced_at?: string | null
+  delivery_status_changed_at?: string | null
+  delivery_status_sync_error?: string | null
   confirmed_at: string | null
   confirmation_status_updated_at: string | null
   assigned_instance_name: string | null

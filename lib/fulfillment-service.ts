@@ -304,19 +304,8 @@ export async function submitFulfillmentOrder(orderId: string) {
 }
 
 export async function refreshFulfillmentOrder(orderId: string) {
-  const { data: order, error } = await supabaseAdmin.from('fulfillment_orders').select('*').eq('id', orderId).single()
-  if (error || !order) throw new Error('Pedido não encontrado')
-  if (!order.lead_number) throw new Error('Pedido ainda não possui lead_number')
-  const client = await getFulfillmentClient(order.country)
-  const snapshot = await client.getLeadDetails(order.lead_number)
-  const status = findStatus(snapshot) ?? order.status
-  const { data: updated } = await supabaseAdmin.from('fulfillment_orders').update({
-    status,
-    external_snapshot: snapshot,
-    updated_at: new Date().toISOString(),
-  }).eq('id', orderId).select().single()
-  await recordOrderEvent(orderId, 'refreshed', { status })
-  return updated
+  const { syncFulfillmentDeliveryOrder } = await import('./fulfillment-delivery-sync')
+  return syncFulfillmentDeliveryOrder(orderId)
 }
 
 export async function cancelFulfillmentOrder(orderId: string) {
@@ -523,10 +512,4 @@ function findLeadNumber(response: Record<string, unknown>): string | null {
     lead?.id ??
     ''
   ) || null
-}
-
-function findStatus(response: Record<string, unknown>): string | null {
-  const data = response.data as Record<string, unknown> | undefined
-  const lead = response.lead as Record<string, unknown> | undefined
-  return String(response.status ?? data?.status ?? lead?.status ?? '') || null
 }
