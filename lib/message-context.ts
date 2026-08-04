@@ -73,6 +73,21 @@ async function loadOrder(
   return matchingOrder as FulfillmentOrder | null
 }
 
+export async function resolveFlowOrder(input: {
+  instanceName: string
+  conversationId: string
+  orderId?: string
+}): Promise<FulfillmentOrder> {
+  const conversation = await loadConversation(input.conversationId)
+  if (conversation.instance_name !== input.instanceName) {
+    throw new Error('Conversa nao pertence a esta conta WhatsApp')
+  }
+
+  const order = await loadOrder(input.instanceName, conversation, input.orderId)
+  if (!order) throw new OrderContextPendingError()
+  return order
+}
+
 async function loadProducts(
   order: FulfillmentOrder,
   required: boolean

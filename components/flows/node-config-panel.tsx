@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { X, Zap, AlertCircle, CheckCircle, BookOpen, Plus, Tag, Info, Trash2, Shuffle } from 'lucide-react'
-import { FlowNode, FlowNodeData, Trigger, AIProvider, AgentMemoryBlock, SwitchCase, FulfillmentProduct } from '@/types'
+import { FlowNode, FlowNodeData, Trigger, AIProvider, AgentMemoryBlock, SwitchCase, type OrderStateField } from '@/types'
+import { ORDER_STATE_FIELDS, orderStateValues } from '@/lib/order-state'
 import NotificationConfig from './notification-config'
 
 // ─── Models per provider ──────────────────────────────────────────────────────
@@ -310,26 +311,50 @@ function AiAssistantConfig({
   )
 }
 
-function FulfillmentConfig({ node, onChange }: { node: FlowNode; onChange: (id: string, data: Partial<FlowNodeData>) => void }) {
-  const [products, setProducts] = useState<FulfillmentProduct[]>([])
-  useEffect(() => {
-    fetch('/api/fulfillment/products').then((r) => r.json()).then((json) => { if (json.ok) setProducts(json.products) })
-  }, [])
-  const requiresProduct = node.type !== 'fulfillmentStatus'
+function OrderStateConfig({ node, onChange }: { node: FlowNode; onChange: (id: string, data: Partial<FlowNodeData>) => void }) {
+  const field = node.data.orderStateField ?? 'commercial_status'
+  const values = orderStateValues(field)
+
+  function updateField(nextField: OrderStateField) {
+    onChange(node.id, {
+      orderStateField: nextField,
+      orderStateValue: orderStateValues(nextField)[0],
+    })
+  }
+
   return (
     <>
-      {requiresProduct && (
-        <div>
-          <label className={labelClass}>Produto do catálogo</label>
-          <select value={node.data.productId ?? ''} onChange={(e) => onChange(node.id, { productId: e.target.value, label: products.find((p) => p.id === e.target.value)?.name })} className={inputClass}>
-            <option value="">Selecione...</option>
-            {products.map((product) => <option key={product.id} value={product.id}>{product.country} · {product.name} · {product.sku}</option>)}
-          </select>
-        </div>
-      )}
-      <div><label className={labelClass}>Mensagem de sucesso</label><textarea rows={3} value={node.data.successMessage ?? ''} onChange={(e) => onChange(node.id, { successMessage: e.target.value })} className={inputClass} /></div>
-      <div><label className={labelClass}>Mensagem de falha</label><textarea rows={3} value={node.data.failureMessage ?? ''} onChange={(e) => onChange(node.id, { failureMessage: e.target.value })} className={inputClass} /></div>
-      <p className="text-xs text-[#667781]">Variáveis disponíveis: {'{{contactName}}'}, {'{{contactPhone}}'}, {'{{incomingMessage}}'}, {'{{leadNumber}}'} e {'{{status}}'}.</p>
+      <div className="flex items-start gap-2 rounded-xl bg-[#f0f2f5] p-3 dark:bg-[#2a3942]">
+        <Info size={13} className="mt-0.5 shrink-0 text-[#667781]" />
+        <p className="text-xs leading-relaxed text-[#667781]">
+          Atualiza o pedido que iniciou o fluxo. Quando não houver um identificador explícito, usa o pedido local mais recente vinculado à conversa.
+        </p>
+      </div>
+      <div>
+        <label className={labelClass}>Campo de estado</label>
+        <select
+          value={field}
+          onChange={(event) => updateField(event.target.value as OrderStateField)}
+          className={inputClass}
+        >
+          {ORDER_STATE_FIELDS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className={labelClass}>Alterar para</label>
+        <select
+          value={node.data.orderStateValue ?? values[0]}
+          onChange={(event) => onChange(node.id, { orderStateValue: event.target.value })}
+          className={inputClass}
+        >
+          {values.map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+      </div>
+      <p className="text-xs leading-relaxed text-[#aebac1] dark:text-[#667781]">
+        Estados comerciais confirmados mantêm a regra atual de envio automático ao FenixCOD quando o pedido estiver pendente e apto para envio.
+      </p>
     </>
   )
 }
@@ -563,10 +588,13 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
     condition:    'Condição',
     switchCase:   'Switch Case',
     aiAssistant:  'Agente',
+    captureOrderData: 'Capturar Dados',
+    fulfillmentStock: 'Nó obsoleto',
+    fulfillmentStatus: 'Nó obsoleto',
   }
 
   return (
-    <div className="absolute right-0 top-0 bottom-0 w-[420px] bg-white dark:bg-[#111b21] border-l border-[#f0f2f5] dark:border-[#2a3942] flex flex-col z-10 shadow-xl">
+    <div className="absolute bottom-0 right-0 top-0 z-10 flex w-full flex-col border-l border-[#f0f2f5] bg-white shadow-xl dark:border-[#2a3942] dark:bg-[#111b21] sm:w-[420px]">
       <div className="flex items-center justify-between px-6 py-4 border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
         <span className="text-base font-bold text-[#111b21] dark:text-[#e9edef]">
           {titles[type] ?? 'Configurar nó'}
@@ -644,8 +672,17 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
         {type === 'aiAssistant' && (
           <AiAssistantConfig node={node} onChange={onChange} instanceName={instanceName} />
         )}
+        {type === 'captureOrderData' && (
+          <OrderStateConfig node={node} onChange={onChange} />
+        )}
+
         {(type === 'fulfillmentStock' || type === 'fulfillmentStatus') && (
-          <FulfillmentConfig node={node} onChange={onChange} />
+          <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            <AlertCircle size={15} className="mt-0.5 shrink-0" />
+            <p className="text-xs leading-relaxed">
+              Este nó foi removido da criação de fluxos. Ele permanece executável somente para preservar automações antigas.
+            </p>
+          </div>
         )}
       </div>
     </div>

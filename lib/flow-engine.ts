@@ -10,8 +10,10 @@ import {
   renderMessageContent,
   type RenderedMessageContent,
 } from './message-template'
-import { OrderContextPendingError, resolveMessageTemplateContext } from './message-context'
+import { OrderContextPendingError, resolveFlowOrder, resolveMessageTemplateContext } from './message-context'
 import { enqueueFlowMessageResumeJob } from './flow-jobs'
+import { updateFulfillmentOrderState } from './fulfillment-order-state'
+import { isOrderStateField, isOrderStateValue } from './order-state'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -1547,6 +1549,36 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
       }
       log(`executeFlow switchCase`, { handle, casesCount: cases.length })
       currentId = nextNodeId(edges, currentId, handle)
+      continue
+    }
+
+    if (node.type === 'captureOrderData') {
+      const field = node.data.orderStateField
+      const value = node.data.orderStateValue
+      if (!isOrderStateField(field) || !isOrderStateValue(field, value)) {
+        throw new Error(`Nó Capturar Dados inválido: ${node.id}`)
+      }
+
+      const order = await resolveFlowOrder({
+        instanceName: ctx.instanceName,
+        conversationId: ctx.conversationId,
+        orderId: ctx.orderId,
+      })
+      const result = await updateFulfillmentOrderState({
+        orderId: order.id,
+        field,
+        value,
+        source: `flow:${flowId}:${node.id}`,
+      })
+      log('executeFlow captureOrderData', {
+        nodeId: node.id,
+        orderId: order.id,
+        field,
+        value,
+        autoSubmitted: result.autoSubmit.submitted,
+        autoSubmitError: result.autoSubmit.error ?? null,
+      })
+      currentId = nextNodeId(edges, currentId)
       continue
     }
 

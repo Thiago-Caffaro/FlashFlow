@@ -1,7 +1,14 @@
 import 'server-only'
 import { sendWhatsAppText } from './whatsapp-text'
 import { normalizeShopDomain } from './shopify-client'
-import { submitFulfillmentOrder, FulfillmentOrderSubmissionError, recordOrderEvent } from './fulfillment-service'
+import { recordOrderEvent } from './fulfillment-service'
+import { maybeAutoSubmitConfirmedOrder } from './fulfillment-order-state'
+import {
+  isCommercialStatus,
+  isDeliveryStatus,
+  isSendStatus,
+  shouldSubmitToFenix,
+} from './order-state'
 import { executeFlow } from './flow-engine'
 import { supabaseAdmin } from './supabase-admin'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
@@ -21,14 +28,8 @@ import {
 } from './shopify-integration-store'
 import {
   ABANDONED_CHECKOUT_STATUSES,
-  COMMERCIAL_STATUSES,
-  DELIVERY_STATUSES,
-  SEND_STATUSES,
   type AbandonedCheckoutStatus,
-  type CommercialStatus,
-  type DeliveryStatus,
   type FulfillmentOrder,
-  type SendStatus,
 } from '@/types'
 
 export {
@@ -100,15 +101,6 @@ type ShopifyOrderMappedFields = {
   currency: string
 }
 
-type ConfirmationOrderRow = {
-  id: string
-  lead_number: string | null
-  commercial_status: CommercialStatus
-  send_status: SendStatus
-  status: string
-  is_simulation: boolean
-}
-
 type ShopifyCheckoutMappedFields = {
   shopify_integration_id: string
   shopify_checkout_id: string | null
@@ -125,27 +117,10 @@ type ShopifyCheckoutMappedFields = {
   raw_shopify_payload: Record<string, unknown>
 }
 
-export function isCommercialStatus(value: unknown): value is CommercialStatus {
-  return (COMMERCIAL_STATUSES as readonly string[]).includes(String(value))
-}
-
-export function isSendStatus(value: unknown): value is SendStatus {
-  return (SEND_STATUSES as readonly string[]).includes(String(value))
-}
-
-export function isDeliveryStatus(value: unknown): value is DeliveryStatus {
-  return (DELIVERY_STATUSES as readonly string[]).includes(String(value))
-}
+export { isCommercialStatus, isDeliveryStatus, isSendStatus, shouldSubmitToFenix }
 
 export function isAbandonedCheckoutStatus(value: unknown): value is AbandonedCheckoutStatus {
   return (ABANDONED_CHECKOUT_STATUSES as readonly string[]).includes(String(value))
-}
-
-export function shouldSubmitToFenix(order: Pick<ConfirmationOrderRow, 'commercial_status' | 'send_status' | 'lead_number' | 'is_simulation'>): boolean {
-  return order.commercial_status.startsWith('Confirmado') &&
-    order.send_status === 'Pendente' &&
-    !order.lead_number &&
-    !order.is_simulation
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -595,35 +570,7 @@ export async function runShopifyOrderTrigger(
   }
 }
 
-export async function maybeAutoSubmitConfirmedOrder(orderId: string) {
-  const { data, error } = await supabaseAdmin
-    .from('fulfillment_orders')
-    .select('id, lead_number, commercial_status, send_status, status, is_simulation')
-    .eq('id', orderId)
-    .single()
-  if (error || !data) throw new Error(error?.message ?? 'Pedido não encontrado')
-  const order = data as ConfirmationOrderRow
-  if (!shouldSubmitToFenix(order)) return { submitted: false, order }
-
-  try {
-    const submittedOrder = await submitFulfillmentOrder(orderId)
-    return { submitted: true, order: submittedOrder }
-  } catch (error) {
-    if (error instanceof FulfillmentOrderSubmissionError) {
-      return {
-        submitted: false,
-        order: error.order ?? order,
-        error: error.message,
-        submissionStatus: error.submissionStatus,
-      }
-    }
-    return {
-      submitted: false,
-      order,
-      error: error instanceof Error ? error.message : 'Falha ao enviar ao FenixCOD',
-    }
-  }
-}
+export { maybeAutoSubmitConfirmedOrder }
 
 function normalizeAndValidateItems(value: unknown, allowMissingSku = false): FulfillmentOrder['items'] {
   if (!Array.isArray(value) || value.length === 0) throw new Error('Pedido precisa ter ao menos 1 item')

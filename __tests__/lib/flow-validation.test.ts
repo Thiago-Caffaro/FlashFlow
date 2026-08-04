@@ -176,4 +176,31 @@ describe('validateFlowJson', () => {
     }
     expect(validateFlowMessagePlaceholders(json, [])).toMatchObject({ ok: false })
   })
+
+  it('aceita o no Capturar Dados com campo e estado compativeis', () => {
+    expect(validateFlowJson({
+      nodes: [node('capture', 'captureOrderData', {
+        orderStateField: 'commercial_status',
+        orderStateValue: 'Confirmado WhatsApp',
+      })],
+      edges: [],
+    })).toEqual({ ok: true })
+  })
+
+  it('rejeita campo ausente ou estado de outra categoria no no Capturar Dados', () => {
+    expect(validateFlowJson({
+      nodes: [node('capture', 'captureOrderData', {
+        orderStateField: 'commercial_status',
+        orderStateValue: 'Entregue',
+      })],
+      edges: [],
+    }).error).toMatch(/valor de estado invalido/)
+
+    expect(validateFlowJson({
+      nodes: [node('capture', 'captureOrderData', {
+        orderStateValue: 'Confirmado WhatsApp',
+      })],
+      edges: [],
+    }).error).toMatch(/campo de estado invalido/)
+  })
 })

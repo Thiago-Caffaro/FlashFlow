@@ -29,7 +29,8 @@ import ConditionNode from './nodes/condition-node'
 import SwitchCaseNode from './nodes/switch-case-node'
 import AiAssistantNode from './nodes/ai-assistant-node'
 import EndNode from './nodes/end-node'
-import FulfillmentActionNode from './nodes/fulfillment-action-node'
+import OrderStateNode from './nodes/order-state-node'
+import LegacyFulfillmentNode from './nodes/legacy-fulfillment-node'
 import NodeConfigPanel from './node-config-panel'
 import MessageEditorModal from './message-editor-modal'
 
@@ -40,8 +41,9 @@ const nodeTypes = {
   condition: ConditionNode,
   switchCase: SwitchCaseNode,
   aiAssistant: AiAssistantNode,
-  fulfillmentStock: FulfillmentActionNode,
-  fulfillmentStatus: FulfillmentActionNode,
+  captureOrderData: OrderStateNode,
+  fulfillmentStock: LegacyFulfillmentNode,
+  fulfillmentStatus: LegacyFulfillmentNode,
   end: EndNode,
 }
 
@@ -50,8 +52,7 @@ const BASE_PALETTE: { type: FlowNodeType; label: string; color: string }[] = [
   { type: 'notify',      label: 'Notificar',     color: '#e11d48' },
   { type: 'condition',   label: 'Condição',     color: '#f59e0b' },
   { type: 'aiAssistant', label: 'Agente',       color: '#8b5cf6' },
-  { type: 'fulfillmentStock', label: 'Estoque', color: '#0ea5e9' },
-  { type: 'fulfillmentStatus', label: 'Status Pedido', color: '#6366f1' },
+  { type: 'captureOrderData', label: 'Capturar Dados', color: '#0f766e' },
   { type: 'end',         label: 'Fim',          color: '#f87171' },
 ]
 
@@ -260,6 +261,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
       condition:    { conditionType: 'contains', conditionValue: '' },
       switchCase:   { cases: [] },
       aiAssistant:  { systemPrompt: '', historyLimit: 10, temperature: 0.7, model: 'gemini-2.5-flash', continueConversation: true },
+      captureOrderData: { orderStateField: 'commercial_status', orderStateValue: 'Confirmado WhatsApp' },
       fulfillmentStock: { successMessage: 'Estoque disponível.', failureMessage: 'Produto indisponível.' },
       fulfillmentStatus: { successMessage: 'Status do seu pedido: {{status}}', failureMessage: 'Não encontrei um pedido para esta conversa.' },
       end:          {},
@@ -294,23 +296,23 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
   return (
     <div className="absolute inset-0 flex flex-col bg-[#f0f2f5] dark:bg-[#0b141a]">
       {/* ── Toolbar ── */}
-      <div className="flex items-center gap-4 px-6 py-4 bg-white dark:bg-[#111b21] border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
+      <div className="flex items-center gap-2 overflow-x-auto border-b border-[#f0f2f5] bg-white px-3 py-3 dark:border-[#2a3942] dark:bg-[#111b21] sm:gap-4 sm:px-6 sm:py-4">
         <button
           onClick={onBack}
           className="flex items-center gap-2 text-sm text-[#aebac1] dark:text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors shrink-0"
         >
           <ArrowLeft size={18} />
-          <span className="font-medium">Fluxos</span>
+          <span className="hidden font-medium sm:inline">Fluxos</span>
         </button>
 
         <div className="w-px h-6 bg-[#f0f2f5] dark:bg-[#2a3942]" />
 
-        <span className="text-base font-bold text-[#111b21] dark:text-[#e9edef] flex-1 truncate">
+        <span className="min-w-28 flex-1 truncate text-sm font-bold text-[#111b21] dark:text-[#e9edef] sm:text-base">
           {flow.name}
         </span>
 
         {/* Node palette */}
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="text-xs font-semibold text-[#aebac1] dark:text-[#667781] uppercase tracking-wide shrink-0">
             Adicionar nó
           </span>
@@ -402,6 +404,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
               if (n.type === 'condition') return '#f59e0b'
               if (n.type === 'aiAssistant') return '#8b5cf6'
               if (n.type === 'notify') return '#e11d48'
+              if (n.type === 'captureOrderData') return '#0f766e'
               return '#d1d7db'
             }}
             className="!bg-white dark:!bg-[#182229] !border !border-[#f0f2f5] dark:!border-[#2a3942]"
