@@ -83,7 +83,7 @@ function request(method: string, url: string, body?: unknown) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { POST, DELETE } = require('@/app/api/fulfillment/integrations/route')
+const { POST, PUT, DELETE } = require('@/app/api/fulfillment/integrations/route')
 
 describe('/api/fulfillment/integrations writes', () => {
   beforeEach(() => {
@@ -117,5 +117,53 @@ describe('/api/fulfillment/integrations writes', () => {
     expect(response.status).toBe(200)
     expect(builder.updates[0]).toMatchObject({ active: false })
     expect(body).toMatchObject({ ok: true, integration })
+  })
+
+  it('enables automatic delivery sync and schedules the first run', async () => {
+    const integration = {
+      id: 'integration-1',
+      country: 'ES',
+      environment: 'production',
+      active: true,
+      delivery_sync_enabled: false,
+      delivery_sync_interval_minutes: 10,
+    }
+    const builder = queryBuilder({ data: integration, error: null })
+    mockFrom.mockReturnValue(builder)
+
+    const response = await PUT(request('PUT', 'http://localhost/api/fulfillment/integrations', {
+      id: integration.id,
+      delivery_sync_enabled: true,
+      delivery_sync_interval_minutes: 15,
+    }))
+
+    expect(response.status).toBe(200)
+    expect(builder.updates[0]).toMatchObject({
+      delivery_sync_enabled: true,
+      delivery_sync_interval_minutes: 15,
+    })
+    expect((builder.updates[0] as Record<string, unknown>).delivery_sync_next_at).toEqual(expect.any(String))
+    expect(mockLogin).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unsupported delivery sync interval', async () => {
+    const integration = {
+      id: 'integration-1',
+      country: 'ES',
+      environment: 'production',
+      active: true,
+      delivery_sync_enabled: false,
+      delivery_sync_interval_minutes: 10,
+    }
+    const builder = queryBuilder({ data: integration, error: null })
+    mockFrom.mockReturnValue(builder)
+
+    const response = await PUT(request('PUT', 'http://localhost/api/fulfillment/integrations', {
+      id: integration.id,
+      delivery_sync_interval_minutes: 12,
+    }))
+
+    expect(response.status).toBe(400)
+    expect(builder.updates).toHaveLength(0)
   })
 })

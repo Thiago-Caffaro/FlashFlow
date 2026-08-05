@@ -66,6 +66,10 @@ export async function updateFulfillmentOrderState(input: {
     patch.confirmation_status_updated_at = now
     patch.confirmed_at = input.value.startsWith('Confirmado') ? now : null
   }
+  if (input.field === 'delivery_status') {
+    patch.delivery_status_source = input.source?.startsWith('flow:') ? 'flow' : 'manual'
+    patch.delivery_status_changed_at = now
+  }
 
   const { data, error } = await supabaseAdmin
     .from('fulfillment_orders')

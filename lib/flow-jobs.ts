@@ -2,7 +2,7 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { supabaseAdmin } from './supabase-admin'
 
-export type FlowJobType = 'shopify_order_flow' | 'flow_message_resume'
+export type FlowJobType = 'shopify_order_flow' | 'flow_message_resume' | 'delivery_status_flow'
 export type FlowJobStatus = 'pending' | 'processing' | 'completed' | 'failed'
 
 export interface FlowJob {

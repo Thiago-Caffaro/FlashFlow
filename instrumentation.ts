@@ -4,5 +4,7 @@ export async function register() {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY === 'placeholder') return
 
   const { startFlowJobWorker } = await import('./lib/flow-job-worker')
+  const { startFulfillmentDeliveryWorker } = await import('./lib/fulfillment-delivery-worker')
   startFlowJobWorker()
+  startFulfillmentDeliveryWorker()
 }

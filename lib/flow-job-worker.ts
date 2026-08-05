@@ -3,7 +3,7 @@ import { hostname } from 'node:os'
 import { OrderContextPendingError } from './message-context'
 import type { FlowJob } from './flow-jobs'
 import { executeFlow } from './flow-engine'
-import { runShopifyOrderTrigger } from './shopify-confirmation-service'
+import { runOrderFlow, runShopifyOrderTrigger } from './shopify-confirmation-service'
 import { supabaseAdmin } from './supabase-admin'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
 
@@ -83,6 +83,12 @@ async function processJob(job: FlowJob) {
         ? job.payload.realSendInstanceName
         : undefined,
     }, job.node_id)
+    return
+  }
+
+  if (job.job_type === 'delivery_status_flow') {
+    if (!job.order_id) throw new Error('Job de entrega sem order_id')
+    await runOrderFlow(job.order_id, job.flow_id)
     return
   }
 

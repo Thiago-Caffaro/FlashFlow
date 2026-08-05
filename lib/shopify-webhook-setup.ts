@@ -3,7 +3,7 @@ import { getSetting } from './app-settings'
 import { ShopifyClient } from './shopify-client'
 import { shopifyClientFromIntegration, type ShopifyIntegrationCredentialRow } from './shopify-integration-store'
 
-const ORDER_CREATE_TOPIC = 'orders/create'
+const ORDER_TOPICS = ['orders/create', 'orders/delete'] as const
 
 export interface WebhookRegistrationResult {
   shopDomain: string
@@ -30,18 +30,21 @@ async function ensureForClient(client: ShopifyClient, shopDomain: string): Promi
   }
 
   try {
-    const existing = await client.listWebhooks({ topic: ORDER_CREATE_TOPIC })
-    const already = (existing.webhooks ?? []).some((webhook) => webhook.address === address)
-    if (already) return { shopDomain, ok: true, alreadyRegistered: true }
-
-    await client.createWebhook(ORDER_CREATE_TOPIC, address)
-    return { shopDomain, ok: true, alreadyRegistered: false }
+    let alreadyRegistered = true
+    for (const topic of ORDER_TOPICS) {
+      const existing = await client.listWebhooks({ topic })
+      const already = (existing.webhooks ?? []).some((webhook) => webhook.address === address)
+      if (already) continue
+      alreadyRegistered = false
+      await client.createWebhook(topic, address)
+    }
+    return { shopDomain, ok: true, alreadyRegistered }
   } catch (error) {
     return { shopDomain, ok: false, alreadyRegistered: false, error: error instanceof Error ? error.message : 'Erro inesperado' }
   }
 }
 
-// Registers the orders/create webhook subscription directly with Shopify via
+// Registers the orders/create and orders/delete subscriptions directly with Shopify via
 // the Admin REST API (POST /webhooks.json) so real-time order delivery
 // doesn't depend on the merchant manually configuring it under
 // Settings → Notifications in the Shopify admin. Safe to call repeatedly —

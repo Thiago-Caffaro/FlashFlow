@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { TriggerCreate } from '@/types'
 import { belongsToInstance } from '@/lib/instance-guard'
+import { isTriggerSource, validateDeliveryTriggerPayload } from '@/lib/trigger-input'
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,6 +24,14 @@ export async function PUT(
   if (!(await belongsToInstance(supabaseAdmin, 'triggers', id, instanceName))) {
     return NextResponse.json({ ok: false, error: 'Gatilho não encontrado' }, { status: 404 })
   }
+  if (body.source !== undefined && !isTriggerSource(body.source)) {
+    return NextResponse.json({ ok: false, error: 'Origem de gatilho inválida' }, { status: 400 })
+  }
+  if (body.source === 'delivery_status' && body.action !== undefined && body.action !== 'flow') {
+    return NextResponse.json({ ok: false, error: 'Gatilhos de entrega precisam executar um fluxo' }, { status: 400 })
+  }
+  const payloadError = validateDeliveryTriggerPayload(body.action_payload)
+  if (payloadError) return NextResponse.json({ ok: false, error: payloadError }, { status: 400 })
 
   // Allowlist explícita — nunca deixa o cliente sobrescrever id/instance_name/timestamps.
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }

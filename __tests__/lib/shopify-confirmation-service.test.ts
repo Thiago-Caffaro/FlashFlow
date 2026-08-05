@@ -149,6 +149,7 @@ function shopifyOrder(overrides: Record<string, unknown> = {}) {
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const {
   assignConfirmationAccount,
+  archiveShopifyOrder,
   mapShopifyOrderPayload,
   shouldSubmitToFenix,
   updateConfirmationOrder,
@@ -221,6 +222,22 @@ describe('shopify-confirmation-service', () => {
         total: 39.9,
       },
     ])
+  })
+
+  it('uses the original Shopify total when current_total_price is zero but items are positive', async () => {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({
+      current_total_price: '0.00',
+      total_price: '49.90',
+      line_items: [
+        { product_id: 1, variant_id: 2, sku: 'SKU-1', name: 'Produto', quantity: 1, price: '49.90' },
+      ],
+    }), {
+      id: 'shopify-1',
+      shopDomain: 'example.myshopify.com',
+      defaultCountry: 'PORTUGAL',
+    }, 'wa-1')
+
+    expect(mapped.total).toBe(49.9)
   })
 
   it('never uses Shopify product or variant ids as a missing SKU', async () => {
@@ -333,6 +350,57 @@ describe('shopify-confirmation-service', () => {
     expect(mockExecuteFlow).not.toHaveBeenCalled()
     expect(mockSendWhatsAppText).not.toHaveBeenCalled()
     expect(updated.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('archives a Shopify-deleted order and cancels its pending confirmation job', async () => {
+    const existing = queryBuilder({
+      data: { id: 'order-1', lead_number: null, status: 'pending_operator', shopify_deleted_at: null },
+      error: null,
+    })
+    const archived = queryBuilder({
+      data: { id: 'order-1', status: 'cancelled', shopify_deleted_at: '2026-08-05T12:00:00.000Z' },
+      error: null,
+    })
+    const jobs = queryBuilder()
+    setTableQueues({
+      fulfillment_orders: [existing, archived],
+      flow_jobs: [jobs],
+    })
+
+    const result = await archiveShopifyOrder(integrationRow(), { id: 12345 })
+
+    expect(archived.updates[0]).toMatchObject({
+      commercial_status: 'Desistiu',
+      send_status: 'Não enviar',
+      status: 'cancelled',
+      shopify_deleted_at: expect.any(String),
+    })
+    expect(jobs.updates[0]).toMatchObject({ status: 'failed' })
+    expect(mockRecordOrderEvent).toHaveBeenCalledWith(
+      'order-1',
+      'shopify_order_deleted',
+      { shopify_order_id: '12345' },
+    )
+    expect(result).toMatchObject({ id: 'order-1', status: 'cancelled' })
+  })
+
+  it('retries pending job cancellation for an order that is already archived', async () => {
+    const existing = queryBuilder({
+      data: {
+        id: 'order-1',
+        lead_number: null,
+        status: 'cancelled',
+        shopify_deleted_at: '2026-08-05T12:00:00.000Z',
+      },
+      error: null,
+    })
+    const jobs = queryBuilder()
+    setTableQueues({ fulfillment_orders: [existing], flow_jobs: [jobs] })
+
+    await archiveShopifyOrder(integrationRow(), { id: 12345 })
+
+    expect(jobs.updates[0]).toMatchObject({ status: 'failed' })
+    expect(mockRecordOrderEvent).not.toHaveBeenCalled()
   })
 
   it('reserves confirmation starts at least 1.5 seconds apart', async () => {

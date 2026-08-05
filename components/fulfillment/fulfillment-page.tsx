@@ -312,7 +312,9 @@ export default function FulfillmentPage() {
     const json = await fetch('/api/fulfillment/shopify/products/sync', { method: 'POST' }).then(getJson)
     showResult(
       json,
-      json.ok ? `Produtos sincronizados: ${json.importedProducts ?? 0}.` : 'Falha ao sincronizar produtos.',
+      json.ok
+        ? `Produtos sincronizados: ${json.importedProducts ?? 0}.`
+        : json.error ?? 'Falha ao sincronizar produtos.',
     )
     await load()
     setShopifyProductsSyncBusy(false)
