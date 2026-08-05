@@ -239,6 +239,7 @@ export interface FulfillmentOrder {
   shopify_order_id: string | null
   shopify_order_name: string | null
   shopify_order_number: string | null
+  shopify_deleted_at?: string | null
   raw_shopify_payload: Record<string, unknown> | null
   commercial_status: CommercialStatus
   send_status: SendStatus

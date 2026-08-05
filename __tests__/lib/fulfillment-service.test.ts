@@ -213,6 +213,32 @@ describe('fulfillment-service', () => {
     expect(order).toMatchObject({ status: 'created', lead_number: 'PD-1' })
   })
 
+  it('recalculates a zero stored order total from its items before creating the lead', async () => {
+    const orderWithWrongTotal = localOrder({
+      status: 'submitting',
+      total: 0,
+      items: [{ product_id: 'product-1', sku: 'SKU-1', name: 'Product', quantity: 1, unit_price: 49.9, total: 49.9 }],
+    })
+    const lockedOrder = queryBuilder({ data: orderWithWrongTotal, error: null })
+    const eventSubmitting = queryBuilder()
+    const integration = queryBuilder({ data: integrationRow(), error: null })
+    const updatedOrder = queryBuilder({ data: localOrder({ status: 'created', lead_number: 'PD-1', total: 49.9 }), error: null })
+    const eventCreated = queryBuilder()
+    setTableQueues({
+      fulfillment_orders: [lockedOrder, updatedOrder],
+      fulfillment_order_events: [eventSubmitting, eventCreated],
+      fulfillment_integrations: [integration],
+    })
+
+    await submitFulfillmentOrder('order-1')
+
+    expect(mockCreateLead).toHaveBeenCalledWith(expect.objectContaining({
+      total: 49.9,
+      items: [{ sku: 'SKU-1', quantity: 1, total: 49.9 }],
+    }))
+    expect(updatedOrder.updates[0]).toMatchObject({ total: 49.9 })
+  })
+
   it('resolves the latest Shopify catalog SKU before submitting an existing order', async () => {
     const shopifyOrder = localOrder({
       status: 'submitting',
@@ -326,7 +352,7 @@ describe('fulfillment-service', () => {
     })
 
     await expect(submitFulfillmentOrder('order-1')).rejects.toThrow(
-      'SKU "BAD-SKU" não encontrado no FenixCOD'
+      'O FenixCOD rejeitou o SKU "BAD-SKU" na integração PORTUGAL'
     )
   })
 

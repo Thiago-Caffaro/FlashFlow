@@ -34,6 +34,7 @@ async function loadOrder(
       .from('fulfillment_orders')
       .select('*')
       .eq('id', orderId)
+      .is('shopify_deleted_at', null)
       .maybeSingle()
     if (error) throw new Error(`Falha ao consultar pedido: ${error.message}`)
     if (!data) return null
@@ -48,6 +49,7 @@ async function loadOrder(
     .from('fulfillment_orders')
     .select('*')
     .eq('conversation_id', conversation.id)
+    .is('shopify_deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -62,6 +64,7 @@ async function loadOrder(
     .from('fulfillment_orders')
     .select('*')
     .eq('contact_phone', phone)
+    .is('shopify_deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(20)
   if (byPhone.error) {

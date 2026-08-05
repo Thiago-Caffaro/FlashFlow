@@ -226,7 +226,10 @@ export async function mapShopifyOrderPayload(
     integration.defaultCountry
   )
   const items = mapLineItems(order.line_items)
-  const total = numberValue(order.current_total_price, numberValue(order.total_price, items.reduce((sum, item) => sum + item.total, 0)))
+  const itemsTotal = items.reduce((sum, item) => sum + item.total, 0)
+  const currentTotal = numberValue(order.current_total_price, 0)
+  const originalTotal = numberValue(order.total_price, 0)
+  const total = currentTotal > 0 ? currentTotal : originalTotal > 0 ? originalTotal : itemsTotal
   const currency = stringValue(order.currency, order.presentment_currency, 'EUR').toUpperCase()
   const phone = normalizePhone(order.phone ?? shipping.phone ?? billing.phone ?? asRecord(order.customer).phone)
   const orderName = nullableString(order.name)
@@ -293,6 +296,7 @@ export async function upsertShopifyOrder(
     ...mapped,
     assigned_instance_name: existingAssigned,
     instance_name: existingAssigned ?? '',
+    shopify_deleted_at: null,
     updated_at: now,
   }
 
@@ -351,6 +355,65 @@ export async function upsertShopifyOrder(
   }
 
   return result.data
+}
+
+export async function archiveShopifyOrder(
+  integrationRow: ShopifyIntegrationCredentialRow,
+  payload: unknown
+) {
+  const shopifyOrderId = stringValue(asRecord(payload).id, asRecord(payload).admin_graphql_api_id)
+  if (!shopifyOrderId) throw new Error('Payload Shopify sem id de pedido')
+
+  const { data: existing, error: existingError } = await supabaseAdmin
+    .from('fulfillment_orders')
+    .select('id, lead_number, status, shopify_deleted_at')
+    .eq('shopify_integration_id', integrationRow.id)
+    .eq('shopify_order_id', shopifyOrderId)
+    .maybeSingle()
+  if (existingError) throw new Error(`Falha ao consultar pedido Shopify: ${existingError.message}`)
+  if (!existing) return null
+
+  const now = new Date().toISOString()
+  let archived = existing
+  if (!existing.shopify_deleted_at) {
+    const patch: Record<string, unknown> = {
+      shopify_deleted_at: now,
+      commercial_status: 'Desistiu',
+      updated_at: now,
+    }
+    if (!existing.lead_number && ['pending_operator', 'failed'].includes(String(existing.status))) {
+      patch.status = 'cancelled'
+      patch.send_status = 'Não enviar'
+    }
+
+    const { data, error: archiveError } = await supabaseAdmin
+      .from('fulfillment_orders')
+      .update(patch)
+      .eq('id', existing.id)
+      .select()
+      .single()
+    if (archiveError || !data) {
+      throw new Error(archiveError?.message ?? 'Falha ao arquivar pedido excluído no Shopify')
+    }
+    archived = data
+  }
+
+  const { error: jobsError } = await supabaseAdmin
+    .from('flow_jobs')
+    .update({
+      status: 'failed',
+      last_error: 'Pedido excluído no Shopify antes da execução do fluxo',
+      updated_at: now,
+    })
+    .eq('order_id', existing.id)
+    .eq('job_type', 'shopify_order_flow')
+    .eq('status', 'pending')
+  if (jobsError) throw new Error(`Pedido arquivado, mas o job pendente não foi cancelado: ${jobsError.message}`)
+
+  if (!existing.shopify_deleted_at) {
+    await recordOrderEvent(existing.id, 'shopify_order_deleted', { shopify_order_id: shopifyOrderId })
+  }
+  return archived
 }
 
 export function mapShopifyAbandonedCheckoutPayload(
@@ -494,6 +557,7 @@ type OrderFlowOrder = {
   assigned_instance_name: string | null
   instance_name: string | null
   is_simulation: boolean
+  shopify_deleted_at: string | null
 }
 
 async function executeOrderFlowForOrder(
@@ -505,6 +569,7 @@ async function executeOrderFlowForOrder(
   const instanceName = String(order.assigned_instance_name || order.instance_name || '')
   const phone = String(order.contact_phone || '')
   const isSandboxOrder = instanceName === SANDBOX_INSTANCE_NAME
+  if (order.shopify_deleted_at) throw new Error('Pedido foi excluído no Shopify; fluxo bloqueado')
   if (order.is_simulation && !isSandboxOrder) throw new Error('Pedido de simulação não envia WhatsApp real')
   if (!instanceName) throw new Error('Pedido sem conta WhatsApp atribuída')
   if (!phone) throw new Error('Pedido sem telefone para executar o fluxo')
@@ -543,7 +608,7 @@ export async function runOrderFlow(
 ) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation')
+    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at')
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
@@ -560,7 +625,7 @@ export async function runShopifyOrderTrigger(
 ) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation')
+    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at')
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')

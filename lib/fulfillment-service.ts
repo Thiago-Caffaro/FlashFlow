@@ -71,6 +71,7 @@ type FulfillmentOrderRow = {
   raw_shopify_payload?: Record<string, unknown> | null
   source?: 'manual' | 'shopify'
   is_simulation?: boolean | null
+  shopify_deleted_at?: string | null
 }
 
 export interface OrderInput {
@@ -244,6 +245,7 @@ export async function submitFulfillmentOrder(orderId: string) {
     .eq('id', orderId)
     .is('lead_number', null)
     .eq('is_simulation', false)
+    .is('shopify_deleted_at', null)
     .in('status', ['pending_operator', 'failed'])
     .select('*')
     .single()
@@ -251,13 +253,16 @@ export async function submitFulfillmentOrder(orderId: string) {
   if (orderError || !order) {
     const { data: current } = await supabaseAdmin
       .from('fulfillment_orders')
-      .select('id, lead_number, status, is_simulation')
+      .select('id, lead_number, status, is_simulation, shopify_deleted_at')
       .eq('id', orderId)
       .maybeSingle()
 
     if (!current) throw new Error('Pedido não encontrado')
     if (current.lead_number) throw new Error('Pedido já foi enviado para o FenixCOD')
     if ((current as { is_simulation?: boolean }).is_simulation) throw new Error('Pedido de simulação não pode ser enviado ao FenixCOD')
+    if ((current as { shopify_deleted_at?: string | null }).shopify_deleted_at) {
+      throw new Error('Pedido foi excluído no Shopify e não pode ser enviado ao FenixCOD')
+    }
     if (current.status === 'cancelled') throw new Error('Pedido local já foi cancelado')
     if (current.status === 'unknown') throw new Error('Pedido está com envio incerto; verifique no FenixCOD antes de reenviar')
     throw new Error('Pedido não está pendente para envio')
@@ -268,14 +273,16 @@ export async function submitFulfillmentOrder(orderId: string) {
 
   try {
     const resolvedItems = await resolveOrderItemsForSubmission(orderRow)
+    const resolvedTotal = orderItemsTotal(resolvedItems)
     const client = await getFulfillmentClient(orderRow.country)
-    const payload = buildLeadPayload(orderRow, resolvedItems)
+    const payload = buildLeadPayload(orderRow, resolvedItems, resolvedTotal)
     const external = await client.createLead(payload)
     const leadNumber = findLeadNumber(external)
     const { data: updated } = await supabaseAdmin
       .from('fulfillment_orders')
       .update({
         items: resolvedItems,
+        total: resolvedTotal,
         lead_number: leadNumber,
         status: 'created',
         send_status: 'Enviado',
@@ -289,7 +296,7 @@ export async function submitFulfillmentOrder(orderId: string) {
     await recordOrderEvent(orderRow.id, 'created', { lead_number: leadNumber })
     return updated
   } catch (error) {
-    const message = submissionErrorMessage(error)
+    const message = submissionErrorMessage(error, orderRow.country)
     const uncertain = isTimeoutError(error)
     const status = uncertain ? 'unknown' : 'failed'
     const { data: updated } = await supabaseAdmin.from('fulfillment_orders').update({
@@ -359,7 +366,20 @@ export async function recordOrderEvent(orderId: string, eventType: string, paylo
   })
 }
 
-function buildLeadPayload(order: FulfillmentOrderRow, items = normalizeOrderItems(order.items)): CreateFulfillmentLead {
+function orderItemsTotal(items: FulfillmentOrderItem[]): number {
+  const total = items.reduce((sum, item) => sum + item.total, 0)
+  const rounded = Math.round((total + Number.EPSILON) * 100) / 100
+  if (!Number.isFinite(rounded) || rounded <= 0) {
+    throw new Error('Pedido sem valor positivo nos itens; envio ao FenixCOD bloqueado')
+  }
+  return rounded
+}
+
+function buildLeadPayload(
+  order: FulfillmentOrderRow,
+  items = normalizeOrderItems(order.items),
+  total = orderItemsTotal(items)
+): CreateFulfillmentLead {
   return {
     name_costumer: order.customer_name,
     mobile: order.contact_phone,
@@ -367,7 +387,7 @@ function buildLeadPayload(order: FulfillmentOrderRow, items = normalizeOrderItem
     zipcod: order.zipcode,
     city: order.city,
     address: order.address,
-    total: Number(order.total),
+    total,
     payment_type: order.payment_type,
     country: order.country,
     email: order.email,
@@ -474,13 +494,14 @@ async function resolveOrderItemsForSubmission(order: FulfillmentOrderRow): Promi
   })
 }
 
-function submissionErrorMessage(error: unknown): string {
+function submissionErrorMessage(error: unknown, country?: string): string {
   const message = error instanceof Error ? error.message : 'Falha desconhecida'
   const match = message.match(/Product Not Found\s+(.+)/i)
   if (!match) return message
   const sku = match[1].trim()
-  return `SKU "${sku}" não encontrado no FenixCOD. ` +
-    'Use no Shopify exatamente o mesmo SKU cadastrado no FenixCOD, sincronize os produtos e tente novamente.'
+  const integration = country ? ` na integração ${country}` : ''
+  return `O FenixCOD rejeitou o SKU "${sku}"${integration}. ` +
+    'Confirme o SKU e o estoque na mesma conta/país do FenixCOD; depois sincronize o catálogo e tente novamente.'
 }
 
 function isTimeoutError(error: unknown): boolean {
