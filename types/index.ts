@@ -41,7 +41,7 @@ export interface Message {
 
 export type TriggerTipo = 'contains' | 'exact'
 export type TriggerAction = 'send_message' | 'flow'
-export type TriggerSource = 'message' | 'shopify_order'
+export type TriggerSource = 'message' | 'shopify_order' | 'delivery_status'
 
 export interface Trigger {
   id: string
@@ -51,7 +51,7 @@ export interface Trigger {
   valor: string
   delay_ms: number
   action: TriggerAction
-  action_payload: { message?: string; flow_id?: string }
+  action_payload: { message?: string; flow_id?: string; statuses?: DeliveryStatus[] }
   source: TriggerSource
   created_at: string
   updated_at: string
@@ -61,7 +61,20 @@ export type TriggerCreate = Omit<Trigger, 'id' | 'created_at' | 'updated_at'>
 
 // ─── Flows ────────────────────────────────────────────────────────────────────
 
-export type FlowNodeType = 'start' | 'sendMessage' | 'notify' | 'condition' | 'switchCase' | 'aiAssistant' | 'fulfillmentStock' | 'fulfillmentStatus' | 'end'
+export type FlowNodeType =
+  | 'start'
+  | 'sendMessage'
+  | 'notify'
+  | 'condition'
+  | 'switchCase'
+  | 'aiAssistant'
+  | 'captureOrderData'
+  // Kept only so existing saved flows continue to load and execute.
+  | 'fulfillmentStock'
+  | 'fulfillmentStatus'
+  | 'end'
+
+export type OrderStateField = 'commercial_status' | 'send_status' | 'delivery_status'
 
 export interface SwitchCase {
   id: string
@@ -141,6 +154,9 @@ export interface FlowNodeData {
   productId?: string
   successMessage?: string
   failureMessage?: string
+  // order state capture
+  orderStateField?: OrderStateField
+  orderStateValue?: string
   [key: string]: unknown
 }
 
@@ -149,6 +165,7 @@ export interface FulfillmentProduct {
   country: string
   sku: string
   name: string
+  units_per_pack?: number
   price: number
   currency: string
   active: boolean
@@ -182,6 +199,8 @@ export const DELIVERY_STATUSES = [
 
 export type DeliveryStatus = typeof DELIVERY_STATUSES[number]
 
+export type ConfirmationTriggerState = 'pending' | 'sent' | 'failed'
+
 export const ABANDONED_CHECKOUT_STATUSES = ['Pendente', 'Enviado', 'Não enviar', 'Convertido'] as const
 export type AbandonedCheckoutStatus = typeof ABANDONED_CHECKOUT_STATUSES[number]
 
@@ -204,6 +223,9 @@ export interface FulfillmentOrder {
     product_id: string
     shopify_product_id?: string
     shopify_variant_id?: string
+    shopify_quantity?: number
+    units_per_pack?: number
+    pack_quantity_source?: 'sku' | 'catalog' | 'title' | 'default'
     sku: string
     name: string
     quantity: number
@@ -221,10 +243,17 @@ export interface FulfillmentOrder {
   shopify_order_id: string | null
   shopify_order_name: string | null
   shopify_order_number: string | null
+  shopify_deleted_at?: string | null
   raw_shopify_payload: Record<string, unknown> | null
   commercial_status: CommercialStatus
   send_status: SendStatus
   delivery_status: DeliveryStatus
+  external_delivery_status?: string | null
+  external_delivery_status_key?: string | null
+  delivery_status_source?: 'local' | 'manual' | 'flow' | 'fenixcod'
+  delivery_status_synced_at?: string | null
+  delivery_status_changed_at?: string | null
+  delivery_status_sync_error?: string | null
   confirmed_at: string | null
   confirmation_status_updated_at: string | null
   assigned_instance_name: string | null
@@ -257,6 +286,7 @@ export interface ShopifyProduct {
   sku: string | null
   title: string
   variant_title: string | null
+  units_per_pack?: number
   price: number
   currency: string
   image_url: string | null
@@ -292,6 +322,7 @@ export interface AppNotification {
   source_key: string | null
   metadata: Record<string, unknown>
   read_at: string | null
+  dismissed_at: string | null
   created_at: string
 }
 

@@ -3,12 +3,14 @@ import { NextRequest } from 'next/server'
 
 const mockLoadShopifyIntegrationForWebhook = jest.fn()
 const mockDecodeShopifyWebhookSecret = jest.fn(() => 'webhook-secret')
+const mockArchiveShopifyOrder = jest.fn()
 const mockUpsertShopifyOrder = jest.fn()
 const mockUpsertShopifyAbandonedCheckout = jest.fn()
 const mockGetSetting = jest.fn(async (_key: string) => 'webhook-secret')
 const mockGetShopifyTriggersEnabled = jest.fn(async () => true)
 
 jest.mock('@/lib/shopify-confirmation-service', () => ({
+  archiveShopifyOrder: mockArchiveShopifyOrder,
   decodeShopifyWebhookSecret: mockDecodeShopifyWebhookSecret,
   loadShopifyIntegrationForWebhook: mockLoadShopifyIntegrationForWebhook,
   upsertShopifyOrder: mockUpsertShopifyOrder,
@@ -29,12 +31,13 @@ function hmac(rawBody: string, secret = 'webhook-secret') {
   return createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64')
 }
 
-function request(rawBody: string, signature: string) {
+function request(rawBody: string, signature: string, topic?: string) {
   return new NextRequest('http://localhost/api/webhook/shopify/orders', {
     method: 'POST',
     headers: {
       'x-shopify-shop-domain': 'example.myshopify.com',
       'x-shopify-hmac-sha256': signature,
+      ...(topic ? { 'x-shopify-topic': topic } : {}),
     },
     body: rawBody,
   })
@@ -53,6 +56,7 @@ describe('Shopify webhooks', () => {
       shop_domain: 'example.myshopify.com',
     })
     mockUpsertShopifyOrder.mockResolvedValue({ id: 'order-1' })
+    mockArchiveShopifyOrder.mockResolvedValue({ id: 'order-1' })
     mockUpsertShopifyAbandonedCheckout.mockResolvedValue({ id: 'checkout-1' })
   })
 
@@ -115,6 +119,20 @@ describe('Shopify webhooks', () => {
       { id: 124, name: '#1002' },
       { sendConfirmation: false }
     )
+  })
+
+  it('archives orders/delete webhooks without returning order data', async () => {
+    const rawBody = JSON.stringify({ id: 123 })
+    const response = await orderWebhook.POST(request(rawBody, hmac(rawBody), 'orders/delete'))
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual({ ok: true, archived: true })
+    expect(mockArchiveShopifyOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'shopify-1' }),
+      { id: 123 },
+    )
+    expect(mockUpsertShopifyOrder).not.toHaveBeenCalled()
   })
 
   it('accepts valid abandoned checkout webhooks', async () => {

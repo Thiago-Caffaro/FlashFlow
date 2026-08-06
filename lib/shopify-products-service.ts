@@ -1,5 +1,6 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { resolvePackQuantity } from './shopify-pack-quantity'
 import {
   listActiveShopifyIntegrations,
   shopifyClientFromIntegration,
@@ -52,34 +53,71 @@ async function resolveIntegrationCountry(integrationId: string | null): Promise<
 export async function mirrorToFulfillmentProduct(shopifyProductId: string): Promise<void> {
   const { data: row, error } = await supabaseAdmin
     .from('shopify_products')
-    .select('id, shopify_integration_id, sku, title, variant_title, price, currency, local_product_id')
+    .select('id, shopify_integration_id, sku, title, variant_title, units_per_pack, price, currency, local_product_id')
     .eq('id', shopifyProductId)
     .single()
-  if (error || !row) return
+  if (error || !row) {
+    throw new Error(`Falha ao carregar produto Shopify para cópia local: ${error?.message ?? 'produto não encontrado'}`)
+  }
 
   const name = row.variant_title ? `${row.title} — ${row.variant_title}` : row.title
   const sku = row.sku || `SHOPIFY-${shopifyProductId}`
+  const country = await resolveIntegrationCountry(row.shopify_integration_id)
+  const { data: matchingMirror, error: matchingError } = await supabaseAdmin
+    .from('fulfillment_products')
+    .select('id')
+    .eq('country', country)
+    .eq('sku', sku)
+    .maybeSingle()
+  if (matchingError) throw new Error(`Falha ao localizar cópia local por SKU: ${matchingError.message}`)
 
-  if (row.local_product_id) {
-    await supabaseAdmin
+  const mirrorId = matchingMirror?.id ?? row.local_product_id
+  if (mirrorId) {
+    const { error: updateError } = await supabaseAdmin
       .from('fulfillment_products')
-      .update({ name, price: row.price, currency: row.currency, updated_at: new Date().toISOString() })
-      .eq('id', row.local_product_id)
+      .update({
+        country,
+        sku,
+        name,
+        units_per_pack: row.units_per_pack ?? 1,
+        price: row.price,
+        currency: row.currency,
+        active: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', mirrorId)
+    if (updateError) throw new Error(`Falha ao atualizar cópia local: ${updateError.message}`)
+
+    const { error: linkError } = await supabaseAdmin
+      .from('shopify_products')
+      .update({ local_product_id: mirrorId, updated_at: new Date().toISOString() })
+      .eq('id', row.id)
+    if (linkError) throw new Error(`Falha ao vincular cópia local: ${linkError.message}`)
     return
   }
 
-  const country = await resolveIntegrationCountry(row.shopify_integration_id)
   const { data: created, error: createError } = await supabaseAdmin
     .from('fulfillment_products')
-    .insert({ country, sku, name, price: row.price, currency: row.currency, active: true })
+    .insert({
+      country,
+      sku,
+      name,
+      units_per_pack: row.units_per_pack ?? 1,
+      price: row.price,
+      currency: row.currency,
+      active: true,
+    })
     .select('id')
     .single()
-  if (createError || !created) return
+  if (createError || !created) {
+    throw new Error(`Falha ao criar cópia local: ${createError?.message ?? 'resposta vazia'}`)
+  }
 
-  await supabaseAdmin
+  const { error: linkError } = await supabaseAdmin
     .from('shopify_products')
     .update({ local_product_id: created.id })
     .eq('id', row.id)
+  if (linkError) throw new Error(`Falha ao vincular cópia local: ${linkError.message}`)
 }
 
 // Turning the toggle on creates/refreshes the mirror immediately; turning it
@@ -98,6 +136,19 @@ export async function setKeepLocalCopy(shopifyProductId: string, enabled: boolea
       .update({ keep_local_copy: false, local_product_id: null, updated_at: new Date().toISOString() })
       .eq('id', shopifyProductId)
   }
+}
+
+export async function setKeepLocalCopies(shopifyProductIds: string[], enabled: boolean): Promise<number> {
+  const ids = [...new Set(shopifyProductIds.map((id) => id.trim()).filter(Boolean))]
+  if (ids.length === 0) return 0
+  if (ids.length > 1000) throw new Error('No maximo 1000 produtos podem ser alterados por vez')
+
+  const { data, error } = await supabaseAdmin.rpc('set_shopify_products_local_copy', {
+    p_ids: ids,
+    p_enabled: enabled,
+  })
+  if (error) throw new Error(`Falha ao atualizar copias locais: ${error.message}`)
+  return Number(data ?? 0)
 }
 
 // Shopify-sourced rows are never hard-deleted (a resync would just bring them
@@ -124,6 +175,10 @@ async function upsertShopifyProductVariant(
 ): Promise<void> {
   const price = Number(variant.price ?? 0)
   const variantTitle = variant.title && variant.title !== 'Default Title' ? variant.title : null
+  const pack = resolvePackQuantity({
+    rawSku: variant.sku,
+    titles: [variantTitle, product.title],
+  })
 
   const { data, error } = await supabaseAdmin
     .from('shopify_products')
@@ -132,7 +187,8 @@ async function upsertShopifyProductVariant(
         shopify_integration_id: integrationId,
         shopify_product_id: String(product.id),
         shopify_variant_id: String(variant.id),
-        sku: variant.sku || null,
+        sku: pack.sku || null,
+        units_per_pack: pack.unitsPerPack,
         title: product.title,
         variant_title: variantTitle,
         price: Number.isFinite(price) ? price : 0,
@@ -147,7 +203,11 @@ async function upsertShopifyProductVariant(
     .select('id, keep_local_copy, local_product_id')
     .single()
 
-  if (error || !data) return
+  if (error || !data) {
+    throw new Error(
+      `Falha ao sincronizar produto Shopify ${String(product.id)}/${String(variant.id)}: ${error?.message ?? 'resposta vazia'}`
+    )
+  }
   const row = data as ShopifyProductRow
   if (row.keep_local_copy) await mirrorToFulfillmentProduct(row.id)
 }

@@ -61,6 +61,7 @@ export async function GET(req: NextRequest) {
       .from('notifications')
       .select('*')
       .eq('instance_name', instanceName)
+      .is('dismissed_at', null)
       .order('created_at', { ascending: false })
       .limit(200)
 
@@ -72,6 +73,35 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: false,
       error: error instanceof Error ? error.message : 'Falha ao carregar notificacoes',
+    }, { status: 500 })
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
+  const instanceName = req.nextUrl.searchParams.get('instance')?.trim()
+  const id = req.nextUrl.searchParams.get('id')?.trim()
+  if (!instanceName) {
+    return NextResponse.json({ ok: false, error: 'instance required' }, { status: 400 })
+  }
+
+  try {
+    let query = supabaseAdmin
+      .from('notifications')
+      .update({
+        dismissed_at: new Date().toISOString(),
+        read_at: new Date().toISOString(),
+      })
+      .eq('instance_name', instanceName)
+      .is('dismissed_at', null)
+    if (id) query = query.eq('id', id)
+    const { error } = await query
+    if (error) throw new Error(error.message)
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    return NextResponse.json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Falha ao excluir notificacoes',
     }, { status: 500 })
   }
 }

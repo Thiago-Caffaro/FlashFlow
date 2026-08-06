@@ -1,7 +1,14 @@
 import 'server-only'
 import { sendWhatsAppText } from './whatsapp-text'
 import { normalizeShopDomain } from './shopify-client'
-import { submitFulfillmentOrder, FulfillmentOrderSubmissionError, recordOrderEvent } from './fulfillment-service'
+import { recordOrderEvent } from './fulfillment-service'
+import { maybeAutoSubmitConfirmedOrder } from './fulfillment-order-state'
+import {
+  isCommercialStatus,
+  isDeliveryStatus,
+  isSendStatus,
+  shouldSubmitToFenix,
+} from './order-state'
 import { executeFlow } from './flow-engine'
 import { supabaseAdmin } from './supabase-admin'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
@@ -10,6 +17,12 @@ import { syncShopifyProductsForIntegration } from './shopify-products-service'
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
 import { enqueueShopifyOrderFlowJob } from './flow-jobs'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
+import { getDefaultShopifyOrderInstance } from './shopify-order-settings'
+import {
+  calculatePhysicalUnitPrice,
+  resolvePackQuantity,
+  type PackQuantitySource,
+} from './shopify-pack-quantity'
 import {
   SHOPIFY_INTEGRATION_PUBLIC_SELECT,
   decodeShopifyAdminToken,
@@ -21,14 +34,8 @@ import {
 } from './shopify-integration-store'
 import {
   ABANDONED_CHECKOUT_STATUSES,
-  COMMERCIAL_STATUSES,
-  DELIVERY_STATUSES,
-  SEND_STATUSES,
   type AbandonedCheckoutStatus,
-  type CommercialStatus,
-  type DeliveryStatus,
   type FulfillmentOrder,
-  type SendStatus,
 } from '@/types'
 
 export {
@@ -90,6 +97,9 @@ type ShopifyOrderMappedFields = {
     product_id: string
     shopify_product_id?: string
     shopify_variant_id?: string
+    shopify_quantity?: number
+    units_per_pack?: number
+    pack_quantity_source?: PackQuantitySource
     sku: string
     name: string
     quantity: number
@@ -98,15 +108,6 @@ type ShopifyOrderMappedFields = {
   }>
   total: number
   currency: string
-}
-
-type ConfirmationOrderRow = {
-  id: string
-  lead_number: string | null
-  commercial_status: CommercialStatus
-  send_status: SendStatus
-  status: string
-  is_simulation: boolean
 }
 
 type ShopifyCheckoutMappedFields = {
@@ -125,27 +126,10 @@ type ShopifyCheckoutMappedFields = {
   raw_shopify_payload: Record<string, unknown>
 }
 
-export function isCommercialStatus(value: unknown): value is CommercialStatus {
-  return (COMMERCIAL_STATUSES as readonly string[]).includes(String(value))
-}
-
-export function isSendStatus(value: unknown): value is SendStatus {
-  return (SEND_STATUSES as readonly string[]).includes(String(value))
-}
-
-export function isDeliveryStatus(value: unknown): value is DeliveryStatus {
-  return (DELIVERY_STATUSES as readonly string[]).includes(String(value))
-}
+export { isCommercialStatus, isDeliveryStatus, isSendStatus, shouldSubmitToFenix }
 
 export function isAbandonedCheckoutStatus(value: unknown): value is AbandonedCheckoutStatus {
   return (ABANDONED_CHECKOUT_STATUSES as readonly string[]).includes(String(value))
-}
-
-export function shouldSubmitToFenix(order: Pick<ConfirmationOrderRow, 'commercial_status' | 'send_status' | 'lead_number' | 'is_simulation'>): boolean {
-  return order.commercial_status.startsWith('Confirmado') &&
-    order.send_status === 'Pendente' &&
-    !order.lead_number &&
-    !order.is_simulation
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -191,30 +175,42 @@ function customerName(order: Record<string, unknown>, shipping: Record<string, u
 }
 
 function mapLineItems(value: unknown): ShopifyOrderMappedFields['items'] {
-  return asArray(value).map((entry, index) => {
+  return asArray(value).flatMap((entry, index) => {
     const item = asRecord(entry)
-    const quantity = Math.max(1, Math.trunc(numberValue(item.quantity, 1)))
-    const unitPrice = Math.max(0, numberValue(item.price, 0))
-    const total = Math.max(0, numberValue(item.total_discount, 0) > unitPrice * quantity
-      ? unitPrice * quantity
-      : unitPrice * quantity - numberValue(item.total_discount, 0))
+    const shopifyQuantity = Math.max(0, Math.trunc(numberValue(item.current_quantity ?? item.quantity, 1)))
+    if (shopifyQuantity === 0) return []
+    const pack = resolvePackQuantity({
+      rawSku: item.sku,
+      titles: [item.variant_title, item.name, item.title],
+    })
+    const quantity = shopifyQuantity * pack.unitsPerPack
+    const packPrice = Math.max(0, numberValue(item.price, 0))
+    const grossTotal = packPrice * shopifyQuantity
+    const discount = numberValue(item.total_discount, 0)
+    const total = Math.max(0, discount > grossTotal ? grossTotal : grossTotal - discount)
+    const unitPrice = calculatePhysicalUnitPrice(total, quantity)
     const shopifyProductId = stringValue(item.product_id)
     const shopifyVariantId = stringValue(item.variant_id)
-    const sku = stringValue(item.sku)
-    return {
+    return [{
       product_id: stringValue(shopifyVariantId, shopifyProductId, `SHOPIFY-${index + 1}`),
       shopify_product_id: shopifyProductId || undefined,
       shopify_variant_id: shopifyVariantId || undefined,
-      sku,
-      name: stringValue(item.name, item.title, sku, `Produto Shopify ${index + 1}`),
+      shopify_quantity: shopifyQuantity,
+      units_per_pack: pack.unitsPerPack,
+      pack_quantity_source: pack.source,
+      sku: pack.sku,
+      name: stringValue(item.name, item.title, pack.sku, `Produto Shopify ${index + 1}`),
       quantity,
       unit_price: unitPrice,
       total,
-    }
+    }]
   })
 }
 
 export async function assignConfirmationAccount(country: string): Promise<string | null> {
+  const defaultInstanceName = await getDefaultShopifyOrderInstance()
+  if (defaultInstanceName) return defaultInstanceName
+
   const normalizedCountry = country.trim().toUpperCase()
   if (!normalizedCountry) return null
   const { data, error } = await supabaseAdmin
@@ -247,7 +243,10 @@ export async function mapShopifyOrderPayload(
     integration.defaultCountry
   )
   const items = mapLineItems(order.line_items)
-  const total = numberValue(order.current_total_price, numberValue(order.total_price, items.reduce((sum, item) => sum + item.total, 0)))
+  const itemsTotal = items.reduce((sum, item) => sum + item.total, 0)
+  const currentTotal = numberValue(order.current_total_price, 0)
+  const originalTotal = numberValue(order.total_price, 0)
+  const total = currentTotal > 0 ? currentTotal : originalTotal > 0 ? originalTotal : itemsTotal
   const currency = stringValue(order.currency, order.presentment_currency, 'EUR').toUpperCase()
   const phone = normalizePhone(order.phone ?? shipping.phone ?? billing.phone ?? asRecord(order.customer).phone)
   const orderName = nullableString(order.name)
@@ -314,6 +313,7 @@ export async function upsertShopifyOrder(
     ...mapped,
     assigned_instance_name: existingAssigned,
     instance_name: existingAssigned ?? '',
+    shopify_deleted_at: null,
     updated_at: now,
   }
 
@@ -372,6 +372,65 @@ export async function upsertShopifyOrder(
   }
 
   return result.data
+}
+
+export async function archiveShopifyOrder(
+  integrationRow: ShopifyIntegrationCredentialRow,
+  payload: unknown
+) {
+  const shopifyOrderId = stringValue(asRecord(payload).id, asRecord(payload).admin_graphql_api_id)
+  if (!shopifyOrderId) throw new Error('Payload Shopify sem id de pedido')
+
+  const { data: existing, error: existingError } = await supabaseAdmin
+    .from('fulfillment_orders')
+    .select('id, lead_number, status, shopify_deleted_at')
+    .eq('shopify_integration_id', integrationRow.id)
+    .eq('shopify_order_id', shopifyOrderId)
+    .maybeSingle()
+  if (existingError) throw new Error(`Falha ao consultar pedido Shopify: ${existingError.message}`)
+  if (!existing) return null
+
+  const now = new Date().toISOString()
+  let archived = existing
+  if (!existing.shopify_deleted_at) {
+    const patch: Record<string, unknown> = {
+      shopify_deleted_at: now,
+      commercial_status: 'Desistiu',
+      updated_at: now,
+    }
+    if (!existing.lead_number && ['pending_operator', 'failed'].includes(String(existing.status))) {
+      patch.status = 'cancelled'
+      patch.send_status = 'Não enviar'
+    }
+
+    const { data, error: archiveError } = await supabaseAdmin
+      .from('fulfillment_orders')
+      .update(patch)
+      .eq('id', existing.id)
+      .select()
+      .single()
+    if (archiveError || !data) {
+      throw new Error(archiveError?.message ?? 'Falha ao arquivar pedido excluído no Shopify')
+    }
+    archived = data
+  }
+
+  const { error: jobsError } = await supabaseAdmin
+    .from('flow_jobs')
+    .update({
+      status: 'failed',
+      last_error: 'Pedido excluído no Shopify antes da execução do fluxo',
+      updated_at: now,
+    })
+    .eq('order_id', existing.id)
+    .eq('job_type', 'shopify_order_flow')
+    .eq('status', 'pending')
+  if (jobsError) throw new Error(`Pedido arquivado, mas o job pendente não foi cancelado: ${jobsError.message}`)
+
+  if (!existing.shopify_deleted_at) {
+    await recordOrderEvent(existing.id, 'shopify_order_deleted', { shopify_order_id: shopifyOrderId })
+  }
+  return archived
 }
 
 export function mapShopifyAbandonedCheckoutPayload(
@@ -508,6 +567,71 @@ async function resolveConversationForOrder(instanceName: string, phone: string, 
   return { conversationId: created.id as string, remoteJid, realSendInstanceName: undefined }
 }
 
+type OrderFlowOrder = {
+  id: string
+  customer_name: string | null
+  contact_phone: string | null
+  assigned_instance_name: string | null
+  instance_name: string | null
+  is_simulation: boolean
+  shopify_deleted_at: string | null
+}
+
+async function executeOrderFlowForOrder(
+  orderId: string,
+  flowId: string,
+  order: OrderFlowOrder,
+  options: { paceAutomatedSend?: boolean } = {}
+) {
+  const instanceName = String(order.assigned_instance_name || order.instance_name || '')
+  const phone = String(order.contact_phone || '')
+  const isSandboxOrder = instanceName === SANDBOX_INSTANCE_NAME
+  if (order.shopify_deleted_at) throw new Error('Pedido foi excluído no Shopify; fluxo bloqueado')
+  if (order.is_simulation && !isSandboxOrder) throw new Error('Pedido de simulação não envia WhatsApp real')
+  if (!instanceName) throw new Error('Pedido sem conta WhatsApp atribuída')
+  if (!phone) throw new Error('Pedido sem telefone para executar o fluxo')
+
+  const { conversationId, remoteJid, realSendInstanceName } = await resolveConversationForOrder(
+    instanceName,
+    phone,
+    String(order.customer_name || '')
+  )
+  const { error: conversationUpdateError } = await supabaseAdmin
+    .from('fulfillment_orders')
+    .update({ conversation_id: conversationId, updated_at: new Date().toISOString() })
+    .eq('id', orderId)
+  if (conversationUpdateError) throw new Error(conversationUpdateError.message)
+
+  if (!isSandboxOrder && options.paceAutomatedSend !== false) {
+    await reserveConfirmationSendSlot()
+  }
+
+  await executeFlow(flowId, {
+    instanceName,
+    remoteJid,
+    conversationId,
+    incomingMessage: '',
+    orderId,
+    isSandbox: isSandboxOrder,
+    realSendInstanceName: isSandboxOrder ? realSendInstanceName : undefined,
+  })
+  return { order, conversationId, remoteJid }
+}
+
+export async function runOrderFlow(
+  orderId: string,
+  flowId: string,
+  options: { paceAutomatedSend?: boolean } = {}
+) {
+  const { data: order, error } = await supabaseAdmin
+    .from('fulfillment_orders')
+    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at')
+    .eq('id', orderId)
+    .single()
+  if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
+  return executeOrderFlowForOrder(orderId, flowId, order as OrderFlowOrder, options)
+}
+
 // Runs the "Pedido Shopify criado" flow trigger configured for the order's
 // account. Replaces the old fixed-template confirmation message — there is
 // no static fallback: if no trigger is configured, nothing is sent, by design.
@@ -518,7 +642,7 @@ export async function runShopifyOrderTrigger(
 ) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation')
+    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at')
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
@@ -544,31 +668,10 @@ export async function runShopifyOrderTrigger(
     }
     if (!flowId) throw new Error('Nenhum gatilho "Pedido Shopify criado" configurado para esta conta')
 
-    const { conversationId, remoteJid, realSendInstanceName } = await resolveConversationForOrder(
-      instanceName, phone, String(order.customer_name || '')
-    )
-    const { error: conversationUpdateError } = await supabaseAdmin
-      .from('fulfillment_orders')
-      .update({ conversation_id: conversationId, updated_at: new Date().toISOString() })
-      .eq('id', orderId)
-    if (conversationUpdateError) throw new Error(conversationUpdateError.message)
     if (options.respectShopifyTriggerSetting && !(await getShopifyTriggersEnabled())) {
       return { order, skipped: true }
     }
-
-    if (!isSandboxOrder) {
-      await reserveConfirmationSendSlot()
-    }
-
-    await executeFlow(flowId, {
-      instanceName,
-      remoteJid,
-      conversationId,
-      incomingMessage: '',
-      orderId,
-      isSandbox: isSandboxOrder,
-      realSendInstanceName: isSandboxOrder ? realSendInstanceName : undefined,
-    })
+    await executeOrderFlowForOrder(orderId, flowId, order as OrderFlowOrder)
 
     const { data: updated, error: updateError } = await supabaseAdmin
       .from('fulfillment_orders')
@@ -595,35 +698,7 @@ export async function runShopifyOrderTrigger(
   }
 }
 
-export async function maybeAutoSubmitConfirmedOrder(orderId: string) {
-  const { data, error } = await supabaseAdmin
-    .from('fulfillment_orders')
-    .select('id, lead_number, commercial_status, send_status, status, is_simulation')
-    .eq('id', orderId)
-    .single()
-  if (error || !data) throw new Error(error?.message ?? 'Pedido não encontrado')
-  const order = data as ConfirmationOrderRow
-  if (!shouldSubmitToFenix(order)) return { submitted: false, order }
-
-  try {
-    const submittedOrder = await submitFulfillmentOrder(orderId)
-    return { submitted: true, order: submittedOrder }
-  } catch (error) {
-    if (error instanceof FulfillmentOrderSubmissionError) {
-      return {
-        submitted: false,
-        order: error.order ?? order,
-        error: error.message,
-        submissionStatus: error.submissionStatus,
-      }
-    }
-    return {
-      submitted: false,
-      order,
-      error: error instanceof Error ? error.message : 'Falha ao enviar ao FenixCOD',
-    }
-  }
-}
+export { maybeAutoSubmitConfirmedOrder }
 
 function normalizeAndValidateItems(value: unknown, allowMissingSku = false): FulfillmentOrder['items'] {
   if (!Array.isArray(value) || value.length === 0) throw new Error('Pedido precisa ter ao menos 1 item')
@@ -639,10 +714,18 @@ function normalizeAndValidateItems(value: unknown, allowMissingSku = false): Ful
     if (!Number.isFinite(quantity) || quantity < 1) throw new Error('Quantidade do item inválida')
     if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Preço unitário do item inválido')
     const normalizedQuantity = Math.max(1, Math.trunc(quantity))
+    const shopifyQuantity = Number(record.shopify_quantity)
+    const unitsPerPack = Number(record.units_per_pack)
+    const packQuantitySource = String(record.pack_quantity_source ?? '')
     return {
       product_id: String(record.product_id ?? ''),
       shopify_product_id: record.shopify_product_id ? String(record.shopify_product_id) : undefined,
       shopify_variant_id: record.shopify_variant_id ? String(record.shopify_variant_id) : undefined,
+      shopify_quantity: Number.isInteger(shopifyQuantity) && shopifyQuantity > 0 ? shopifyQuantity : undefined,
+      units_per_pack: Number.isInteger(unitsPerPack) && unitsPerPack > 0 ? unitsPerPack : undefined,
+      pack_quantity_source: ['sku', 'catalog', 'title', 'default'].includes(packQuantitySource)
+        ? packQuantitySource as PackQuantitySource
+        : undefined,
       sku,
       name,
       quantity: normalizedQuantity,
@@ -695,11 +778,29 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
   if (body.delivery_status !== undefined) {
     if (!isDeliveryStatus(body.delivery_status)) throw new Error('Status de entrega inválido')
     patch.delivery_status = body.delivery_status
+    patch.delivery_status_source = 'manual'
+    patch.delivery_status_changed_at = new Date().toISOString()
   }
   if (body.assigned_instance_name !== undefined) {
     const assigned = String(body.assigned_instance_name ?? '').trim()
     patch.assigned_instance_name = assigned || null
     patch.instance_name = assigned
+  }
+  if (body.confirmation_trigger_state !== undefined) {
+    const state = String(body.confirmation_trigger_state)
+    if (!['pending', 'sent', 'failed'].includes(state)) {
+      throw new Error('Estado do gatilho de confirmacao invalido')
+    }
+    if (state === 'sent') {
+      patch.confirmation_message_sent_at = new Date().toISOString()
+      patch.confirmation_message_error = null
+    } else if (state === 'failed') {
+      patch.confirmation_message_sent_at = null
+      patch.confirmation_message_error = 'Marcado manualmente como falha'
+    } else {
+      patch.confirmation_message_sent_at = null
+      patch.confirmation_message_error = null
+    }
   }
   if (body.items !== undefined) {
     const { data: existing, error: existingError } = await supabaseAdmin
@@ -741,11 +842,17 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
     })
   }
 
+  if (body.confirmation_trigger_state !== undefined) {
+    await recordOrderEvent(orderId, 'confirmation_trigger_state_updated', {
+      state: body.confirmation_trigger_state,
+    })
+  }
+
   // A correção de país é uma preparação para o envio, não uma autorização
   // implícita para disparar uma operação externa no FenixCOD.
-  const autoSubmit = body.country !== undefined && body.commercial_status === undefined
-    ? { submitted: false, order: data }
-    : await maybeAutoSubmitConfirmedOrder(orderId)
+  const autoSubmit = body.commercial_status !== undefined
+    ? await maybeAutoSubmitConfirmedOrder(orderId)
+    : { submitted: false, order: data }
   return { order: autoSubmit.order ?? data, autoSubmit }
 }
 

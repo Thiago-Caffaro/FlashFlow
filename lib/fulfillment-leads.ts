@@ -4,6 +4,7 @@ type UnknownRecord = Record<string, unknown>
 
 const ARRAY_KEYS = ['data', 'leads', 'items', 'results', 'result']
 const LEAD_NUMBER_KEYS = [
+  'n_lead',
   'lead_number',
   'leadNumber',
   'lead_no',
@@ -97,7 +98,7 @@ export function normalizeExternalFulfillmentLeads(response: unknown, fallbackCou
       city: firstString(lead, ['city', 'customer_city']),
       total: firstNumber(lead, ['total', 'lead_value', 'value', 'price', 'amount']),
       currency: firstString(lead, ['currency', 'currency_code']),
-      status: firstString(lead, ['status', 'confirmation', 'confirmation_status', 'state', 'delivery_status']),
+      status: firstString(lead, ['status_livrison', 'status_livraison', 'delivery_status', 'status', 'confirmation', 'confirmation_status', 'state']),
       created_at: firstString(lead, ['created_at', 'createdAt', 'date', 'date_created']),
       updated_at: firstString(lead, ['updated_at', 'updatedAt', 'date_updated']),
       raw: lead,

@@ -9,7 +9,12 @@ export async function GET(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   const instance = req.nextUrl.searchParams.get('instance')
   const country = req.nextUrl.searchParams.get('country')
-  let query = supabaseAdmin.from('fulfillment_orders').select('*').order('created_at', { ascending: false }).limit(200)
+  let query = supabaseAdmin
+    .from('fulfillment_orders')
+    .select('*')
+    .is('shopify_deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(200)
   if (instance) query = query.eq('instance_name', instance)
   if (country) query = query.eq('country', country.toUpperCase())
   const { data, error } = await query

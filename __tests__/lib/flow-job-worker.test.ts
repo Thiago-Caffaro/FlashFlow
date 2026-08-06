@@ -4,6 +4,7 @@ const mockRpc = jest.fn()
 const mockFrom = jest.fn()
 const mockExecuteFlow = jest.fn()
 const mockRunShopifyOrderTrigger = jest.fn()
+const mockRunOrderFlow = jest.fn()
 const mockGetShopifyTriggersEnabled = jest.fn()
 
 jest.mock('@/lib/supabase-admin', () => ({
@@ -16,6 +17,7 @@ jest.mock('@/lib/flow-engine', () => ({
 
 jest.mock('@/lib/shopify-confirmation-service', () => ({
   runShopifyOrderTrigger: mockRunShopifyOrderTrigger,
+  runOrderFlow: mockRunOrderFlow,
 }))
 
 jest.mock('@/lib/shopify-trigger-settings', () => ({
@@ -160,5 +162,20 @@ describe('flow job worker', () => {
       conversationId: 'conv-1',
       isSandbox: true,
     }), 'message-1')
+  })
+
+  it('executes a delivery status flow with the exact order context', async () => {
+    mockRpc.mockResolvedValue({
+      data: [job({ job_type: 'delivery_status_flow', dedupe_key: 'delivery-status:event-1:trigger-1' })],
+      error: null,
+    })
+    mockRunOrderFlow.mockResolvedValue({ order: { id: 'order-1' } })
+    const completed = updateBuilder()
+    mockFrom.mockReturnValue(completed.chain)
+
+    await expect(runFlowJobWorkerOnce('worker-1')).resolves.toBe(true)
+
+    expect(mockRunOrderFlow).toHaveBeenCalledWith('order-1', 'flow-1')
+    expect(completed.updates[0]).toMatchObject({ status: 'completed' })
   })
 })

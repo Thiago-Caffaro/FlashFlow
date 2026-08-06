@@ -6,13 +6,17 @@ import { ShopifyProduct } from '@/types'
 interface ShopifyProductsTableProps {
   products: ShopifyProduct[]
   busyId: string | null
+  bulkBusy?: boolean
+  selectedIds?: Set<string>
+  onToggleSelected?: (productId: string) => void
   onToggleKeepLocalCopy: (product: ShopifyProduct, enabled: boolean) => void
   onEdit: (product: ShopifyProduct) => void
   onDelete: (product: ShopifyProduct) => void
 }
 
 export default function ShopifyProductsTable({
-  products, busyId, onToggleKeepLocalCopy, onEdit, onDelete,
+  products, busyId, bulkBusy = false, selectedIds = new Set<string>(), onToggleSelected,
+  onToggleKeepLocalCopy, onEdit, onDelete,
 }: ShopifyProductsTableProps) {
   if (products.length === 0) {
     return <p className="py-4 text-center text-sm text-[#667781]">Nenhum produto encontrado.</p>
@@ -21,7 +25,21 @@ export default function ShopifyProductsTable({
   return (
     <div className="space-y-1.5">
       {products.map((product) => (
-        <div key={product.id} className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-lg border border-[#f0f2f5] px-3 py-2.5 sm:flex sm:flex-wrap sm:gap-2 dark:border-[#2a3942]">
+        <div key={product.id} className={`grid ${onToggleSelected ? 'grid-cols-[20px_40px_minmax(0,1fr)]' : 'grid-cols-[40px_minmax(0,1fr)]'} items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2.5 sm:flex sm:flex-wrap sm:gap-2 ${
+          selectedIds.has(product.id)
+            ? 'border-[#00a884] bg-[#e7f8f4]/50 dark:bg-[#103b35]/30'
+            : 'border-[#f0f2f5] dark:border-[#2a3942]'
+        }`}>
+          {onToggleSelected && (
+            <input
+              type="checkbox"
+              checked={selectedIds.has(product.id)}
+              onChange={() => onToggleSelected(product.id)}
+              disabled={bulkBusy}
+              aria-label={`Selecionar ${product.title}`}
+              className="h-4 w-4 accent-[#00a884]"
+            />
+          )}
           {product.image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -45,9 +63,10 @@ export default function ShopifyProductsTable({
                 {product.sku || 'sem SKU · envio ao FenixCOD bloqueado'}
               </span>
               {' · '}{product.source === 'shopify' ? 'shopify' : 'manual'}
+              {(product.units_per_pack ?? 1) > 1 ? ` · pacote ${product.units_per_pack} un.` : ''}
             </p>
           </div>
-          <div className="col-span-2 flex min-w-0 items-center gap-2 border-t border-[#f0f2f5] pt-2 sm:contents dark:border-[#2a3942]">
+          <div className={`${onToggleSelected ? 'col-span-3' : 'col-span-2'} flex min-w-0 items-center gap-2 border-t border-[#f0f2f5] pt-2 sm:contents dark:border-[#2a3942]`}>
             <span className="mr-auto shrink-0 text-sm font-semibold text-[#00a884] sm:mr-0">
               {product.currency} {Number(product.price).toFixed(2)}
             </span>
@@ -59,12 +78,13 @@ export default function ShopifyProductsTable({
                 type="checkbox"
                 checked={product.keep_local_copy}
                 onChange={(e) => onToggleKeepLocalCopy(product, e.target.checked)}
-                disabled={busyId === product.id}
+                disabled={bulkBusy || busyId === product.id}
               />
               cópia local
             </label>
             <button
               onClick={() => onEdit(product)}
+              disabled={bulkBusy}
               className="rounded-lg p-1.5 text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]"
               title="Editar"
             >
@@ -72,7 +92,7 @@ export default function ShopifyProductsTable({
             </button>
             <button
               onClick={() => onDelete(product)}
-              disabled={busyId === product.id}
+              disabled={bulkBusy || busyId === product.id}
               className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 disabled:opacity-40 dark:hover:bg-red-900/20"
               title={product.source === 'manual' ? 'Excluir' : 'Ocultar (não afeta a loja Shopify real)'}
             >

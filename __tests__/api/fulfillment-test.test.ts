@@ -46,7 +46,7 @@ describe('POST /api/fulfillment/test', () => {
   })
 
   it('allows stock checks without calling order write methods', async () => {
-    const response = await POST(request({ action: 'stock', country: 'PORTUGAL', sku: 'SKU-1' }))
+    const response = await POST(request({ action: 'stock', country: 'PORTUGAL', sku: 'SKU-1,3' }))
 
     expect(response.status).toBe(200)
     expect(safeClient.getStock).toHaveBeenCalledWith('SKU-1')

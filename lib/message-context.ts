@@ -34,6 +34,7 @@ async function loadOrder(
       .from('fulfillment_orders')
       .select('*')
       .eq('id', orderId)
+      .is('shopify_deleted_at', null)
       .maybeSingle()
     if (error) throw new Error(`Falha ao consultar pedido: ${error.message}`)
     if (!data) return null
@@ -48,6 +49,7 @@ async function loadOrder(
     .from('fulfillment_orders')
     .select('*')
     .eq('conversation_id', conversation.id)
+    .is('shopify_deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -62,6 +64,7 @@ async function loadOrder(
     .from('fulfillment_orders')
     .select('*')
     .eq('contact_phone', phone)
+    .is('shopify_deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(20)
   if (byPhone.error) {
@@ -71,6 +74,21 @@ async function loadOrder(
     row.instance_name === instanceName || row.assigned_instance_name === instanceName
   ))
   return matchingOrder as FulfillmentOrder | null
+}
+
+export async function resolveFlowOrder(input: {
+  instanceName: string
+  conversationId: string
+  orderId?: string
+}): Promise<FulfillmentOrder> {
+  const conversation = await loadConversation(input.conversationId)
+  if (conversation.instance_name !== input.instanceName) {
+    throw new Error('Conversa nao pertence a esta conta WhatsApp')
+  }
+
+  const order = await loadOrder(input.instanceName, conversation, input.orderId)
+  if (!order) throw new OrderContextPendingError()
+  return order
 }
 
 async function loadProducts(

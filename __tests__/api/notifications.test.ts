@@ -11,7 +11,7 @@ jest.mock('@/lib/server-auth', () => ({
 }))
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { GET, PATCH } = require('@/app/api/notifications/route')
+const { DELETE, GET, PATCH } = require('@/app/api/notifications/route')
 
 function request(path: string, init?: ConstructorParameters<typeof NextRequest>[1]) {
   return new NextRequest(`http://localhost${path}`, init)
@@ -20,7 +20,8 @@ function request(path: string, init?: ConstructorParameters<typeof NextRequest>[
 function getTables(notifications: Array<{ id: string; read_at: string | null }> = []) {
   const notificationLimit = jest.fn().mockResolvedValue({ data: notifications, error: null })
   const notificationOrder = jest.fn(() => ({ limit: notificationLimit }))
-  const notificationEq = jest.fn(() => ({ order: notificationOrder }))
+  const notificationActive = jest.fn(() => ({ order: notificationOrder }))
+  const notificationEq = jest.fn(() => ({ is: notificationActive }))
   const sessionEqHuman = jest.fn().mockResolvedValue({ data: [], error: null })
   const sessionEqInstance = jest.fn(() => ({ eq: sessionEqHuman }))
 
@@ -33,7 +34,7 @@ function getTables(notifications: Array<{ id: string; read_at: string | null }> 
     }
     throw new Error(`Unexpected table ${table}`)
   })
-  return { notificationEq, sessionEqInstance }
+  return { notificationActive, notificationEq, sessionEqInstance }
 }
 
 beforeEach(() => {
@@ -61,6 +62,7 @@ describe('notifications API', () => {
     expect(json).toMatchObject({ ok: true, unreadCount: 1 })
     expect(tables.sessionEqInstance).toHaveBeenCalledWith('instance_name', 'wa-a')
     expect(tables.notificationEq).toHaveBeenCalledWith('instance_name', 'wa-a')
+    expect(tables.notificationActive).toHaveBeenCalledWith('dismissed_at', null)
   })
 
   it('marks a single notification as read within its instance', async () => {
@@ -79,5 +81,35 @@ describe('notifications API', () => {
     expect(response.status).toBe(200)
     expect(instanceEq).toHaveBeenCalledWith('instance_name', 'wa-a')
     expect(finalEq).toHaveBeenCalledWith('id', 'notification-1')
+  })
+
+  it('dismisses a single notification only within its instance', async () => {
+    const finalEq = jest.fn().mockResolvedValue({ error: null })
+    const activeOnly = jest.fn(() => ({ eq: finalEq }))
+    const instanceEq = jest.fn(() => ({ is: activeOnly }))
+    const update = jest.fn(() => ({ eq: instanceEq }))
+    fromMock.mockReturnValue({ update })
+
+    const response = await DELETE(request('/api/notifications?instance=wa-a&id=notification-1', {
+      method: 'DELETE',
+    }))
+
+    expect(response.status).toBe(200)
+    expect(instanceEq).toHaveBeenCalledWith('instance_name', 'wa-a')
+    expect(activeOnly).toHaveBeenCalledWith('dismissed_at', null)
+    expect(finalEq).toHaveBeenCalledWith('id', 'notification-1')
+  })
+
+  it('dismisses every active notification for the requested instance', async () => {
+    const activeOnly = jest.fn().mockResolvedValue({ error: null })
+    const instanceEq = jest.fn(() => ({ is: activeOnly }))
+    const update = jest.fn(() => ({ eq: instanceEq }))
+    fromMock.mockReturnValue({ update })
+
+    const response = await DELETE(request('/api/notifications?instance=wa-a', { method: 'DELETE' }))
+
+    expect(response.status).toBe(200)
+    expect(instanceEq).toHaveBeenCalledWith('instance_name', 'wa-a')
+    expect(activeOnly).toHaveBeenCalledWith('dismissed_at', null)
   })
 })

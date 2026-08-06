@@ -135,7 +135,7 @@ function ChatApp() {
   return (
     <div className="relative flex h-screen w-full overflow-hidden bg-[#f0f2f5] dark:bg-[#0b141a]">
       {/* Sliding panels — right-12 reserves 48px for the tab bar */}
-      <div className="absolute inset-0 right-12 overflow-hidden">
+      <div className="absolute inset-0 right-12 overflow-clip">
 
         {/* Panel 0: Chats */}
         {panel(0,

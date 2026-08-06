@@ -8,6 +8,7 @@ const mockDecryptSecret = jest.fn(() => 'decoded-secret')
 const mockExecuteFlow = jest.fn()
 const mockRpc = jest.fn()
 const mockEnqueueShopifyOrderFlowJob = jest.fn()
+const mockGetDefaultShopifyOrderInstance = jest.fn()
 
 jest.mock('@/lib/supabase-admin', () => ({
   supabaseAdmin: { from: mockFrom, rpc: mockRpc },
@@ -19,6 +20,10 @@ jest.mock('@/lib/flow-engine', () => ({
 
 jest.mock('@/lib/flow-jobs', () => ({
   enqueueShopifyOrderFlowJob: mockEnqueueShopifyOrderFlowJob,
+}))
+
+jest.mock('@/lib/shopify-order-settings', () => ({
+  getDefaultShopifyOrderInstance: mockGetDefaultShopifyOrderInstance,
 }))
 
 jest.mock('@/lib/fulfillment-service', () => ({
@@ -144,11 +149,13 @@ function shopifyOrder(overrides: Record<string, unknown> = {}) {
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const {
   assignConfirmationAccount,
+  archiveShopifyOrder,
   mapShopifyOrderPayload,
   shouldSubmitToFenix,
   updateConfirmationOrder,
   upsertShopifyAbandonedCheckout,
   upsertShopifyOrder,
+  runShopifyOrderTrigger,
   reserveConfirmationSendSlot,
   _resetConfirmationSendPacingForTests,
 } = require('@/lib/shopify-confirmation-service')
@@ -159,6 +166,7 @@ describe('shopify-confirmation-service', () => {
     _resetConfirmationSendPacingForTests()
     mockEnqueueShopifyOrderFlowJob.mockResolvedValue({ id: 'job-1' })
     mockSubmitFulfillmentOrder.mockResolvedValue({ id: 'order-1', status: 'created', send_status: 'Enviado' })
+    mockGetDefaultShopifyOrderInstance.mockResolvedValue(null)
   })
 
   it('assigns WhatsApp accounts by country and confirmation priority', async () => {
@@ -172,6 +180,15 @@ describe('shopify-confirmation-service', () => {
     expect(accounts.eq).toHaveBeenCalledWith('confirmation_enabled', true)
     expect(accounts.order).toHaveBeenCalledWith('confirmation_priority', { ascending: true })
     expect(accounts.limit).toHaveBeenCalledWith(1)
+  })
+
+  it('uses the configured default account before the country priority', async () => {
+    mockGetDefaultShopifyOrderInstance.mockResolvedValue('wa-default')
+
+    const assigned = await assignConfirmationAccount('spain')
+
+    expect(assigned).toBe('wa-default')
+    expect(mockFrom).not.toHaveBeenCalled()
   })
 
   it('maps a Shopify order payload to the local fulfillment order shape', async () => {
@@ -198,6 +215,9 @@ describe('shopify-confirmation-service', () => {
         product_id: '2',
         shopify_product_id: '1',
         shopify_variant_id: '2',
+        shopify_quantity: 2,
+        units_per_pack: 1,
+        pack_quantity_source: 'default',
         sku: 'SKU-1',
         name: 'Produto',
         quantity: 2,
@@ -205,6 +225,81 @@ describe('shopify-confirmation-service', () => {
         total: 39.9,
       },
     ])
+  })
+
+  it('converts a Shopify pack SKU into physical FenixCOD units without changing the line total', async () => {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({
+      current_total_price: '99.90',
+      total_price: '99.90',
+      line_items: [{
+        product_id: 1,
+        variant_id: 2,
+        sku: '-DS-6228,3',
+        variant_title: '3 Frascos de Lipogan (37% OFF)',
+        name: 'LIPOGAN F4 - 3 Frascos de Lipogan (37% OFF)',
+        quantity: 1,
+        price: '99.90',
+      }],
+    }), {
+      id: 'shopify-1',
+      shopDomain: 'example.myshopify.com',
+      defaultCountry: 'SPAIN',
+    }, 'wa-1')
+
+    expect(mapped.items[0]).toMatchObject({
+      sku: '-DS-6228',
+      shopify_quantity: 1,
+      units_per_pack: 3,
+      pack_quantity_source: 'sku',
+      quantity: 3,
+      unit_price: 33.3,
+      total: 99.9,
+    })
+  })
+
+  it('multiplies two purchased packs and prefers current_quantity after an order edit', async () => {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({
+      current_total_price: '199.80',
+      total_price: '299.70',
+      line_items: [{
+        product_id: 1,
+        variant_id: 2,
+        sku: '-DS-6228,3',
+        variant_title: '3 Frascos',
+        name: 'LIPOGAN F4',
+        quantity: 3,
+        current_quantity: 2,
+        price: '99.90',
+      }],
+    }), {
+      id: 'shopify-1',
+      shopDomain: 'example.myshopify.com',
+      defaultCountry: 'SPAIN',
+    }, 'wa-1')
+
+    expect(mapped.items[0]).toMatchObject({
+      shopify_quantity: 2,
+      units_per_pack: 3,
+      quantity: 6,
+      unit_price: 33.3,
+      total: 199.8,
+    })
+  })
+
+  it('uses the original Shopify total when current_total_price is zero but items are positive', async () => {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({
+      current_total_price: '0.00',
+      total_price: '49.90',
+      line_items: [
+        { product_id: 1, variant_id: 2, sku: 'SKU-1', name: 'Produto', quantity: 1, price: '49.90' },
+      ],
+    }), {
+      id: 'shopify-1',
+      shopDomain: 'example.myshopify.com',
+      defaultCountry: 'PORTUGAL',
+    }, 'wa-1')
+
+    expect(mapped.total).toBe(49.9)
   })
 
   it('never uses Shopify product or variant ids as a missing SKU', async () => {
@@ -317,6 +412,57 @@ describe('shopify-confirmation-service', () => {
     expect(mockExecuteFlow).not.toHaveBeenCalled()
     expect(mockSendWhatsAppText).not.toHaveBeenCalled()
     expect(updated.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('archives a Shopify-deleted order and cancels its pending confirmation job', async () => {
+    const existing = queryBuilder({
+      data: { id: 'order-1', lead_number: null, status: 'pending_operator', shopify_deleted_at: null },
+      error: null,
+    })
+    const archived = queryBuilder({
+      data: { id: 'order-1', status: 'cancelled', shopify_deleted_at: '2026-08-05T12:00:00.000Z' },
+      error: null,
+    })
+    const jobs = queryBuilder()
+    setTableQueues({
+      fulfillment_orders: [existing, archived],
+      flow_jobs: [jobs],
+    })
+
+    const result = await archiveShopifyOrder(integrationRow(), { id: 12345 })
+
+    expect(archived.updates[0]).toMatchObject({
+      commercial_status: 'Desistiu',
+      send_status: 'Não enviar',
+      status: 'cancelled',
+      shopify_deleted_at: expect.any(String),
+    })
+    expect(jobs.updates[0]).toMatchObject({ status: 'failed' })
+    expect(mockRecordOrderEvent).toHaveBeenCalledWith(
+      'order-1',
+      'shopify_order_deleted',
+      { shopify_order_id: '12345' },
+    )
+    expect(result).toMatchObject({ id: 'order-1', status: 'cancelled' })
+  })
+
+  it('retries pending job cancellation for an order that is already archived', async () => {
+    const existing = queryBuilder({
+      data: {
+        id: 'order-1',
+        lead_number: null,
+        status: 'cancelled',
+        shopify_deleted_at: '2026-08-05T12:00:00.000Z',
+      },
+      error: null,
+    })
+    const jobs = queryBuilder()
+    setTableQueues({ fulfillment_orders: [existing], flow_jobs: [jobs] })
+
+    await archiveShopifyOrder(integrationRow(), { id: 12345 })
+
+    expect(jobs.updates[0]).toMatchObject({ status: 'failed' })
+    expect(mockRecordOrderEvent).not.toHaveBeenCalled()
   })
 
   it('reserves confirmation starts at least 1.5 seconds apart', async () => {
@@ -471,6 +617,79 @@ describe('shopify-confirmation-service', () => {
     })
     expect(mockSubmitFulfillmentOrder).toHaveBeenCalledWith('order-1')
     expect(result.autoSubmit).toMatchObject({ submitted: true })
+  })
+
+  it('updates the confirmation trigger state without submitting to FenixCOD', async () => {
+    const updated = queryBuilder({
+      data: {
+        id: 'order-1',
+        commercial_status: 'Confirmado',
+        confirmation_message_sent_at: '2026-08-03T10:00:00.000Z',
+        confirmation_message_error: null,
+      },
+      error: null,
+    })
+    setTableQueues({ fulfillment_orders: [updated] })
+
+    await updateConfirmationOrder('order-1', { confirmation_trigger_state: 'sent' })
+
+    expect(updated.updates[0]).toMatchObject({
+      confirmation_message_sent_at: expect.any(String),
+      confirmation_message_error: null,
+    })
+    expect(mockRecordOrderEvent).toHaveBeenCalledWith(
+      'order-1',
+      'confirmation_trigger_state_updated',
+      { state: 'sent' },
+    )
+    expect(mockSubmitFulfillmentOrder).not.toHaveBeenCalled()
+  })
+
+  it('stores the sent timestamp after a manually executed order trigger', async () => {
+    const order = queryBuilder({
+      data: {
+        id: 'order-1',
+        customer_name: 'Cliente',
+        contact_phone: '351900000000',
+        assigned_instance_name: 'wa-1',
+        instance_name: 'wa-1',
+        is_simulation: false,
+      },
+      error: null,
+    })
+    const trigger = queryBuilder({ data: { action_payload: { flow_id: 'flow-1' } }, error: null })
+    const conversation = queryBuilder({
+      data: {
+        id: 'conversation-1',
+        wa_id: '351900000000@s.whatsapp.net',
+        sandbox_source_instance: null,
+        sandbox_real_send_enabled: false,
+      },
+      error: null,
+    })
+    const conversationUpdate = queryBuilder({ data: null, error: null })
+    const sentUpdate = queryBuilder({
+      data: { id: 'order-1', confirmation_message_sent_at: '2026-08-03T10:00:00.000Z' },
+      error: null,
+    })
+    setTableQueues({
+      fulfillment_orders: [order, conversationUpdate, sentUpdate],
+      triggers: [trigger],
+      conversations: [conversation],
+    })
+    mockRpc.mockResolvedValue({ data: '2026-08-03T10:00:00.000Z', error: null })
+
+    await runShopifyOrderTrigger('order-1')
+
+    expect(mockExecuteFlow).toHaveBeenCalledWith('flow-1', expect.objectContaining({
+      instanceName: 'wa-1',
+      orderId: 'order-1',
+      conversationId: 'conversation-1',
+    }))
+    expect(sentUpdate.updates[0]).toMatchObject({
+      confirmation_message_sent_at: expect.any(String),
+      confirmation_message_error: null,
+    })
   })
 
   it('allows correcting the fulfillment country to an active integration without auto-submitting', async () => {

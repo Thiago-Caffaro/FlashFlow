@@ -11,10 +11,13 @@ import {
   SEND_STATUSES,
   ShopifyProduct,
   type CommercialStatus,
+  type ConfirmationTriggerState,
   type DeliveryStatus,
   type SendStatus,
 } from '@/types'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
+import { calculatePhysicalUnitPrice } from '@/lib/shopify-pack-quantity'
+import ConfirmationTriggerStatus, { getConfirmationTriggerState } from './confirmation-trigger-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 type OrderItems = FulfillmentOrder['items']
@@ -32,6 +35,7 @@ interface OrderEditModalProps {
     send_status?: SendStatus
     delivery_status?: DeliveryStatus
     assigned_instance_name?: string
+    confirmation_trigger_state?: ConfirmationTriggerState
   }) => Promise<void>
   onUpdateItems: (id: string, items: OrderItems) => Promise<void>
   onAction: (id: string, action: OrderAction) => Promise<void>
@@ -151,7 +155,8 @@ export default function OrderEditModal({
       if (i !== index) return item
       const quantity = patch.quantity ?? item.quantity
       const unitPrice = patch.unit_price ?? item.unit_price
-      return { ...item, quantity, unit_price: unitPrice, total: quantity * unitPrice }
+      const total = Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100
+      return { ...item, quantity, unit_price: unitPrice, total }
     }))
   }
 
@@ -168,15 +173,20 @@ export default function OrderEditModal({
   }
 
   function addProductToDraft(product: FulfillmentProduct) {
+    const unitsPerPack = Math.max(1, product.units_per_pack ?? 1)
+    const packPrice = Number(product.price)
     setDraftItems((items) => [
       ...items,
       {
         product_id: product.id,
+        shopify_quantity: 1,
+        units_per_pack: unitsPerPack,
+        pack_quantity_source: unitsPerPack > 1 ? 'catalog' : 'default',
         sku: product.sku,
         name: product.name,
-        quantity: 1,
-        unit_price: Number(product.price),
-        total: Number(product.price),
+        quantity: unitsPerPack,
+        unit_price: calculatePhysicalUnitPrice(packPrice, unitsPerPack),
+        total: packPrice,
       },
     ])
     setShowAddProduct(false)
@@ -347,6 +357,11 @@ export default function OrderEditModal({
                       <span className="block truncate text-xs text-[#667781]">
                         SKU: {item.sku || 'não cadastrado'}
                       </span>
+                      {(item.units_per_pack ?? 1) > 1 && (
+                        <span className="block truncate text-xs font-medium text-[#008f72] dark:text-[#53d6bd]">
+                          Pacote: {item.shopify_quantity ?? 1} × {item.units_per_pack} unidades
+                        </span>
+                      )}
                     </span>
                     <input
                       type="number"
@@ -459,6 +474,17 @@ export default function OrderEditModal({
                 <p className="text-sm text-[#667781]">Não submetido ainda</p>
               )}
               <p className="mt-0.5 text-xs text-[#667781]">{order.status}</p>
+              {order.external_delivery_status && (
+                <p className="mt-1 text-xs text-[#667781]">
+                  Entrega FenixCOD: <span className="font-semibold">{order.external_delivery_status}</span>
+                  {order.delivery_status_synced_at
+                    ? ` · ${new Date(order.delivery_status_synced_at).toLocaleString('pt-BR')}`
+                    : ''}
+                </p>
+              )}
+              {order.delivery_status_sync_error && (
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{order.delivery_status_sync_error}</p>
+              )}
               {order.last_error && (
                 <p className="mt-1 text-xs text-red-600">{order.last_error}</p>
               )}
@@ -467,21 +493,29 @@ export default function OrderEditModal({
               )}
             </div>
             {order.source === 'shopify' && (
-              <div>
+              <div className="space-y-2">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">Gatilho de confirmação</p>
-                {order.confirmation_message_sent_at ? (
-                  <>
-                    <p className="text-sm text-[#00a884]">✓ Disparado</p>
-                    <p className="mt-0.5 text-xs text-[#667781]">
-                      {new Date(order.confirmation_message_sent_at).toLocaleString('pt-BR')}
-                    </p>
-                  </>
-                ) : order.confirmation_message_error ? (
-                  <p className="text-sm text-red-500" title={order.confirmation_message_error ?? undefined}>
-                    {order.confirmation_message_error}
+                <ConfirmationTriggerStatus order={order} />
+                <select
+                  disabled={busy}
+                  value={getConfirmationTriggerState(order)}
+                  onChange={(event) => handleUpdate({
+                    confirmation_trigger_state: event.target.value as ConfirmationTriggerState,
+                  })}
+                  className={inputClass}
+                  aria-label="Estado do gatilho de confirmacao"
+                >
+                  <option value="pending">Pendente</option>
+                  <option value="sent">Disparado</option>
+                  <option value="failed">Falhou</option>
+                </select>
+                {order.confirmation_message_sent_at && (
+                  <p className="text-xs text-[#667781]">
+                    {new Date(order.confirmation_message_sent_at).toLocaleString('pt-BR')}
                   </p>
-                ) : (
-                  <p className="text-sm text-[#667781]">Pendente</p>
+                )}
+                {order.confirmation_message_error && (
+                  <p className="text-xs text-red-500">{order.confirmation_message_error}</p>
                 )}
               </div>
             )}

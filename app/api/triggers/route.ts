@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { TriggerCreate } from '@/types'
+import { isTriggerSource, validateDeliveryTriggerPayload } from '@/lib/trigger-input'
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -42,6 +43,15 @@ export async function POST(req: NextRequest) {
     if (!instance_name || !tipo || !action) {
       return NextResponse.json({ ok: false, error: 'Campos obrigatórios ausentes' }, { status: 400 })
     }
+    const source = body.source ?? 'message'
+    if (!isTriggerSource(source)) {
+      return NextResponse.json({ ok: false, error: 'Origem de gatilho inválida' }, { status: 400 })
+    }
+    if (source === 'delivery_status' && action !== 'flow') {
+      return NextResponse.json({ ok: false, error: 'Gatilhos de entrega precisam executar um fluxo' }, { status: 400 })
+    }
+    const payloadError = validateDeliveryTriggerPayload(body.action_payload)
+    if (payloadError) return NextResponse.json({ ok: false, error: payloadError }, { status: 400 })
 
     const { data, error } = await supabaseAdmin
       .from('triggers')
@@ -53,7 +63,7 @@ export async function POST(req: NextRequest) {
         delay_ms: body.delay_ms ?? 0,
         action,
         action_payload: body.action_payload ?? {},
-        source: body.source ?? 'message',
+        source,
       })
       .select()
       .single()

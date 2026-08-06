@@ -7,7 +7,7 @@ type Result = { data: unknown; error: { message: string } | null }
 
 function builder(result: Result) {
   const chain: Record<string, jest.Mock | unknown> = {}
-  for (const method of ['select', 'eq', 'order', 'limit', 'in']) {
+  for (const method of ['select', 'eq', 'is', 'order', 'limit', 'in']) {
     chain[method] = jest.fn(() => chain)
   }
   chain.single = jest.fn(async () => result)

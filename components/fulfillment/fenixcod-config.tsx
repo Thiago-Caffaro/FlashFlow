@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import {
   CheckCircle, ChevronDown, ChevronUp, FlaskConical,
-  KeyRound, Loader2, Pencil, RotateCcw, Save, ShieldCheck, Trash2,
+  KeyRound, Loader2, Pencil, RefreshCw, RotateCcw, Save, ShieldCheck, Trash2,
 } from 'lucide-react'
+import DeliveryStatusMappings from './delivery-status-mappings'
 
 export type Integration = {
   id: string
@@ -12,6 +13,18 @@ export type Integration = {
   environment: 'test' | 'production'
   active: boolean
   token_expires_at: string | null
+  delivery_sync_enabled: boolean
+  delivery_sync_interval_minutes: 5 | 10 | 15 | 30
+  delivery_sync_next_at: string | null
+  delivery_sync_last_started_at: string | null
+  delivery_sync_last_completed_at: string | null
+  delivery_sync_last_error: string | null
+  delivery_sync_last_stats: {
+    updated?: number
+    unchanged?: number
+    unknown?: number
+    failed?: number
+  } | null
 }
 
 type IntegrationForm = {
@@ -40,6 +53,11 @@ function statusClass(active: boolean) {
 
 async function getJson(res: Response) {
   return res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))
+}
+
+function formatSyncTime(value: string | null) {
+  if (!value) return 'Ainda não executada'
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
 }
 
 export default function FenixCODConfig({
@@ -99,6 +117,42 @@ export default function FenixCODConfig({
       !json.ok,
     )
     if (json.ok) await onRefresh()
+    setBusy(null)
+  }
+
+  async function updateDeliverySync(
+    integration: Integration,
+    patch: { delivery_sync_enabled?: boolean; delivery_sync_interval_minutes?: number }
+  ) {
+    setBusy(`sync-setting:${integration.id}`)
+    const json = await fetch('/api/fulfillment/integrations', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: integration.id,
+        country: integration.country,
+        environment: integration.environment,
+        ...patch,
+      }),
+    }).then(getJson)
+    showMsg(json.ok ? 'Sincronização de entregas atualizada.' : (json.error ?? 'Erro ao atualizar sincronização.'), !json.ok)
+    if (json.ok) await onRefresh()
+    setBusy(null)
+  }
+
+  async function runDeliverySync(integration: Integration) {
+    setBusy(`sync-run:${integration.id}`)
+    const json = await fetch(`/api/fulfillment/integrations/${encodeURIComponent(integration.id)}/delivery-sync`, {
+      method: 'POST',
+    }).then(getJson)
+    const stats = json.stats ?? {}
+    showMsg(
+      json.ok
+        ? `Entregas sincronizadas: ${stats.updated ?? 0} alterada(s), ${stats.unknown ?? 0} sem mapeamento.`
+        : (json.error ?? 'Erro ao sincronizar entregas.'),
+      !json.ok,
+    )
+    await onRefresh()
     setBusy(null)
   }
 
@@ -213,38 +267,91 @@ export default function FenixCODConfig({
         </div>
 
         {integrations.map((integration) => (
-          <div key={integration.id} className="flex flex-wrap items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-[#111b21]">
-            <CheckCircle size={16} className={integration.active ? 'text-[#00a884]' : 'text-[#aebac1]'} />
-            <div className="min-w-32 flex-1">
-              <b className="text-sm dark:text-[#e9edef]">{integration.country}</b>
-              <p className="text-xs text-[#667781]">
-                {integration.environment} · Token até {integration.token_expires_at ? new Date(integration.token_expires_at).toLocaleDateString('pt-BR') : '–'}
-              </p>
+          <div key={integration.id} className="rounded-xl bg-white px-4 py-3 shadow-sm dark:bg-[#111b21]">
+            <div className="flex flex-wrap items-center gap-3">
+              <CheckCircle size={16} className={integration.active ? 'text-[#00a884]' : 'text-[#aebac1]'} />
+              <div className="min-w-32 flex-1">
+                <b className="text-sm dark:text-[#e9edef]">{integration.country}</b>
+                <p className="text-xs text-[#667781]">
+                  {integration.environment} · Token até {integration.token_expires_at ? new Date(integration.token_expires_at).toLocaleDateString('pt-BR') : '–'}
+                </p>
+              </div>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusClass(integration.active)}`}>
+                {integration.active ? 'ativa' : 'inativa'}
+              </span>
+              <button
+                onClick={() => {
+                  setEditingIntegrationId(integration.id)
+                  setIntegrationForm({ country: integration.country, email: '', password: '', environment: integration.environment })
+                  setShowIntegrationForm(true)
+                }}
+                className={btnSecondary}
+                title="Editar"
+              >
+                <Pencil size={13} />
+              </button>
+              <button
+                onClick={() => toggleIntegration(integration)}
+                disabled={busy === integration.id}
+                className={integration.active ? 'flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-100 disabled:opacity-40 dark:bg-red-900/20 dark:hover:bg-red-900/30' : btnSecondary}
+                title={integration.active ? 'Desativar' : 'Reativar'}
+              >
+                {busy === integration.id
+                  ? <Loader2 size={13} className="animate-spin" />
+                  : integration.active ? <Trash2 size={13} /> : <RotateCcw size={13} />}
+              </button>
             </div>
-            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusClass(integration.active)}`}>
-              {integration.active ? 'ativa' : 'inativa'}
-            </span>
-            <button
-              onClick={() => {
-                setEditingIntegrationId(integration.id)
-                setIntegrationForm({ country: integration.country, email: '', password: '', environment: integration.environment })
-                setShowIntegrationForm(true)
-              }}
-              className={btnSecondary}
-              title="Editar"
-            >
-              <Pencil size={13} />
-            </button>
-            <button
-              onClick={() => toggleIntegration(integration)}
-              disabled={busy === integration.id}
-              className={integration.active ? 'flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-100 disabled:opacity-40 dark:bg-red-900/20 dark:hover:bg-red-900/30' : btnSecondary}
-              title={integration.active ? 'Desativar' : 'Reativar'}
-            >
-              {busy === integration.id
-                ? <Loader2 size={13} className="animate-spin" />
-                : integration.active ? <Trash2 size={13} /> : <RotateCcw size={13} />}
-            </button>
+
+            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[#f0f2f5] pt-3 dark:border-[#2a3942]">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={integration.delivery_sync_enabled}
+                disabled={!integration.active || busy === `sync-setting:${integration.id}`}
+                onClick={() => void updateDeliverySync(integration, {
+                  delivery_sync_enabled: !integration.delivery_sync_enabled,
+                })}
+                className="flex items-center gap-2 text-sm font-semibold text-[#54656f] disabled:opacity-50 dark:text-[#e9edef]"
+              >
+                <span className={`relative inline-block h-6 w-11 rounded-full transition-colors ${
+                  integration.delivery_sync_enabled ? 'bg-[#00a884]' : 'bg-[#8696a0]'
+                }`}>
+                  <span className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                    integration.delivery_sync_enabled ? 'translate-x-5' : 'translate-x-0'
+                  }`} />
+                </span>
+                Atualizar entregas
+              </button>
+              <select
+                value={integration.delivery_sync_interval_minutes}
+                disabled={!integration.active || busy === `sync-setting:${integration.id}`}
+                onChange={(event) => void updateDeliverySync(integration, {
+                  delivery_sync_interval_minutes: Number(event.target.value),
+                })}
+                aria-label={`Intervalo de sincronização de ${integration.country}`}
+                className="rounded-lg border border-[#d1d7db] bg-white px-2 py-2 text-sm outline-none focus:border-[#00a884] disabled:opacity-50 dark:border-[#3d4f5a] dark:bg-[#182229] dark:text-[#e9edef]"
+              >
+                {[5, 10, 15, 30].map((minutes) => <option key={minutes} value={minutes}>A cada {minutes} min</option>)}
+              </select>
+              <button
+                type="button"
+                onClick={() => void runDeliverySync(integration)}
+                disabled={!integration.active || busy === `sync-run:${integration.id}`}
+                className={btnSecondary}
+              >
+                {busy === `sync-run:${integration.id}`
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <RefreshCw size={14} />}
+                Sincronizar agora
+              </button>
+              <div className="min-w-48 flex-1 text-xs text-[#667781]">
+                <p>Última conclusão: {formatSyncTime(integration.delivery_sync_last_completed_at)}</p>
+                {integration.delivery_sync_last_stats && (
+                  <p>{integration.delivery_sync_last_stats.updated ?? 0} alterada(s) · {integration.delivery_sync_last_stats.unknown ?? 0} pendente(s)</p>
+                )}
+                {integration.delivery_sync_last_error && <p className="text-red-600">{integration.delivery_sync_last_error}</p>}
+              </div>
+            </div>
           </div>
         ))}
 
@@ -314,6 +421,7 @@ export default function FenixCODConfig({
                 )}
               </div>
             </div>
+            <DeliveryStatusMappings />
           </div>
         )}
       </div>

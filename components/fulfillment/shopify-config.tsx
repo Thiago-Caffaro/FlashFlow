@@ -277,6 +277,8 @@ export default function ShopifyConfig({
                 <label className="mb-1 block text-xs font-semibold text-[#667781]">Client ID</label>
                 <input
                   className={inputClass}
+                  name="shopify-client-id"
+                  autoComplete="off"
                   placeholder="abc123..."
                   value={creds.clientId}
                   onChange={(e) => setCreds((c) => ({ ...c, clientId: e.target.value.trim() }))}
@@ -287,6 +289,8 @@ export default function ShopifyConfig({
                 <input
                   className={inputClass}
                   type="password"
+                  name="shopify-client-secret"
+                  autoComplete="new-password"
                   placeholder="Deixe vazio para manter o atual"
                   value={creds.clientSecret}
                   onChange={(e) => setCreds((c) => ({ ...c, clientSecret: e.target.value }))}
@@ -427,10 +431,10 @@ export default function ShopifyConfig({
                   </p>
                 </div>
                 <div className="rounded-lg border border-[#f0f2f5] bg-[#f8f9fa] p-4 text-sm dark:border-[#2a3942] dark:bg-[#182229]">
-                  <p className="font-semibold dark:text-[#e9edef]">Recebimento em tempo real de pedidos novos</p>
+                  <p className="font-semibold dark:text-[#e9edef]">Recebimento em tempo real de pedidos</p>
                   <p className="mt-1 text-[#667781]">
-                    Ao conectar uma loja, o FlashFlow tenta registrar automaticamente o webhook <code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">orders/create</code> apontando para
-                    {' '}<code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">/api/webhook/shopify/orders</code>, para que pedidos apareçam na Fila assim que forem criados — sem precisar clicar em Sincronizar.
+                    Ao conectar uma loja, o FlashFlow tenta registrar automaticamente os webhooks <code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">orders/create</code> e <code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">orders/delete</code> apontando para
+                    {' '}<code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">/api/webhook/shopify/orders</code>, para que pedidos apareçam e sejam arquivados na Fila em tempo real — sem precisar clicar em Sincronizar.
                     Use o botão abaixo para verificar/registrar de novo a qualquer momento (ex: em lojas conectadas antes desse recurso existir, ou depois de trocar a URL do app).
                   </p>
                   <button onClick={ensureWebhooks} disabled={webhookBusy} className={`${btnSecondary} mt-3`}>

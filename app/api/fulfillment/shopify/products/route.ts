@@ -1,22 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminRequest } from '@/lib/server-auth'
+import { MAX_UNITS_PER_PACK, resolvePackQuantity } from '@/lib/shopify-pack-quantity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { hideShopifyProduct, setKeepLocalCopy } from '@/lib/shopify-products-service'
+import { hideShopifyProduct, setKeepLocalCopies, setKeepLocalCopy } from '@/lib/shopify-products-service'
 
 export const dynamic = 'force-dynamic'
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function parseCreatePatch(body: Record<string, unknown>) {
   const title = String(body.title ?? '').trim()
   if (!title) return { error: 'Nome obrigatório' }
   const price = Number(body.price)
   if (!Number.isFinite(price) || price < 0) return { error: 'Preço inválido' }
+  const requestedUnits = Number(body.units_per_pack ?? 1)
+  if (!Number.isInteger(requestedUnits) || requestedUnits < 1 || requestedUnits > MAX_UNITS_PER_PACK) {
+    return { error: `Unidades por pacote deve estar entre 1 e ${MAX_UNITS_PER_PACK}` }
+  }
+  const variantTitle = body.variant_title ? String(body.variant_title).trim() : null
+  const pack = resolvePackQuantity({
+    rawSku: body.sku,
+    configuredUnits: requestedUnits,
+    titles: [variantTitle, title],
+  })
 
   return {
     patch: {
       shopify_integration_id: body.shopify_integration_id ? String(body.shopify_integration_id) : null,
       title,
-      variant_title: body.variant_title ? String(body.variant_title).trim() : null,
-      sku: body.sku ? String(body.sku).trim() : null,
+      variant_title: variantTitle,
+      sku: pack.sku || null,
+      units_per_pack: pack.unitsPerPack,
       price,
       currency: String(body.currency ?? 'EUR').trim().toUpperCase() || 'EUR',
       image_url: body.image_url ? String(body.image_url).trim() : null,
@@ -53,6 +67,29 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   const body = await req.json()
+
+  if (Array.isArray(body.ids)) {
+    if (typeof body.keep_local_copy !== 'boolean') {
+      return NextResponse.json({ ok: false, error: 'keep_local_copy invalido' }, { status: 400 })
+    }
+    const ids = body.ids
+      .filter((id: unknown): id is string => typeof id === 'string')
+      .map((id: string) => id.trim())
+      .filter(Boolean)
+    if (ids.length === 0 || ids.length !== body.ids.length || ids.some((id: string) => !UUID_PATTERN.test(id))) {
+      return NextResponse.json({ ok: false, error: 'ids invalidos' }, { status: 400 })
+    }
+    try {
+      const updated = await setKeepLocalCopies(ids, body.keep_local_copy)
+      return NextResponse.json({ ok: true, updated })
+    } catch (error) {
+      return NextResponse.json({
+        ok: false,
+        error: error instanceof Error ? error.message : 'Falha ao atualizar copias locais',
+      }, { status: 500 })
+    }
+  }
+
   const id = String(body.id ?? '')
   if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
 
@@ -74,7 +111,19 @@ export async function PUT(req: NextRequest) {
     patch.title = title
   }
   if (body.variant_title !== undefined) patch.variant_title = body.variant_title ? String(body.variant_title).trim() : null
-  if (body.sku !== undefined) patch.sku = body.sku ? String(body.sku).trim() : null
+  if (body.sku !== undefined || body.units_per_pack !== undefined) {
+    const requestedUnits = Number(body.units_per_pack ?? 1)
+    if (!Number.isInteger(requestedUnits) || requestedUnits < 1 || requestedUnits > MAX_UNITS_PER_PACK) {
+      return NextResponse.json({ ok: false, error: `Unidades por pacote deve estar entre 1 e ${MAX_UNITS_PER_PACK}` }, { status: 400 })
+    }
+    const pack = resolvePackQuantity({
+      rawSku: body.sku,
+      configuredUnits: requestedUnits,
+      titles: [body.variant_title, body.title],
+    })
+    if (body.sku !== undefined) patch.sku = pack.sku || null
+    patch.units_per_pack = pack.unitsPerPack
+  }
   if (body.price !== undefined) {
     const price = Number(body.price)
     if (!Number.isFinite(price) || price < 0) return NextResponse.json({ ok: false, error: 'Preço inválido' }, { status: 400 })
