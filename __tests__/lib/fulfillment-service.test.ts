@@ -356,6 +356,73 @@ describe('fulfillment-service', () => {
     )
   })
 
+  it('expands an existing Shopify pack into physical units before sending it to FenixCOD', async () => {
+    const shopifyPackOrder = localOrder({
+      status: 'submitting',
+      source: 'shopify',
+      shopify_integration_id: 'shopify-1',
+      total: 99.9,
+      raw_shopify_payload: {
+        line_items: [{
+          product_id: 100,
+          variant_id: 200,
+          sku: '-DS-6228,3',
+          variant_title: '3 Frascos de Lipogan (37% OFF)',
+          name: 'LIPOGAN F4',
+          quantity: 1,
+          price: '99.90',
+        }],
+      },
+      items: [{
+        product_id: '200',
+        shopify_product_id: '100',
+        shopify_variant_id: '200',
+        sku: '-DS-6228,3',
+        name: 'LIPOGAN F4',
+        quantity: 1,
+        unit_price: 99.9,
+        total: 99.9,
+      }],
+    })
+    const lockedOrder = queryBuilder({ data: shopifyPackOrder, error: null })
+    const eventSubmitting = queryBuilder()
+    const catalog = queryBuilder({
+      data: [{
+        shopify_variant_id: '200',
+        sku: '-DS-6228',
+        units_per_pack: 3,
+        variant_title: '3 Frascos de Lipogan (37% OFF)',
+      }],
+      error: null,
+    })
+    const integration = queryBuilder({ data: integrationRow(), error: null })
+    const updatedOrder = queryBuilder({ data: localOrder({ status: 'created', lead_number: 'PD-1', total: 99.9 }), error: null })
+    const eventCreated = queryBuilder()
+    setTableQueues({
+      fulfillment_orders: [lockedOrder, updatedOrder],
+      fulfillment_order_events: [eventSubmitting, eventCreated],
+      shopify_products: [catalog],
+      fulfillment_integrations: [integration],
+    })
+
+    await submitFulfillmentOrder('order-1')
+
+    expect(mockCreateLead).toHaveBeenCalledWith(expect.objectContaining({
+      total: 99.9,
+      items: [{ sku: '-DS-6228', quantity: 3, total: 99.9 }],
+    }))
+    const updatedItems = (updatedOrder.updates[0] as { items: Array<Record<string, unknown>> }).items
+    expect(updatedItems[0]).toMatchObject({
+      sku: '-DS-6228',
+      shopify_quantity: 1,
+      units_per_pack: 3,
+      pack_quantity_source: 'sku',
+      quantity: 3,
+      unit_price: 33.3,
+      total: 99.9,
+    })
+  })
+
   it('marks timeout submissions as unknown without a retry loop', async () => {
     mockCreateLead.mockRejectedValue(new Error('Timeout ao acessar fulfillment'))
     const lockedOrder = queryBuilder({ data: localOrder({ status: 'submitting' }), error: null })

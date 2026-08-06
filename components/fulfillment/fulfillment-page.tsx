@@ -285,7 +285,12 @@ export default function FulfillmentPage() {
       const json = await fetch('/api/fulfillment/shopify/products', {
         method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...values, id: editingId ?? undefined, price: Number(values.price) }),
+        body: JSON.stringify({
+          ...values,
+          id: editingId ?? undefined,
+          price: Number(values.price),
+          units_per_pack: Number(values.units_per_pack),
+        }),
       }).then(getJson)
       showResult(json, editingId ? 'Produto atualizado.' : 'Produto adicionado.')
       if (!json.ok) throw new Error(json.error ?? 'Não foi possível salvar o produto.')

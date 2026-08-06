@@ -63,6 +63,7 @@ export default function ShopifyProductsTable({
                 {product.sku || 'sem SKU · envio ao FenixCOD bloqueado'}
               </span>
               {' · '}{product.source === 'shopify' ? 'shopify' : 'manual'}
+              {(product.units_per_pack ?? 1) > 1 ? ` · pacote ${product.units_per_pack} un.` : ''}
             </p>
           </div>
           <div className={`${onToggleSelected ? 'col-span-3' : 'col-span-2'} flex min-w-0 items-center gap-2 border-t border-[#f0f2f5] pt-2 sm:contents dark:border-[#2a3942]`}>

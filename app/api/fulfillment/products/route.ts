@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminRequest } from '@/lib/server-auth'
+import { MAX_UNITS_PER_PACK, resolvePackQuantity } from '@/lib/shopify-pack-quantity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -14,9 +15,26 @@ function parseProductPatch(body: Record<string, unknown>, partial = false) {
   }
 
   if (!partial || body.sku !== undefined) {
-    const sku = String(body.sku ?? '').trim()
-    if (!sku) return { error: 'SKU obrigatório' }
-    patch.sku = sku
+    const requestedUnits = body.units_per_pack === undefined ? undefined : Number(body.units_per_pack)
+    if (requestedUnits !== undefined && (
+      !Number.isInteger(requestedUnits) || requestedUnits < 1 || requestedUnits > MAX_UNITS_PER_PACK
+    )) {
+      return { error: `Unidades por pacote deve estar entre 1 e ${MAX_UNITS_PER_PACK}` }
+    }
+    const pack = resolvePackQuantity({
+      rawSku: body.sku,
+      configuredUnits: requestedUnits,
+      titles: [body.name],
+    })
+    if (!pack.sku) return { error: 'SKU obrigatório' }
+    patch.sku = pack.sku
+    patch.units_per_pack = pack.unitsPerPack
+  } else if (body.units_per_pack !== undefined) {
+    const requestedUnits = Number(body.units_per_pack)
+    if (!Number.isInteger(requestedUnits) || requestedUnits < 1 || requestedUnits > MAX_UNITS_PER_PACK) {
+      return { error: `Unidades por pacote deve estar entre 1 e ${MAX_UNITS_PER_PACK}` }
+    }
+    patch.units_per_pack = requestedUnits
   }
 
   if (!partial || body.name !== undefined) {

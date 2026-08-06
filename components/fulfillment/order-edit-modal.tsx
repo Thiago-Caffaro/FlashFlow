@@ -16,6 +16,7 @@ import {
   type SendStatus,
 } from '@/types'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
+import { calculatePhysicalUnitPrice } from '@/lib/shopify-pack-quantity'
 import ConfirmationTriggerStatus, { getConfirmationTriggerState } from './confirmation-trigger-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
@@ -154,7 +155,8 @@ export default function OrderEditModal({
       if (i !== index) return item
       const quantity = patch.quantity ?? item.quantity
       const unitPrice = patch.unit_price ?? item.unit_price
-      return { ...item, quantity, unit_price: unitPrice, total: quantity * unitPrice }
+      const total = Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100
+      return { ...item, quantity, unit_price: unitPrice, total }
     }))
   }
 
@@ -171,15 +173,20 @@ export default function OrderEditModal({
   }
 
   function addProductToDraft(product: FulfillmentProduct) {
+    const unitsPerPack = Math.max(1, product.units_per_pack ?? 1)
+    const packPrice = Number(product.price)
     setDraftItems((items) => [
       ...items,
       {
         product_id: product.id,
+        shopify_quantity: 1,
+        units_per_pack: unitsPerPack,
+        pack_quantity_source: unitsPerPack > 1 ? 'catalog' : 'default',
         sku: product.sku,
         name: product.name,
-        quantity: 1,
-        unit_price: Number(product.price),
-        total: Number(product.price),
+        quantity: unitsPerPack,
+        unit_price: calculatePhysicalUnitPrice(packPrice, unitsPerPack),
+        total: packPrice,
       },
     ])
     setShowAddProduct(false)
@@ -350,6 +357,11 @@ export default function OrderEditModal({
                       <span className="block truncate text-xs text-[#667781]">
                         SKU: {item.sku || 'não cadastrado'}
                       </span>
+                      {(item.units_per_pack ?? 1) > 1 && (
+                        <span className="block truncate text-xs font-medium text-[#008f72] dark:text-[#53d6bd]">
+                          Pacote: {item.shopify_quantity ?? 1} × {item.units_per_pack} unidades
+                        </span>
+                      )}
                     </span>
                     <input
                       type="number"

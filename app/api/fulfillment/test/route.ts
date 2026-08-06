@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { FulfillmentApiError } from '@/lib/fulfillment-client'
 import { getFulfillmentClient } from '@/lib/fulfillment-service'
+import { parsePackSku } from '@/lib/shopify-pack-quantity'
 import { isAdminRequest } from '@/lib/server-auth'
 
 type SafeTestAction = 'connection' | 'stock'
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
 
     const client = await getFulfillmentClient(country)
     const result = action === 'stock'
-      ? await client.getStock(sku)
+      ? await client.getStock(parsePackSku(sku).sku)
       : await client.getCountries()
 
     return NextResponse.json({ ok: true, action, result })

@@ -215,6 +215,9 @@ describe('shopify-confirmation-service', () => {
         product_id: '2',
         shopify_product_id: '1',
         shopify_variant_id: '2',
+        shopify_quantity: 2,
+        units_per_pack: 1,
+        pack_quantity_source: 'default',
         sku: 'SKU-1',
         name: 'Produto',
         quantity: 2,
@@ -222,6 +225,65 @@ describe('shopify-confirmation-service', () => {
         total: 39.9,
       },
     ])
+  })
+
+  it('converts a Shopify pack SKU into physical FenixCOD units without changing the line total', async () => {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({
+      current_total_price: '99.90',
+      total_price: '99.90',
+      line_items: [{
+        product_id: 1,
+        variant_id: 2,
+        sku: '-DS-6228,3',
+        variant_title: '3 Frascos de Lipogan (37% OFF)',
+        name: 'LIPOGAN F4 - 3 Frascos de Lipogan (37% OFF)',
+        quantity: 1,
+        price: '99.90',
+      }],
+    }), {
+      id: 'shopify-1',
+      shopDomain: 'example.myshopify.com',
+      defaultCountry: 'SPAIN',
+    }, 'wa-1')
+
+    expect(mapped.items[0]).toMatchObject({
+      sku: '-DS-6228',
+      shopify_quantity: 1,
+      units_per_pack: 3,
+      pack_quantity_source: 'sku',
+      quantity: 3,
+      unit_price: 33.3,
+      total: 99.9,
+    })
+  })
+
+  it('multiplies two purchased packs and prefers current_quantity after an order edit', async () => {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({
+      current_total_price: '199.80',
+      total_price: '299.70',
+      line_items: [{
+        product_id: 1,
+        variant_id: 2,
+        sku: '-DS-6228,3',
+        variant_title: '3 Frascos',
+        name: 'LIPOGAN F4',
+        quantity: 3,
+        current_quantity: 2,
+        price: '99.90',
+      }],
+    }), {
+      id: 'shopify-1',
+      shopDomain: 'example.myshopify.com',
+      defaultCountry: 'SPAIN',
+    }, 'wa-1')
+
+    expect(mapped.items[0]).toMatchObject({
+      shopify_quantity: 2,
+      units_per_pack: 3,
+      quantity: 6,
+      unit_price: 33.3,
+      total: 199.8,
+    })
   })
 
   it('uses the original Shopify total when current_total_price is zero but items are positive', async () => {

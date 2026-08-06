@@ -8,6 +8,11 @@ import {
   FulfillmentEnvironment,
 } from './fulfillment-client'
 import { normalizeExternalFulfillmentLeads } from './fulfillment-leads'
+import {
+  calculatePhysicalUnitPrice,
+  resolvePackQuantity,
+  type PackQuantitySource,
+} from './shopify-pack-quantity'
 import { supabaseAdmin } from './supabase-admin'
 import type { ExternalFulfillmentLead } from '@/types'
 
@@ -30,6 +35,7 @@ type FulfillmentProductRow = {
   id: string
   sku: string
   name: string
+  units_per_pack?: number | string
   price: number | string
   currency: string
   active: boolean
@@ -39,6 +45,9 @@ type FulfillmentOrderItem = {
   product_id: string
   shopify_product_id?: string
   shopify_variant_id?: string
+  shopify_quantity?: number
+  units_per_pack?: number
+  pack_quantity_source?: PackQuantitySource
   sku: string
   name: string
   quantity: number
@@ -178,7 +187,7 @@ export async function createFulfillmentOrder(input: OrderInput) {
 
   const { data: products, error: productError } = await supabaseAdmin
     .from('fulfillment_products')
-    .select('id, sku, name, price, currency, active')
+    .select('id, sku, name, units_per_pack, price, currency, active')
     .eq('country', country)
     .in('id', productIds)
   if (productError) throw new Error(productError.message)
@@ -190,15 +199,21 @@ export async function createFulfillmentOrder(input: OrderInput) {
   const resolvedItems = input.items.map((item) => {
     const product = productRows.find((candidate) => candidate.id === item.productId)
     if (!product) throw new Error('Um ou mais produtos não estão disponíveis para este país')
-    const quantity = Math.max(1, Math.trunc(item.quantity))
-    const unitPrice = Number(product.price)
+    const shopifyQuantity = Math.max(1, Math.trunc(item.quantity))
+    const unitsPerPack = Math.max(1, Math.trunc(Number(product.units_per_pack ?? 1)))
+    const quantity = shopifyQuantity * unitsPerPack
+    const packPrice = Number(product.price)
+    const unitPrice = calculatePhysicalUnitPrice(packPrice, unitsPerPack)
     return {
       product_id: product.id,
+      shopify_quantity: shopifyQuantity,
+      units_per_pack: unitsPerPack,
+      pack_quantity_source: unitsPerPack > 1 ? 'catalog' as const : 'default' as const,
       sku: product.sku,
       name: product.name,
       quantity,
       unit_price: unitPrice,
-      total: unitPrice * quantity,
+      total: packPrice * shopifyQuantity,
     }
   })
   const total = resolvedItems.reduce((sum, item) => sum + item.total, 0)
@@ -407,10 +422,18 @@ function normalizeOrderItems(value: unknown): FulfillmentOrderItem[] {
     if (!Number.isFinite(quantity) || !Number.isFinite(total)) {
       throw new Error('Pedido local sem itens válidos')
     }
+    const shopifyQuantity = Number(record.shopify_quantity)
+    const unitsPerPack = Number(record.units_per_pack)
+    const packQuantitySource = String(record.pack_quantity_source ?? '')
     return {
       product_id: String(record.product_id ?? ''),
       shopify_product_id: record.shopify_product_id ? String(record.shopify_product_id) : undefined,
       shopify_variant_id: record.shopify_variant_id ? String(record.shopify_variant_id) : undefined,
+      shopify_quantity: Number.isInteger(shopifyQuantity) && shopifyQuantity > 0 ? shopifyQuantity : undefined,
+      units_per_pack: Number.isInteger(unitsPerPack) && unitsPerPack > 0 ? unitsPerPack : undefined,
+      pack_quantity_source: ['sku', 'catalog', 'title', 'default'].includes(packQuantitySource)
+        ? packQuantitySource as PackQuantitySource
+        : undefined,
       sku,
       name: String(record.name ?? sku),
       quantity: Math.max(1, Math.trunc(quantity)),
@@ -445,16 +468,24 @@ async function resolveOrderItemsForSubmission(order: FulfillmentOrderRow): Promi
     ...rawLineItems.map((item) => String(item.variant_id ?? '')).filter(Boolean),
   ])]
 
-  let catalogByVariantId = new Map<string, string>()
+  let catalogByVariantId = new Map<string, {
+    sku: string
+    unitsPerPack: number
+    variantTitle: string
+  }>()
   if (variantIds.length > 0) {
     const { data, error } = await supabaseAdmin
       .from('shopify_products')
-      .select('shopify_variant_id, sku')
+      .select('shopify_variant_id, sku, units_per_pack, variant_title')
       .eq('shopify_integration_id', order.shopify_integration_id)
       .in('shopify_variant_id', variantIds)
     if (error) throw new Error(`Falha ao validar os SKUs do Shopify: ${error.message}`)
     catalogByVariantId = new Map(
-      (data ?? []).map((row) => [String(row.shopify_variant_id ?? ''), String(row.sku ?? '').trim()])
+      (data ?? []).map((row) => [String(row.shopify_variant_id ?? ''), {
+        sku: String(row.sku ?? '').trim(),
+        unitsPerPack: Number(row.units_per_pack ?? 1),
+        variantTitle: String(row.variant_title ?? ''),
+      }])
     )
   }
 
@@ -473,9 +504,18 @@ async function resolveOrderItemsForSubmission(order: FulfillmentOrderRow): Promi
     const variantId = item.shopify_variant_id || String(rawItem.variant_id ?? '')
     const rawSku = String(rawItem.sku ?? '').trim()
     const storedSku = item.sku.trim()
-    const catalogSku = catalogByVariantId.get(variantId)?.trim() ?? ''
+    const catalog = catalogByVariantId.get(variantId)
+    const catalogPack = resolvePackQuantity({ rawSku: catalog?.sku })
     const currentSku = isShopifyIdentifierSku(storedSku, productId, variantId) ? '' : storedSku
-    const sku = catalogSku || rawSku || currentSku
+    const storedPack = resolvePackQuantity({ rawSku: currentSku })
+    const pack = resolvePackQuantity({
+      rawSku: rawSku || catalog?.sku || currentSku,
+      configuredUnits: catalog?.unitsPerPack && catalog.unitsPerPack > 1
+        ? catalog.unitsPerPack
+        : undefined,
+      titles: [rawItem.variant_title, catalog?.variantTitle, rawItem.name, rawItem.title, item.name],
+    })
+    const sku = catalogPack.sku || pack.sku || storedPack.sku
 
     if (!sku) {
       throw new Error(
@@ -484,12 +524,29 @@ async function resolveOrderItemsForSubmission(order: FulfillmentOrderRow): Promi
       )
     }
 
+    const rawShopifyQuantity = Math.max(0, Math.trunc(Number(rawItem.current_quantity ?? rawItem.quantity ?? 0)))
+    const shopifyQuantity = item.shopify_quantity ?? (rawShopifyQuantity > 0 ? rawShopifyQuantity : undefined)
+    const storedUnitsPerPack = item.units_per_pack ?? 1
+    const storedBaseline = shopifyQuantity ? shopifyQuantity * storedUnitsPerPack : item.quantity
+    const manuallyOverridden = item.quantity !== storedBaseline
+    const quantity = manuallyOverridden || !shopifyQuantity
+      ? item.quantity
+      : shopifyQuantity * pack.unitsPerPack
+    const unitPrice = quantity !== item.quantity && quantity > 0
+      ? calculatePhysicalUnitPrice(item.total, quantity)
+      : item.unit_price
+
     return {
       ...item,
       product_id: variantId || item.product_id,
       shopify_product_id: productId || undefined,
       shopify_variant_id: variantId || undefined,
+      shopify_quantity: shopifyQuantity,
+      units_per_pack: pack.unitsPerPack,
+      pack_quantity_source: pack.source,
       sku,
+      quantity,
+      unit_price: unitPrice,
     }
   })
 }
