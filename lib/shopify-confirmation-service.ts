@@ -19,6 +19,11 @@ import { enqueueShopifyOrderFlowJob } from './flow-jobs'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
 import { getDefaultShopifyOrderInstance } from './shopify-order-settings'
 import {
+  calculatePhysicalUnitPrice,
+  resolvePackQuantity,
+  type PackQuantitySource,
+} from './shopify-pack-quantity'
+import {
   SHOPIFY_INTEGRATION_PUBLIC_SELECT,
   decodeShopifyAdminToken,
   decodeShopifyWebhookSecret,
@@ -92,6 +97,9 @@ type ShopifyOrderMappedFields = {
     product_id: string
     shopify_product_id?: string
     shopify_variant_id?: string
+    shopify_quantity?: number
+    units_per_pack?: number
+    pack_quantity_source?: PackQuantitySource
     sku: string
     name: string
     quantity: number
@@ -167,26 +175,35 @@ function customerName(order: Record<string, unknown>, shipping: Record<string, u
 }
 
 function mapLineItems(value: unknown): ShopifyOrderMappedFields['items'] {
-  return asArray(value).map((entry, index) => {
+  return asArray(value).flatMap((entry, index) => {
     const item = asRecord(entry)
-    const quantity = Math.max(1, Math.trunc(numberValue(item.quantity, 1)))
-    const unitPrice = Math.max(0, numberValue(item.price, 0))
-    const total = Math.max(0, numberValue(item.total_discount, 0) > unitPrice * quantity
-      ? unitPrice * quantity
-      : unitPrice * quantity - numberValue(item.total_discount, 0))
+    const shopifyQuantity = Math.max(0, Math.trunc(numberValue(item.current_quantity ?? item.quantity, 1)))
+    if (shopifyQuantity === 0) return []
+    const pack = resolvePackQuantity({
+      rawSku: item.sku,
+      titles: [item.variant_title, item.name, item.title],
+    })
+    const quantity = shopifyQuantity * pack.unitsPerPack
+    const packPrice = Math.max(0, numberValue(item.price, 0))
+    const grossTotal = packPrice * shopifyQuantity
+    const discount = numberValue(item.total_discount, 0)
+    const total = Math.max(0, discount > grossTotal ? grossTotal : grossTotal - discount)
+    const unitPrice = calculatePhysicalUnitPrice(total, quantity)
     const shopifyProductId = stringValue(item.product_id)
     const shopifyVariantId = stringValue(item.variant_id)
-    const sku = stringValue(item.sku)
-    return {
+    return [{
       product_id: stringValue(shopifyVariantId, shopifyProductId, `SHOPIFY-${index + 1}`),
       shopify_product_id: shopifyProductId || undefined,
       shopify_variant_id: shopifyVariantId || undefined,
-      sku,
-      name: stringValue(item.name, item.title, sku, `Produto Shopify ${index + 1}`),
+      shopify_quantity: shopifyQuantity,
+      units_per_pack: pack.unitsPerPack,
+      pack_quantity_source: pack.source,
+      sku: pack.sku,
+      name: stringValue(item.name, item.title, pack.sku, `Produto Shopify ${index + 1}`),
       quantity,
       unit_price: unitPrice,
       total,
-    }
+    }]
   })
 }
 
@@ -697,10 +714,18 @@ function normalizeAndValidateItems(value: unknown, allowMissingSku = false): Ful
     if (!Number.isFinite(quantity) || quantity < 1) throw new Error('Quantidade do item inválida')
     if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Preço unitário do item inválido')
     const normalizedQuantity = Math.max(1, Math.trunc(quantity))
+    const shopifyQuantity = Number(record.shopify_quantity)
+    const unitsPerPack = Number(record.units_per_pack)
+    const packQuantitySource = String(record.pack_quantity_source ?? '')
     return {
       product_id: String(record.product_id ?? ''),
       shopify_product_id: record.shopify_product_id ? String(record.shopify_product_id) : undefined,
       shopify_variant_id: record.shopify_variant_id ? String(record.shopify_variant_id) : undefined,
+      shopify_quantity: Number.isInteger(shopifyQuantity) && shopifyQuantity > 0 ? shopifyQuantity : undefined,
+      units_per_pack: Number.isInteger(unitsPerPack) && unitsPerPack > 0 ? unitsPerPack : undefined,
+      pack_quantity_source: ['sku', 'catalog', 'title', 'default'].includes(packQuantitySource)
+        ? packQuantitySource as PackQuantitySource
+        : undefined,
       sku,
       name,
       quantity: normalizedQuantity,

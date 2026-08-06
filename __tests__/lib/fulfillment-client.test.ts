@@ -49,7 +49,7 @@ describe('FulfillmentClient', () => {
       payment_type: 'COD',
       country: 'PORTUGAL',
       order_number: 'FF-1',
-      items: [{ sku: 'SKU-1', quantity: 1, total: 20 }],
+      items: [{ sku: 'SKU-1', quantity: 3, total: 20 }],
     })
 
     const [, init] = fetchMock.mock.calls[0]
@@ -57,7 +57,7 @@ describe('FulfillmentClient', () => {
     const payload = JSON.parse(init.body)
     expect(payload.zipcod).toBe('1000-001')
     expect(payload.total).toBe('20')
-    expect(payload.items[0]).toMatchObject({ quantity: '1', total: '20' })
+    expect(payload.items[0]).toMatchObject({ quantity: '3', total: '20' })
   })
 
   it('forces token refresh once after 401', async () => {

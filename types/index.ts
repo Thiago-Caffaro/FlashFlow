@@ -165,6 +165,7 @@ export interface FulfillmentProduct {
   country: string
   sku: string
   name: string
+  units_per_pack?: number
   price: number
   currency: string
   active: boolean
@@ -222,6 +223,9 @@ export interface FulfillmentOrder {
     product_id: string
     shopify_product_id?: string
     shopify_variant_id?: string
+    shopify_quantity?: number
+    units_per_pack?: number
+    pack_quantity_source?: 'sku' | 'catalog' | 'title' | 'default'
     sku: string
     name: string
     quantity: number
@@ -282,6 +286,7 @@ export interface ShopifyProduct {
   sku: string | null
   title: string
   variant_title: string | null
+  units_per_pack?: number
   price: number
   currency: string
   image_url: string | null

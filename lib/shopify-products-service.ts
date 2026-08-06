@@ -1,5 +1,6 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { resolvePackQuantity } from './shopify-pack-quantity'
 import {
   listActiveShopifyIntegrations,
   shopifyClientFromIntegration,
@@ -52,7 +53,7 @@ async function resolveIntegrationCountry(integrationId: string | null): Promise<
 export async function mirrorToFulfillmentProduct(shopifyProductId: string): Promise<void> {
   const { data: row, error } = await supabaseAdmin
     .from('shopify_products')
-    .select('id, shopify_integration_id, sku, title, variant_title, price, currency, local_product_id')
+    .select('id, shopify_integration_id, sku, title, variant_title, units_per_pack, price, currency, local_product_id')
     .eq('id', shopifyProductId)
     .single()
   if (error || !row) {
@@ -74,7 +75,16 @@ export async function mirrorToFulfillmentProduct(shopifyProductId: string): Prom
   if (mirrorId) {
     const { error: updateError } = await supabaseAdmin
       .from('fulfillment_products')
-      .update({ country, sku, name, price: row.price, currency: row.currency, active: true, updated_at: new Date().toISOString() })
+      .update({
+        country,
+        sku,
+        name,
+        units_per_pack: row.units_per_pack ?? 1,
+        price: row.price,
+        currency: row.currency,
+        active: true,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', mirrorId)
     if (updateError) throw new Error(`Falha ao atualizar cópia local: ${updateError.message}`)
 
@@ -88,7 +98,15 @@ export async function mirrorToFulfillmentProduct(shopifyProductId: string): Prom
 
   const { data: created, error: createError } = await supabaseAdmin
     .from('fulfillment_products')
-    .insert({ country, sku, name, price: row.price, currency: row.currency, active: true })
+    .insert({
+      country,
+      sku,
+      name,
+      units_per_pack: row.units_per_pack ?? 1,
+      price: row.price,
+      currency: row.currency,
+      active: true,
+    })
     .select('id')
     .single()
   if (createError || !created) {
@@ -157,6 +175,10 @@ async function upsertShopifyProductVariant(
 ): Promise<void> {
   const price = Number(variant.price ?? 0)
   const variantTitle = variant.title && variant.title !== 'Default Title' ? variant.title : null
+  const pack = resolvePackQuantity({
+    rawSku: variant.sku,
+    titles: [variantTitle, product.title],
+  })
 
   const { data, error } = await supabaseAdmin
     .from('shopify_products')
@@ -165,7 +187,8 @@ async function upsertShopifyProductVariant(
         shopify_integration_id: integrationId,
         shopify_product_id: String(product.id),
         shopify_variant_id: String(variant.id),
-        sku: variant.sku || null,
+        sku: pack.sku || null,
+        units_per_pack: pack.unitsPerPack,
         title: product.title,
         variant_title: variantTitle,
         price: Number.isFinite(price) ? price : 0,
