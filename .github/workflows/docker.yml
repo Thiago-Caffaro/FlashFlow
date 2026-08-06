@@ -1,10 +1,7 @@
 name: Build & Push Docker Image
 
 on:
-  push:
-    branches:
-      - main
-      - codex/fulfillment-integration
+  push: {}
   workflow_dispatch:
     inputs:
       tag:
@@ -29,20 +26,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set image tag and resolve credentials
+      - name: Set image tags and resolve credentials
         id: config
         run: |
           REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')
 
-          # Tag: main → latest | dev branch → test | workflow_dispatch → input (default test)
+          # Manual runs use the requested tag. Every branch push publishes
+          # test, while main also publishes the production latest tag.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.tag || 'test' }}"
+            TAGS="ghcr.io/${REPO}:${{ github.event.inputs.tag || 'test' }}"
           elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            TAG="latest"
+            TAGS=$(printf 'ghcr.io/%s:latest\nghcr.io/%s:test' "$REPO" "$REPO")
           else
-            TAG="test"
+            TAGS="ghcr.io/${REPO}:test"
           fi
-          echo "name=ghcr.io/${REPO}:${TAG}" >> $GITHUB_OUTPUT
+          {
+            echo 'tags<<EOF'
+            echo "$TAGS"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
           # Credentials: workflow_dispatch input > branch-specific secret > prod secret fallback
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.supabase_url }}" ]; then
@@ -68,7 +70,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ steps.config.outputs.name }}
+          tags: ${{ steps.config.outputs.tags }}
           build-args: |
             NEXT_PUBLIC_FEATURE_AI_SESSIONS=true
             NEXT_PUBLIC_FEATURE_GALLERY=true
