@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Loader2, MessageCircle, Plus, RefreshCw, Save, Send, Trash2, X, XCircle } from 'lucide-react'
 import {
   Account,
@@ -16,7 +16,11 @@ import {
   type SendStatus,
 } from '@/types'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
-import { calculatePhysicalUnitPrice } from '@/lib/shopify-pack-quantity'
+import {
+  calculatePhysicalUnitPrice,
+  formatOrderItemPackBreakdown,
+  normalizeOrderItemsForPackDisplay,
+} from '@/lib/shopify-pack-quantity'
 import ConfirmationTriggerStatus, { getConfirmationTriggerState } from './confirmation-trigger-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
@@ -65,7 +69,12 @@ export default function OrderEditModal({
   onClose, onUpdateStatus, onUpdateItems, onAction, onResendConfirmation,
 }: OrderEditModalProps) {
   const [busy, setBusy] = useState(false)
-  const [draftItems, setDraftItems] = useState<OrderItems>(order.items)
+  const rawOrderLineItems = order.raw_shopify_payload?.line_items
+  const normalizedOrderItems = useMemo(
+    () => normalizeOrderItemsForPackDisplay(order.items, rawOrderLineItems),
+    [order.items, rawOrderLineItems],
+  )
+  const [draftItems, setDraftItems] = useState<OrderItems>(normalizedOrderItems)
   const [itemsBusy, setItemsBusy] = useState(false)
   const [showAddProduct, setShowAddProduct] = useState(false)
   const [catalogProducts, setCatalogProducts] = useState<FulfillmentProduct[]>([])
@@ -104,8 +113,8 @@ export default function OrderEditModal({
     : []
 
   useEffect(() => {
-    setDraftItems(order.items)
-  }, [order.id, order.items])
+    setDraftItems(normalizedOrderItems)
+  }, [order.id, normalizedOrderItems])
 
   const hasLead = Boolean(order.lead_number)
   const hasCountryIntegration = availableCountries.includes(order.country)
@@ -116,7 +125,7 @@ export default function OrderEditModal({
     !order.is_simulation
   const canCancelLocal = !hasLead && order.status === 'pending_operator' && order.source === 'manual'
   const canEditItems = !hasLead
-  const itemsDirty = canEditItems && JSON.stringify(draftItems) !== JSON.stringify(order.items)
+  const itemsDirty = canEditItems && JSON.stringify(draftItems) !== JSON.stringify(normalizedOrderItems)
   const accountLabel = accounts.find((a) => a.instanceName === (order.assigned_instance_name || order.instance_name))?.label
   const isSandboxOrder = (order.assigned_instance_name || order.instance_name) === SANDBOX_INSTANCE_NAME
   // Sandbox test orders can re-run the confirmation trigger repeatedly; real
@@ -317,17 +326,22 @@ export default function OrderEditModal({
           </div>
 
           {/* Items */}
-          {!canEditItems && order.items?.length > 0 && (
+          {!canEditItems && normalizedOrderItems.length > 0 && (
             <div className="px-6 py-4">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">Itens</p>
               <div className="space-y-1">
-                {order.items.map((item, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm">
-                    <span className="dark:text-[#e9edef]">
-                      {item.name || item.sku}
-                      <span className="text-[#667781]"> × {item.quantity}</span>
+                {normalizedOrderItems.map((item, i) => (
+                  <div key={i} className="flex items-start justify-between gap-3 text-sm">
+                    <span className="min-w-0 dark:text-[#e9edef]">
+                      <span className="block">{item.name || item.sku}</span>
+                      <span className="block text-xs text-[#667781]">SKU: {item.sku || 'não cadastrado'}</span>
+                      {formatOrderItemPackBreakdown(item) && (
+                        <span className="block text-xs font-medium text-[#008f72] dark:text-[#53d6bd]">
+                          {formatOrderItemPackBreakdown(item)}
+                        </span>
+                      )}
                     </span>
-                    <span className="text-[#667781]">{order.currency} {Number(item.total).toFixed(2)}</span>
+                    <span className="shrink-0 text-[#667781]">{order.currency} {Number(item.total).toFixed(2)}</span>
                   </div>
                 ))}
               </div>
@@ -357,9 +371,9 @@ export default function OrderEditModal({
                       <span className="block truncate text-xs text-[#667781]">
                         SKU: {item.sku || 'não cadastrado'}
                       </span>
-                      {(item.units_per_pack ?? 1) > 1 && (
+                      {formatOrderItemPackBreakdown(item) && (
                         <span className="block truncate text-xs font-medium text-[#008f72] dark:text-[#53d6bd]">
-                          Pacote: {item.shopify_quantity ?? 1} × {item.units_per_pack} unidades
+                          {formatOrderItemPackBreakdown(item)}
                         </span>
                       )}
                     </span>

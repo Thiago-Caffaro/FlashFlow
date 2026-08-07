@@ -1,5 +1,7 @@
 import {
   calculatePhysicalUnitPrice,
+  formatOrderItemPackBreakdown,
+  normalizeOrderItemsForPackDisplay,
   parsePackSku,
   parsePackUnitsFromTitle,
   resolvePackQuantity,
@@ -40,5 +42,69 @@ describe('Shopify pack quantity', () => {
   it('keeps enough precision for indivisible pack totals', () => {
     expect(calculatePhysicalUnitPrice(100, 3)).toBe(33.333333)
     expect(calculatePhysicalUnitPrice(99.9, 3)).toBe(33.3)
+  })
+
+  it('reconstructs physical units for an order saved before pack metadata existed', () => {
+    const [item] = normalizeOrderItemsForPackDisplay([{
+      product_id: '200',
+      shopify_product_id: '100',
+      shopify_variant_id: '200',
+      sku: '-FD-9545,3',
+      name: 'LIPOGAN F1 - 3 Frascos de Lipogan (37% OFF)',
+      quantity: 1,
+      unit_price: 99.9,
+      total: 99.9,
+    }], [{
+      product_id: 100,
+      variant_id: 200,
+      sku: '-FD-9545,3',
+      quantity: 1,
+    }])
+
+    expect(item).toMatchObject({
+      sku: '-FD-9545',
+      shopify_quantity: 1,
+      units_per_pack: 3,
+      pack_quantity_source: 'sku',
+      quantity: 3,
+      unit_price: 33.3,
+      total: 99.9,
+    })
+    expect(formatOrderItemPackBreakdown(item)).toBe('1 pacote × 3 un. = 3 unidades físicas')
+  })
+
+  it('does not multiply an item that already stores its physical pack quantity', () => {
+    const [item] = normalizeOrderItemsForPackDisplay([{
+      product_id: '200',
+      shopify_quantity: 1,
+      units_per_pack: 3,
+      pack_quantity_source: 'sku' as const,
+      sku: '-FD-9545',
+      name: 'LIPOGAN F1',
+      quantity: 3,
+      unit_price: 33.3,
+      total: 99.9,
+    }], [{ sku: '-FD-9545,3', quantity: 1 }])
+
+    expect(item.quantity).toBe(3)
+    expect(item.total).toBe(99.9)
+  })
+
+  it('uses the product title as a display fallback for legacy orders', () => {
+    const [item] = normalizeOrderItemsForPackDisplay([{
+      product_id: '200',
+      sku: '-FD-9545',
+      name: 'LIPOGAN T4 - 6 Frascos de Lipogan (52% OFF)',
+      quantity: 1,
+      unit_price: 149.9,
+      total: 149.9,
+    }], [])
+
+    expect(item).toMatchObject({
+      shopify_quantity: 1,
+      units_per_pack: 6,
+      pack_quantity_source: 'title',
+      quantity: 6,
+    })
   })
 })

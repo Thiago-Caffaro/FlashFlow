@@ -15,6 +15,10 @@ import OrderEditModal from './order-edit-modal'
 import CustomerOrderGroup from './customer-order-group'
 import { groupOrdersByCustomer, type CustomerGroup } from '@/lib/fulfillment-grouping'
 import ConfirmationTriggerStatus from './confirmation-trigger-status'
+import {
+  formatOrderItemPackBreakdown,
+  normalizeOrderItemsForPackDisplay,
+} from '@/lib/shopify-pack-quantity'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
@@ -74,6 +78,11 @@ function QueueOrderCard({
   onSubmit: () => void
   onRunConfirmation: () => void
 }) {
+  const displayItems = useMemo(
+    () => normalizeOrderItemsForPackDisplay(order.items, order.raw_shopify_payload?.line_items),
+    [order.items, order.raw_shopify_payload?.line_items],
+  )
+
   return (
     <div
       onClick={onClick}
@@ -115,9 +124,14 @@ function QueueOrderCard({
           </div>
         </div>
       </div>
-      {order.items?.length > 0 && (
+      {displayItems.length > 0 && (
         <p className="mt-2 pl-7 text-xs text-[#667781]">
-          {order.items.map((item) => `${item.name || item.sku} × ${item.quantity}`).join(', ')}
+          {displayItems.map((item) => {
+            const packBreakdown = formatOrderItemPackBreakdown(item)
+            return packBreakdown
+              ? `${item.name || item.sku} · ${packBreakdown}`
+              : `${item.name || item.sku} × ${item.quantity}`
+          }).join(', ')}
         </p>
       )}
       <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-[#f0f2f5] pt-3 dark:border-[#2a3942]">
