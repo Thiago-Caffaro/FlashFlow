@@ -22,6 +22,9 @@ import {
   normalizeOrderItemsForPackDisplay,
 } from '@/lib/shopify-pack-quantity'
 import ConfirmationTriggerStatus, { getConfirmationTriggerState } from './confirmation-trigger-status'
+import ShopifyOrderStatusBadges from './shopify-order-status-badges'
+import ShopifyOrderTimeline from './shopify-order-timeline'
+import { isShopifyOrderCancelled } from '@/lib/shopify-order-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 type OrderItems = FulfillmentOrder['items']
@@ -117,20 +120,22 @@ export default function OrderEditModal({
   }, [order.id, normalizedOrderItems])
 
   const hasLead = Boolean(order.lead_number)
+  const shopifyCancelled = isShopifyOrderCancelled(order)
   const hasCountryIntegration = availableCountries.includes(order.country)
   const canSubmit = !hasLead &&
+    !shopifyCancelled &&
     hasCountryIntegration &&
     skuIssues.length === 0 &&
     ['pending_operator', 'failed'].includes(order.status) &&
     !order.is_simulation
   const canCancelLocal = !hasLead && order.status === 'pending_operator' && order.source === 'manual'
-  const canEditItems = !hasLead
+  const canEditItems = !hasLead && !shopifyCancelled
   const itemsDirty = canEditItems && JSON.stringify(draftItems) !== JSON.stringify(normalizedOrderItems)
   const accountLabel = accounts.find((a) => a.instanceName === (order.assigned_instance_name || order.instance_name))?.label
   const isSandboxOrder = (order.assigned_instance_name || order.instance_name) === SANDBOX_INSTANCE_NAME
   // Sandbox test orders can re-run the confirmation trigger repeatedly; real
   // simulations (not tied to the sandbox) stay blocked from ever sending.
-  const canResend = order.source === 'shopify' && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
+  const canResend = !shopifyCancelled && order.source === 'shopify' && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
 
   async function handleUpdate(patch: Parameters<typeof onUpdateStatus>[1]) {
     setBusy(true)
@@ -237,6 +242,7 @@ export default function OrderEditModal({
             <p className="text-xs text-[#667781] mt-0.5">
               {order.country} · {order.currency} {Number(order.total).toFixed(2)} · {accountLabel || order.assigned_instance_name || order.instance_name || 'sem conta'}
             </p>
+            <div className="mt-2"><ShopifyOrderStatusBadges order={order} /></div>
           </div>
           <button onClick={onClose} className="shrink-0 rounded-lg p-1.5 text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]">
             <X size={18} />
@@ -244,6 +250,11 @@ export default function OrderEditModal({
         </div>
 
         <div className="divide-y divide-[#f0f2f5] dark:divide-[#2a3942]">
+          {shopifyCancelled && (
+            <div className="border-l-4 border-red-500 bg-red-50 px-6 py-3 text-sm font-medium text-red-800 dark:bg-red-950/30 dark:text-red-300">
+              Este pedido foi cancelado no Shopify. O envio ao FenixCOD e o gatilho de confirmação estão bloqueados.
+            </div>
+          )}
           {/* Customer + Status */}
           <div className="grid gap-4 px-6 py-4 sm:grid-cols-2">
             <div>
@@ -534,6 +545,8 @@ export default function OrderEditModal({
               </div>
             )}
           </div>
+
+          {order.source === 'shopify' && <ShopifyOrderTimeline orderId={order.id} />}
 
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-2 px-6 py-4">

@@ -24,6 +24,8 @@ import CustomerOrderGroup from './customer-order-group'
 import { groupOrdersByCustomer, type CustomerGroup } from '@/lib/fulfillment-grouping'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 import ConfirmationTriggerStatus from './confirmation-trigger-status'
+import ShopifyOrderStatusBadges from './shopify-order-status-badges'
+import { isShopifyOrderCancelled } from '@/lib/shopify-order-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
@@ -113,17 +115,18 @@ function OrderRow({
   onOrderAction: (id: string, action: OrderAction) => Promise<void>
 }) {
   const hasLead = Boolean(order.lead_number)
-  const canSubmit = !hasLead && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
+  const shopifyCancelled = isShopifyOrderCancelled(order)
+  const canSubmit = !shopifyCancelled && !hasLead && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
   const isBusy = busyId === order.id
   const accountLabel = accounts.find((a) => a.instanceName === (order.assigned_instance_name || order.instance_name))?.label
   const isSandboxOrder = (order.assigned_instance_name || order.instance_name) === SANDBOX_INSTANCE_NAME
   // Sandbox test orders can re-run the confirmation trigger repeatedly; real
   // simulations (not tied to the sandbox) stay blocked from ever sending.
-  const canResend = order.source === 'shopify' && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
+  const canResend = !shopifyCancelled && order.source === 'shopify' && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
 
   return (
     <div
-      className="grid cursor-pointer items-center gap-3 border-b border-[#f0f2f5] px-5 py-4 text-sm last:border-0 hover:bg-[#f8f9fa] dark:border-[#2a3942] dark:hover:bg-[#1a2730] lg:grid-cols-[1.5fr_1fr_1.1fr_0.65fr_0.65fr_auto]"
+      className={`grid cursor-pointer items-center gap-3 border-b px-5 py-4 text-sm last:border-0 lg:grid-cols-[1.5fr_1fr_1.1fr_0.65fr_0.65fr_auto] ${shopifyCancelled ? 'border-red-100 bg-red-50/60 hover:bg-red-50 dark:border-red-950 dark:bg-red-950/20 dark:hover:bg-red-950/30' : 'border-[#f0f2f5] hover:bg-[#f8f9fa] dark:border-[#2a3942] dark:hover:bg-[#1a2730]'}`}
       onClick={onOpen}
     >
       <div>
@@ -135,6 +138,7 @@ function OrderRow({
         <span className="dark:text-[#e9edef]">{order.shopify_order_name || order.order_number}</span>
         <p className="text-xs text-[#667781]">{order.country} · {order.currency} {Number(order.total).toFixed(2)}</p>
         {accountLabel && <p className="text-xs text-[#667781]">{accountLabel}</p>}
+        <div className="mt-1.5"><ShopifyOrderStatusBadges order={order} compact /></div>
         {order.is_simulation && <span className="text-xs text-purple-600 dark:text-purple-400">simulação</span>}
       </div>
       <div>
@@ -208,6 +212,7 @@ function OrderGroupHeader({ group, expanded }: { group: CustomerGroup; expanded:
       <div className="text-xs text-[#667781]">Pedido mais recente:</div>
       <div>
         <CommercialBadge status={mostRecent.commercial_status} />
+        <div className="mt-1.5"><ShopifyOrderStatusBadges order={mostRecent} compact /></div>
       </div>
       <div>
         <SendBadge status={mostRecent.send_status} />

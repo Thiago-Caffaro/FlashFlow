@@ -81,6 +81,7 @@ type FulfillmentOrderRow = {
   source?: 'manual' | 'shopify'
   is_simulation?: boolean | null
   shopify_deleted_at?: string | null
+  shopify_cancelled_at?: string | null
 }
 
 export interface OrderInput {
@@ -261,6 +262,7 @@ export async function submitFulfillmentOrder(orderId: string) {
     .is('lead_number', null)
     .eq('is_simulation', false)
     .is('shopify_deleted_at', null)
+    .is('shopify_cancelled_at', null)
     .in('status', ['pending_operator', 'failed'])
     .select('*')
     .single()
@@ -268,9 +270,13 @@ export async function submitFulfillmentOrder(orderId: string) {
   if (orderError || !order) {
     const { data: current } = await supabaseAdmin
       .from('fulfillment_orders')
-      .select('id, lead_number, status, is_simulation, shopify_deleted_at')
+      .select('id, lead_number, status, is_simulation, shopify_deleted_at, shopify_cancelled_at')
       .eq('id', orderId)
       .maybeSingle()
+
+    if ((current as { shopify_cancelled_at?: string | null } | null)?.shopify_cancelled_at) {
+      throw new Error('Pedido foi cancelado no Shopify e não pode ser enviado ao FenixCOD')
+    }
 
     if (!current) throw new Error('Pedido não encontrado')
     if (current.lead_number) throw new Error('Pedido já foi enviado para o FenixCOD')

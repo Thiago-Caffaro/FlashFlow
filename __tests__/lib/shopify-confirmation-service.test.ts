@@ -192,7 +192,7 @@ describe('shopify-confirmation-service', () => {
   })
 
   it('maps a Shopify order payload to the local fulfillment order shape', async () => {
-    const mapped = await mapShopifyOrderPayload(shopifyOrder(), {
+    const mapped = await mapShopifyOrderPayload(shopifyOrder({ financial_status: 'pending' }), {
       id: 'shopify-1',
       shopDomain: 'example.myshopify.com',
       defaultCountry: 'PORTUGAL',
@@ -202,6 +202,8 @@ describe('shopify-confirmation-service', () => {
       source: 'shopify',
       shopify_order_id: '12345',
       shopify_order_name: '#1001',
+      shopify_financial_status: 'pending',
+      shopify_cancelled_at: null,
       instance_name: 'wa-1',
       assigned_instance_name: 'wa-1',
       country: 'PORTUGAL',

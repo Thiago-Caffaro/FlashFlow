@@ -135,6 +135,13 @@ export class ShopifyClient {
     })
   }
 
+  getOrderEvents(orderId: string, options: { limit?: number } = {}) {
+    if (!/^\d+$/.test(orderId)) throw new Error('Shopify order ID invalido')
+    return this.request<{ events?: unknown[] }>(`/orders/${orderId}/events.json`, {
+      limit: Math.min(250, Math.max(1, options.limit ?? 100)),
+    })
+  }
+
   getProducts(options: ShopifyRequestOptions = {}) {
     return this.request<{ products?: unknown[] }>('/products.json', {
       limit: options.limit ?? 50,

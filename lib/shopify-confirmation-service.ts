@@ -80,6 +80,11 @@ type ShopifyOrderMappedFields = {
   shopify_order_id: string
   shopify_order_name: string | null
   shopify_order_number: string | null
+  shopify_financial_status: string | null
+  shopify_fulfillment_status: string | null
+  shopify_cancelled_at: string | null
+  shopify_cancel_reason: string | null
+  shopify_closed_at: string | null
   raw_shopify_payload: Record<string, unknown>
   order_number: string
   instance_name: string
@@ -151,6 +156,13 @@ function stringValue(...values: unknown[]): string {
 function nullableString(...values: unknown[]): string | null {
   const value = stringValue(...values)
   return value || null
+}
+
+function nullableDateString(value: unknown): string | null {
+  const raw = nullableString(value)
+  if (!raw) return null
+  const timestamp = new Date(raw)
+  return Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : null
 }
 
 function numberValue(value: unknown, fallback = 0): number {
@@ -257,6 +269,11 @@ export async function mapShopifyOrderPayload(
     shopify_order_id: shopifyOrderId,
     shopify_order_name: orderName,
     shopify_order_number: nullableString(order.order_number, order.number),
+    shopify_financial_status: nullableString(order.financial_status)?.toLowerCase() ?? null,
+    shopify_fulfillment_status: nullableString(order.fulfillment_status)?.toLowerCase() ?? null,
+    shopify_cancelled_at: nullableDateString(order.cancelled_at),
+    shopify_cancel_reason: nullableString(order.cancel_reason)?.toLowerCase() ?? null,
+    shopify_closed_at: nullableDateString(order.closed_at),
     raw_shopify_payload: order,
     order_number: `shopify-${integration.shopDomain}-${shopifyOrderId}`.slice(0, 240),
     instance_name: assignedInstanceName ?? '',
@@ -298,7 +315,7 @@ export async function upsertShopifyOrder(
 
   const { data: existing, error: existingError } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, assigned_instance_name, commercial_status, send_status, delivery_status, confirmation_message_sent_at')
+    .select('id, assigned_instance_name, commercial_status, send_status, delivery_status, confirmation_message_sent_at, shopify_financial_status, shopify_cancelled_at')
     .eq('shopify_integration_id', integration.id)
     .eq('shopify_order_id', mapped.shopify_order_id)
     .maybeSingle()
@@ -340,6 +357,17 @@ export async function upsertShopifyOrder(
 
   if (result.error || !result.data) {
     throw new Error(result.error?.message ?? 'Falha ao gravar pedido Shopify')
+  }
+
+  if (!isNewOrder && (
+    existing.shopify_financial_status !== mapped.shopify_financial_status ||
+    existing.shopify_cancelled_at !== mapped.shopify_cancelled_at
+  )) {
+    await recordOrderEvent(result.data.id, 'shopify_status_updated', {
+      financial_status: mapped.shopify_financial_status,
+      cancelled_at: mapped.shopify_cancelled_at,
+      cancel_reason: mapped.shopify_cancel_reason,
+    })
   }
 
   if (isNewOrder && options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
@@ -575,6 +603,7 @@ type OrderFlowOrder = {
   instance_name: string | null
   is_simulation: boolean
   shopify_deleted_at: string | null
+  shopify_cancelled_at: string | null
 }
 
 async function executeOrderFlowForOrder(
@@ -586,6 +615,7 @@ async function executeOrderFlowForOrder(
   const instanceName = String(order.assigned_instance_name || order.instance_name || '')
   const phone = String(order.contact_phone || '')
   const isSandboxOrder = instanceName === SANDBOX_INSTANCE_NAME
+  if (order.shopify_cancelled_at) throw new Error('Pedido foi cancelado no Shopify; fluxo bloqueado')
   if (order.shopify_deleted_at) throw new Error('Pedido foi excluído no Shopify; fluxo bloqueado')
   if (order.is_simulation && !isSandboxOrder) throw new Error('Pedido de simulação não envia WhatsApp real')
   if (!instanceName) throw new Error('Pedido sem conta WhatsApp atribuída')
@@ -625,7 +655,7 @@ export async function runOrderFlow(
 ) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at')
+    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at, shopify_cancelled_at')
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
@@ -642,7 +672,7 @@ export async function runShopifyOrderTrigger(
 ) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at')
+    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at, shopify_cancelled_at')
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')

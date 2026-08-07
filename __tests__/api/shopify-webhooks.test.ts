@@ -121,6 +121,30 @@ describe('Shopify webhooks', () => {
     )
   })
 
+  it.each(['orders/updated', 'orders/paid', 'orders/cancelled'])(
+    'updates local lifecycle state for %s without firing a confirmation',
+    async (topic) => {
+      const rawBody = JSON.stringify({ id: 124, financial_status: 'paid' })
+
+      const response = await orderWebhook.POST(request(rawBody, hmac(rawBody), topic))
+
+      expect(response.status).toBe(200)
+      expect(mockUpsertShopifyOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'shopify-1' }),
+        { id: 124, financial_status: 'paid' },
+        { sendConfirmation: false },
+      )
+    },
+  )
+
+  it('rejects unsupported order topics', async () => {
+    const rawBody = JSON.stringify({ id: 124 })
+    const response = await orderWebhook.POST(request(rawBody, hmac(rawBody), 'orders/fulfilled'))
+
+    expect(response.status).toBe(400)
+    expect(mockUpsertShopifyOrder).not.toHaveBeenCalled()
+  })
+
   it('archives orders/delete webhooks without returning order data', async () => {
     const rawBody = JSON.stringify({ id: 123 })
     const response = await orderWebhook.POST(request(rawBody, hmac(rawBody), 'orders/delete'))
