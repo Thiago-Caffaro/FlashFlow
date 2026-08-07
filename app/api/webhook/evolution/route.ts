@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { executeFlow, checkActiveFlowRun, checkActiveSession, handleActiveSession } from '@/lib/flow-engine'
+import {
+  executeFlow,
+  checkActiveFlowRun,
+  checkActiveSandboxFlowRunForRealInstance,
+  checkActiveSession,
+  handleActiveSession,
+} from '@/lib/flow-engine'
+import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 import { cacheQr, clearQr } from '@/lib/qr-cache'
 import { logWebhookEvent } from '@/lib/webhook-log'
 import {
@@ -460,8 +467,13 @@ export async function POST(req: NextRequest) {
     }
 
     let preloadedFlowRun: Awaited<ReturnType<typeof checkActiveFlowRun>> | null = null
+    let preloadedFlowRunIsSandboxFallback = false
     if (interactiveReply && data.key.fromMe !== true) {
       preloadedFlowRun = await checkActiveFlowRun(instanceName, effectiveRemoteJid)
+      if (!preloadedFlowRun) {
+        preloadedFlowRun = await checkActiveSandboxFlowRunForRealInstance(instanceName, effectiveRemoteJid)
+        preloadedFlowRunIsSandboxFallback = Boolean(preloadedFlowRun)
+      }
       const variables = preloadedFlowRun?.variables && typeof preloadedFlowRun.variables === 'object'
         ? preloadedFlowRun.variables as Record<string, unknown>
         : {}
@@ -528,7 +540,18 @@ export async function POST(req: NextRequest) {
     if (data.key.fromMe !== true && type === 'text') {
       void (async () => {
         try {
-          const flowRun = preloadedFlowRun ?? await checkActiveFlowRun(instanceName, effectiveRemoteJid)
+          let flowRun = preloadedFlowRun
+          let flowRunIsSandboxFallback = preloadedFlowRunIsSandboxFallback
+          if (!flowRun) {
+            flowRun = await checkActiveFlowRun(instanceName, effectiveRemoteJid)
+          }
+          if (!flowRun) {
+            // Fluxo pausado no Sandbox mas entregue de verdade por esta
+            // instância (envio real do Sandbox) — a resposta chegou aqui,
+            // não em "__sandbox__". Ver checkActiveSandboxFlowRunForRealInstance.
+            flowRun = await checkActiveSandboxFlowRunForRealInstance(instanceName, effectiveRemoteJid)
+            flowRunIsSandboxFallback = Boolean(flowRun)
+          }
           if (flowRun) {
             const variables = flowRun.variables && typeof flowRun.variables === 'object'
               ? flowRun.variables as Record<string, unknown>
@@ -538,12 +561,14 @@ export async function POST(req: NextRequest) {
               : []
             const normalizedContent = normalizeReplyInput(content, replyButtons)
             await executeFlow(flowRun.flow_id, {
-              instanceName,
+              instanceName: flowRunIsSandboxFallback ? SANDBOX_INSTANCE_NAME : instanceName,
               remoteJid: effectiveRemoteJid,
-              conversationId: conversation.id,
+              conversationId: flowRunIsSandboxFallback ? flowRun.conversation_id : conversation.id,
               incomingMessage: normalizedContent,
               orderId: typeof variables.orderId === 'string' ? variables.orderId : undefined,
               flowRunId: typeof flowRun.id === 'string' ? flowRun.id : undefined,
+              isSandbox: flowRunIsSandboxFallback ? true : undefined,
+              realSendInstanceName: flowRunIsSandboxFallback ? instanceName : undefined,
             }, flowRun.node_id)
           } else {
             const session = await checkActiveSession(instanceName, effectiveRemoteJid)
