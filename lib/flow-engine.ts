@@ -1272,6 +1272,38 @@ export async function checkActiveFlowRun(instanceName: string, remoteJid: string
   return data
 }
 
+/**
+ * Um flow pausado no Sandbox mas entregue de verdade pela instância real
+ * (via `realSendInstanceName`, ver resolveRealSendTarget) grava seu
+ * flow_runs com instance_name="__sandbox__" — a resposta do cliente,
+ * porém, chega pelo webhook real da instância que de fato mandou a
+ * mensagem, então checkActiveFlowRun(instanceName real, remoteJid) nunca
+ * encontra essa linha. Esta função cobre esse caso: procura um flow_run
+ * de Sandbox para esse remoteJid cuja conversa tenha envio real habilitado
+ * apontando justamente para `instanceName`.
+ */
+export async function checkActiveSandboxFlowRunForRealInstance(instanceName: string, remoteJid: string) {
+  if (instanceName === SANDBOX_INSTANCE_NAME) return null
+  const { data: flowRun } = await supabase
+    .from('flow_runs')
+    .select('*')
+    .eq('instance_name', SANDBOX_INSTANCE_NAME)
+    .eq('remote_jid', remoteJid)
+    .in('status', ['collecting', 'waiting_confirmation'])
+    .maybeSingle()
+  if (!flowRun) return null
+
+  const { data: conversation } = await supabase
+    .from('conversations')
+    .select('id, sandbox_real_send_enabled, sandbox_source_instance')
+    .eq('id', flowRun.conversation_id)
+    .maybeSingle()
+  if (!conversation?.sandbox_real_send_enabled || conversation.sandbox_source_instance !== instanceName) {
+    return null
+  }
+  return flowRun
+}
+
 export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId?: string | null) {
   log(`executeFlow start`, { flowId, from: ctx.remoteJid, message: ctx.incomingMessage.slice(0, 80) })
 
