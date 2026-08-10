@@ -13,6 +13,7 @@ import {
   resolvePackQuantity,
   type PackQuantitySource,
 } from './shopify-pack-quantity'
+import { getShopifyOrderStatus, isShopifyPaymentSettled } from './shopify-order-status'
 import { supabaseAdmin } from './supabase-admin'
 import type { ExternalFulfillmentLead } from '@/types'
 
@@ -82,6 +83,7 @@ type FulfillmentOrderRow = {
   is_simulation?: boolean | null
   shopify_deleted_at?: string | null
   shopify_cancelled_at?: string | null
+  shopify_financial_status?: string | null
 }
 
 export interface OrderInput {
@@ -296,7 +298,16 @@ export async function submitFulfillmentOrder(orderId: string) {
     const resolvedItems = await resolveOrderItemsForSubmission(orderRow)
     const resolvedTotal = orderItemsTotal(resolvedItems)
     const client = await getFulfillmentClient(orderRow.country)
-    const payload = buildLeadPayload(orderRow, resolvedItems, resolvedTotal)
+    // Pedido já pago no Shopify: o cliente não deve pagar de novo na
+    // entrega, então o valor enviado ao FenixCOD (o que é cobrado do
+    // destinatário) vai zerado. O valor real continua gravado em
+    // fulfillment_orders/exibido na interface — só o payload externo muda.
+    const alreadyPaidExternally = isShopifyPaymentSettled(getShopifyOrderStatus(orderRow).financialStatus)
+    const payload = buildLeadPayload(
+      orderRow,
+      alreadyPaidExternally ? resolvedItems.map((item) => ({ ...item, total: 0 })) : resolvedItems,
+      alreadyPaidExternally ? 0 : resolvedTotal
+    )
     const external = await client.createLead(payload)
     const leadNumber = findLeadNumber(external)
     const { data: updated } = await supabaseAdmin

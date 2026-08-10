@@ -25,7 +25,7 @@ import { groupOrdersByCustomer, type CustomerGroup } from '@/lib/fulfillment-gro
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 import ConfirmationTriggerStatus from './confirmation-trigger-status'
 import ShopifyOrderStatusBadges from './shopify-order-status-badges'
-import { isShopifyOrderCancelled } from '@/lib/shopify-order-status'
+import { getShopifyOrderStatus, isShopifyOrderCancelled, isShopifyPaymentSettled } from '@/lib/shopify-order-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
@@ -116,6 +116,7 @@ function OrderRow({
 }) {
   const hasLead = Boolean(order.lead_number)
   const shopifyCancelled = isShopifyOrderCancelled(order)
+  const alreadyPaidExternally = isShopifyPaymentSettled(getShopifyOrderStatus(order).financialStatus)
   const canSubmit = !shopifyCancelled && !hasLead && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
   const isBusy = busyId === order.id
   const accountLabel = accounts.find((a) => a.instanceName === (order.assigned_instance_name || order.instance_name))?.label
@@ -136,7 +137,17 @@ function OrderRow({
       </div>
       <div>
         <span className="dark:text-[#e9edef]">{order.shopify_order_name || order.order_number}</span>
-        <p className="text-xs text-[#667781]">{order.country} · {order.currency} {Number(order.total).toFixed(2)}</p>
+        <p className="text-xs text-[#667781]">
+          {order.country} ·{' '}
+          {alreadyPaidExternally ? (
+            <>
+              <span className="line-through">{order.currency} {Number(order.total).toFixed(2)}</span>{' '}
+              <span className="font-semibold text-emerald-600 dark:text-emerald-400">{order.currency} 0,00</span>
+            </>
+          ) : (
+            <>{order.currency} {Number(order.total).toFixed(2)}</>
+          )}
+        </p>
         {accountLabel && <p className="text-xs text-[#667781]">{accountLabel}</p>}
         <div className="mt-1.5"><ShopifyOrderStatusBadges order={order} compact /></div>
         {order.is_simulation && <span className="text-xs text-purple-600 dark:text-purple-400">simulação</span>}

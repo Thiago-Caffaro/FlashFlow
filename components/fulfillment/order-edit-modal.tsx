@@ -24,7 +24,7 @@ import {
 import ConfirmationTriggerStatus, { getConfirmationTriggerState } from './confirmation-trigger-status'
 import ShopifyOrderStatusBadges from './shopify-order-status-badges'
 import ShopifyOrderTimeline from './shopify-order-timeline'
-import { isShopifyOrderCancelled } from '@/lib/shopify-order-status'
+import { getShopifyOrderStatus, isShopifyOrderCancelled, isShopifyPaymentSettled } from '@/lib/shopify-order-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 type OrderItems = FulfillmentOrder['items']
@@ -121,6 +121,7 @@ export default function OrderEditModal({
 
   const hasLead = Boolean(order.lead_number)
   const shopifyCancelled = isShopifyOrderCancelled(order)
+  const alreadyPaidExternally = isShopifyPaymentSettled(getShopifyOrderStatus(order).financialStatus)
   const hasCountryIntegration = availableCountries.includes(order.country)
   const canSubmit = !hasLead &&
     !shopifyCancelled &&
@@ -240,7 +241,16 @@ export default function OrderEditModal({
               )}
             </div>
             <p className="text-xs text-[#667781] mt-0.5">
-              {order.country} · {order.currency} {Number(order.total).toFixed(2)} · {accountLabel || order.assigned_instance_name || order.instance_name || 'sem conta'}
+              {order.country} ·{' '}
+              {alreadyPaidExternally ? (
+                <>
+                  <span className="line-through">{order.currency} {Number(order.total).toFixed(2)}</span>{' '}
+                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">{order.currency} 0,00</span>
+                </>
+              ) : (
+                <>{order.currency} {Number(order.total).toFixed(2)}</>
+              )}
+              {' '}· {accountLabel || order.assigned_instance_name || order.instance_name || 'sem conta'}
             </p>
             <div className="mt-2"><ShopifyOrderStatusBadges order={order} /></div>
           </div>
@@ -253,6 +263,11 @@ export default function OrderEditModal({
           {shopifyCancelled && (
             <div className="border-l-4 border-red-500 bg-red-50 px-6 py-3 text-sm font-medium text-red-800 dark:bg-red-950/30 dark:text-red-300">
               Este pedido foi cancelado no Shopify. O envio ao FenixCOD e o gatilho de confirmação estão bloqueados.
+            </div>
+          )}
+          {!shopifyCancelled && alreadyPaidExternally && (
+            <div className="border-l-4 border-emerald-500 bg-emerald-50 px-6 py-3 text-sm font-medium text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+              Este pedido já foi pago pelo Shopify. O valor enviado ao FenixCOD é {order.currency} 0,00 — nada é cobrado do cliente na entrega.
             </div>
           )}
           {/* Customer + Status */}

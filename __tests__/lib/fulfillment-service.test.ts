@@ -239,6 +239,51 @@ describe('fulfillment-service', () => {
     expect(updatedOrder.updates[0]).toMatchObject({ total: 49.9 })
   })
 
+  it('sends a zeroed total to FenixCOD for an order already paid on Shopify, but keeps the real total stored', async () => {
+    const paidOrder = localOrder({ status: 'submitting', shopify_financial_status: 'paid' })
+    const lockedOrder = queryBuilder({ data: paidOrder, error: null })
+    const eventSubmitting = queryBuilder()
+    const integration = queryBuilder({ data: integrationRow(), error: null })
+    const updatedOrder = queryBuilder({ data: localOrder({ status: 'created', lead_number: 'PD-1' }), error: null })
+    const eventCreated = queryBuilder()
+    setTableQueues({
+      fulfillment_orders: [lockedOrder, updatedOrder],
+      fulfillment_order_events: [eventSubmitting, eventCreated],
+      fulfillment_integrations: [integration],
+    })
+
+    await submitFulfillmentOrder('order-1')
+
+    expect(mockCreateLead).toHaveBeenCalledWith(expect.objectContaining({
+      total: 0,
+      items: [{ sku: 'SKU-1', quantity: 1, total: 0 }],
+    }))
+    // O valor real (20) continua sendo o que fica gravado/exibido — só o
+    // payload enviado ao FenixCOD é zerado, não o registro do pedido.
+    expect(updatedOrder.updates[0]).toMatchObject({ total: 20 })
+  })
+
+  it('sends the real total to FenixCOD when the Shopify order is not yet paid', async () => {
+    const pendingOrder = localOrder({ status: 'submitting', shopify_financial_status: 'pending' })
+    const lockedOrder = queryBuilder({ data: pendingOrder, error: null })
+    const eventSubmitting = queryBuilder()
+    const integration = queryBuilder({ data: integrationRow(), error: null })
+    const updatedOrder = queryBuilder({ data: localOrder({ status: 'created', lead_number: 'PD-1' }), error: null })
+    const eventCreated = queryBuilder()
+    setTableQueues({
+      fulfillment_orders: [lockedOrder, updatedOrder],
+      fulfillment_order_events: [eventSubmitting, eventCreated],
+      fulfillment_integrations: [integration],
+    })
+
+    await submitFulfillmentOrder('order-1')
+
+    expect(mockCreateLead).toHaveBeenCalledWith(expect.objectContaining({
+      total: 20,
+      items: [{ sku: 'SKU-1', quantity: 1, total: 20 }],
+    }))
+  })
+
   it('resolves the latest Shopify catalog SKU before submitting an existing order', async () => {
     const shopifyOrder = localOrder({
       status: 'submitting',
