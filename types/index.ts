@@ -244,6 +244,11 @@ export interface FulfillmentOrder {
   shopify_order_name: string | null
   shopify_order_number: string | null
   shopify_deleted_at?: string | null
+  shopify_financial_status?: string | null
+  shopify_fulfillment_status?: string | null
+  shopify_cancelled_at?: string | null
+  shopify_cancel_reason?: string | null
+  shopify_closed_at?: string | null
   raw_shopify_payload: Record<string, unknown> | null
   commercial_status: CommercialStatus
   send_status: SendStatus

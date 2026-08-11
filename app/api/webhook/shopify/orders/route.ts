@@ -43,16 +43,17 @@ export async function POST(req: NextRequest) {
       console.log(`[shopify-webhook] orders/delete accepted archived=${Boolean(archived)}`)
       return NextResponse.json({ ok: true, archived: Boolean(archived) })
     }
-    if (topic !== 'orders/create') {
+    const supportedUpsertTopics = new Set(['orders/create', 'orders/updated', 'orders/paid', 'orders/cancelled'])
+    if (!supportedUpsertTopics.has(topic)) {
       return NextResponse.json({ ok: false, error: 'Unsupported Shopify topic' }, { status: 400 })
     }
 
     const payload = JSON.parse(rawBody) as unknown
     const triggersEnabled = await getShopifyTriggersEnabled()
     const order = await upsertShopifyOrder(integration, payload, {
-      sendConfirmation: triggersEnabled,
+      sendConfirmation: topic === 'orders/create' && triggersEnabled,
     })
-    console.log(`[shopify-webhook] orders/create accepted country=${order.country}`)
+    console.log(`[shopify-webhook] ${topic} accepted country=${order.country}`)
     return NextResponse.json({ ok: true, order })
   } catch (error) {
     console.error(`[shopify-webhook] ${topic} failed: ${error instanceof Error ? error.message : 'unexpected error'}`)

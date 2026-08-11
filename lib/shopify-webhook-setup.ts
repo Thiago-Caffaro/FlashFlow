@@ -3,7 +3,13 @@ import { getSetting } from './app-settings'
 import { ShopifyClient } from './shopify-client'
 import { shopifyClientFromIntegration, type ShopifyIntegrationCredentialRow } from './shopify-integration-store'
 
-const ORDER_TOPICS = ['orders/create', 'orders/delete'] as const
+const ORDER_TOPICS = [
+  'orders/create',
+  'orders/updated',
+  'orders/paid',
+  'orders/cancelled',
+  'orders/delete',
+] as const
 
 export interface WebhookRegistrationResult {
   shopDomain: string
@@ -44,7 +50,7 @@ async function ensureForClient(client: ShopifyClient, shopDomain: string): Promi
   }
 }
 
-// Registers the orders/create and orders/delete subscriptions directly with Shopify via
+// Registers the order lifecycle subscriptions directly with Shopify via
 // the Admin REST API (POST /webhooks.json) so real-time order delivery
 // doesn't depend on the merchant manually configuring it under
 // Settings → Notifications in the Shopify admin. Safe to call repeatedly —
