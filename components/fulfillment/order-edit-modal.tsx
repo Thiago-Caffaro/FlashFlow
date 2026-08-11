@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, MessageCircle, Plus, RefreshCw, Save, Send, Trash2, X, XCircle } from 'lucide-react'
+import { ChevronDown, ChevronUp, Loader2, MessageCircle, Plus, RefreshCw, Save, Send, Trash2, X, XCircle } from 'lucide-react'
 import {
   Account,
   COMMERCIAL_STATUSES,
@@ -24,6 +24,7 @@ import {
 import ConfirmationTriggerStatus, { getConfirmationTriggerState } from './confirmation-trigger-status'
 import ShopifyOrderStatusBadges from './shopify-order-status-badges'
 import ShopifyOrderTimeline from './shopify-order-timeline'
+import DeliveryStatusTimeline from './delivery-status-timeline'
 import { getShopifyOrderStatus, isShopifyOrderCancelled, isShopifyPaymentSettled } from '@/lib/shopify-order-status'
 
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
@@ -72,6 +73,7 @@ export default function OrderEditModal({
   onClose, onUpdateStatus, onUpdateItems, onAction, onResendConfirmation,
 }: OrderEditModalProps) {
   const [busy, setBusy] = useState(false)
+  const [showShopifyTimeline, setShowShopifyTimeline] = useState(false)
   const rawOrderLineItems = order.raw_shopify_payload?.line_items
   const normalizedOrderItems = useMemo(
     () => normalizeOrderItemsForPackDisplay(order.items, rawOrderLineItems),
@@ -561,7 +563,22 @@ export default function OrderEditModal({
             )}
           </div>
 
-          {order.source === 'shopify' && <ShopifyOrderTimeline orderId={order.id} />}
+          <DeliveryStatusTimeline orderId={order.id} />
+
+          {order.source === 'shopify' && (
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowShopifyTimeline((value) => !value)}
+                className="flex w-full items-center justify-between px-6 py-3 text-xs font-semibold uppercase tracking-wide text-[#667781] hover:bg-[#f8f9fa] dark:hover:bg-[#1a2730]"
+                aria-expanded={showShopifyTimeline}
+              >
+                Timeline Shopify
+                {showShopifyTimeline ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              </button>
+              {showShopifyTimeline && <ShopifyOrderTimeline orderId={order.id} />}
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-2 px-6 py-4">
