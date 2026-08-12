@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { uploadFileToStorage } from '@/lib/storage'
 import { extensionForSniffedType, sniffImageType } from '@/lib/image-validation'
+import { dispatchSendImage } from '@/lib/whatsapp-dispatch'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-const EVOLUTION_SEND_TIMEOUT_MS = 15000
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5 MB
 
 export async function POST(req: NextRequest) {
@@ -70,27 +70,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falha ao registrar mensagem' }, { status: 500 })
     }
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), EVOLUTION_SEND_TIMEOUT_MS)
-    let evoRes: Response
+    let sendResult: { waMessageId: string | null }
     try {
-      evoRes = await fetch(
-        `${process.env.EVOLUTION_API_URL}/message/sendMedia/${instanceName}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: process.env.EVOLUTION_API_KEY!,
-          },
-          body: JSON.stringify({
-            number: waId,
-            mediatype: 'image',
-            media: publicUrl,
-            caption,
-          }),
-          signal: controller.signal,
-        }
-      )
+      sendResult = await dispatchSendImage(instanceName, waId, publicUrl, caption)
     } catch (err) {
       const isTimeout = err instanceof Error && err.name === 'AbortError'
       if (!isTimeout) {
@@ -101,18 +83,9 @@ export async function POST(req: NextRequest) {
         { error: isTimeout ? 'Tempo esgotado ao enviar — resultado desconhecido.' : 'Falha ao enviar imagem' },
         { status: isTimeout ? 504 : 502 }
       )
-    } finally {
-      clearTimeout(timeout)
     }
 
-    if (!evoRes.ok) {
-      await supabase.from('messages').update({ status: 'failed' }).eq('id', pending.id)
-      console.error('Erro Evolution API:', await evoRes.text())
-      return NextResponse.json({ error: 'Falha ao enviar imagem' }, { status: 502 })
-    }
-
-    const evoData = await evoRes.json()
-    const waMessageId: string | null = evoData?.key?.id ?? null
+    const waMessageId = sendResult.waMessageId
 
     const { data: updated, error: updateError } = await supabase
       .from('messages')

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { AISession, FlowNode } from '@/types'
+import { dispatchSendText } from '@/lib/whatsapp-dispatch'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,9 +9,6 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
-
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL!
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 
 // POST /api/ai-sessions/[id]/terminate
 // Body: { message?: string; useFlowMessage?: boolean }
@@ -62,16 +60,8 @@ export async function POST(
     const { remote_jid: remoteJid, instance_name: instanceName } = session as AISession
 
     try {
-      const evoRes = await fetch(
-        `${EVOLUTION_API_URL}/message/sendText/${instanceName}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-          body: JSON.stringify({ number: remoteJid, text: finalMessage }),
-        }
-      )
-      const evoJson = await evoRes.json()
-      const waMessageId: string | null = evoJson?.key?.id ?? null
+      const sendResult = await dispatchSendText(instanceName, remoteJid, finalMessage)
+      const waMessageId = sendResult.waMessageId
 
       const { data: conv } = await supabaseAdmin
         .from('conversations')

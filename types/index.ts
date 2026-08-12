@@ -12,6 +12,8 @@ export interface Conversation {
   updated_at: string
 }
 
+export type WhatsAppProvider = 'evolution' | 'cloud_api'
+
 export interface Account {
   instanceName: string
   label: string
@@ -23,6 +25,7 @@ export interface Account {
   confirmationEnabled?: boolean
   confirmationPriority?: number
   isSandbox?: boolean
+  provider?: WhatsAppProvider
 }
 
 export interface Message {

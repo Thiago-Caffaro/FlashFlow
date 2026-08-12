@@ -88,10 +88,19 @@ describe('flow WhatsApp delivery', () => {
       body: { error: 'unavailable' },
       text: 'unavailable',
     })
+    // dispatchSendText resolve o provedor via lib/whatsapp-account-provider.ts
+    // (SELECT em accounts) antes de tentar enviar — não envolve messages/conversations.
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === 'accounts') {
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    })
 
     await expect(sendWhatsApp(ctx(), 'hello')).rejects.toThrow('503')
 
-    expect(supabaseMock.from).not.toHaveBeenCalled()
+    expect(supabaseMock.from).not.toHaveBeenCalledWith('messages')
+    expect(supabaseMock.from).not.toHaveBeenCalledWith('conversations')
   })
 })
 

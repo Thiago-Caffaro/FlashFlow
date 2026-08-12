@@ -3,7 +3,7 @@ import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTur
 import { decrypt } from './ai-crypto'
 import { getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
-import { fetchEvolution } from './evolution-api'
+import { dispatchSendButtons, dispatchSendImage, dispatchSendText } from './whatsapp-dispatch'
 import {
   formatTextReplyMessage,
   getMessagePlaceholders,
@@ -75,21 +75,8 @@ export async function sendWhatsApp(ctx: FlowContext, text: string) {
   let waMessageId: string | null = null
   const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
-    const response = await fetchEvolution(`/message/sendText/${encodeURIComponent(realSendTarget)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ number: ctx.remoteJid, text }),
-    }, 15_000)
-    if (!response.ok) {
-      throw new Error(`Falha ao enviar mensagem do fluxo (${response.status}): ${response.text.slice(0, 300)}`)
-    }
-    const record = response.body && typeof response.body === 'object'
-      ? response.body as Record<string, unknown>
-      : {}
-    const key = record.key && typeof record.key === 'object'
-      ? record.key as Record<string, unknown>
-      : {}
-    waMessageId = typeof key.id === 'string' ? key.id : null
+    const result = await dispatchSendText(realSendTarget, ctx.remoteJid, text)
+    waMessageId = result.waMessageId
   }
 
   await supabase.from('messages').insert({
@@ -126,26 +113,12 @@ export async function sendWhatsAppReplyOptions(
     return 'text'
   }
 
-  const response = await fetchEvolution(`/message/sendButtons/${encodeURIComponent(realSendTarget)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      number: ctx.remoteJid,
-      title: content.title.trim() || 'Escolha uma opcao',
-      description: content.message,
-      footer: content.footer,
-      ...(options.thumbnailUrl ? { thumbnailUrl: options.thumbnailUrl } : {}),
-      buttons: content.replyButtons.map((button) => ({
-        type: 'reply',
-        displayText: button.label,
-        id: button.id,
-      })),
-    }),
-  }, 15_000)
-
-  if (!response.ok) {
+  let result: Awaited<ReturnType<typeof dispatchSendButtons>>
+  try {
+    result = await dispatchSendButtons(realSendTarget, ctx.remoteJid, content, options)
+  } catch (error) {
     logError('sendWhatsAppReplyOptions: native send failed, using text fallback', {
-      status: response.status,
+      error: error instanceof Error ? error.message : error,
     })
     if (options.thumbnailUrl) {
       await sendWhatsAppImage(ctx, options.thumbnailUrl, persistedText)
@@ -155,15 +128,9 @@ export async function sendWhatsAppReplyOptions(
     return 'text'
   }
 
-  const record = response.body && typeof response.body === 'object'
-    ? response.body as Record<string, unknown>
-    : {}
-  const key = record.key && typeof record.key === 'object'
-    ? record.key as Record<string, unknown>
-    : {}
   await supabase.from('messages').insert({
     conversation_id: ctx.conversationId,
-    wa_message_id: typeof key.id === 'string' ? key.id : null,
+    wa_message_id: result.waMessageId,
     content: options.thumbnailUrl
       ? `${options.thumbnailUrl}\n${persistedText}`
       : persistedText,
@@ -188,26 +155,8 @@ export async function sendWhatsAppImage(
   const normalizedCaption = caption?.trim() ?? ''
   const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
-    const response = await fetchEvolution(`/message/sendMedia/${encodeURIComponent(realSendTarget)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        number: ctx.remoteJid,
-        mediatype: 'image',
-        media: imageUrl,
-        ...(normalizedCaption ? { caption: normalizedCaption } : {}),
-      }),
-    }, 15_000)
-    if (!response.ok) {
-      throw new Error(`Falha ao enviar imagem do fluxo (${response.status}): ${response.text.slice(0, 300)}`)
-    }
-    const record = response.body && typeof response.body === 'object'
-      ? response.body as Record<string, unknown>
-      : {}
-    const key = record.key && typeof record.key === 'object'
-      ? record.key as Record<string, unknown>
-      : {}
-    waMessageId = typeof key.id === 'string' ? key.id : null
+    const result = await dispatchSendImage(realSendTarget, ctx.remoteJid, imageUrl, caption)
+    waMessageId = result.waMessageId
   }
 
   await supabase.from('messages').insert({
