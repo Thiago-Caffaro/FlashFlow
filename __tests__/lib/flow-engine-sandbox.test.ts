@@ -3,6 +3,7 @@
  * de segurança): a barreira que impede o sandbox de enviar mensagens reais
  * fica amarrada ao instanceName, não só à flag isSandbox.
  */
+export {}
 
 const supabaseMock = { from: jest.fn() }
 const mockFetchEvolution = jest.fn()

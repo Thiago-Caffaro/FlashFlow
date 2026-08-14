@@ -1,0 +1,102 @@
+/**
+ * Testes para lib/whatsapp-cloud-client.ts — o único ponto que fala HTTP de
+ * verdade com a Graph API da Meta. Como ainda não há um App Meta configurado
+ * pra testar contra a API real, a URL/headers/corpo exatos importam mais
+ * aqui do que em qualquer outro lugar da Fase 1.
+ */
+export {}
+
+const fetchMock = jest.fn()
+global.fetch = fetchMock
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { sendCloudText, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
+
+function jsonResponse(status: number, body: unknown) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: jest.fn().mockResolvedValue(JSON.stringify(body)),
+  }
+}
+
+describe('sendCloudText', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    delete process.env.WHATSAPP_CLOUD_API_VERSION
+  })
+
+  it('posts to the Graph API messages endpoint with the right auth header and body shape', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.ABC' }] }))
+
+    const result = await sendCloudText('123456', 'token-abc', '5511999999999', 'olá mundo')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://graph.facebook.com/v21.0/123456/messages')
+    expect(init.method).toBe('POST')
+    expect(init.headers.Authorization).toBe('Bearer token-abc')
+    expect(init.headers['Content-Type']).toBe('application/json')
+    expect(JSON.parse(init.body)).toEqual({
+      messaging_product: 'whatsapp',
+      to: '5511999999999',
+      type: 'text',
+      text: { body: 'olá mundo' },
+    })
+    expect(result).toEqual({ waMessageId: 'wamid.ABC', raw: { messages: [{ id: 'wamid.ABC' }] } })
+  })
+
+  it('uses WHATSAPP_CLOUD_API_VERSION when set, instead of the default', async () => {
+    process.env.WHATSAPP_CLOUD_API_VERSION = 'v99.0'
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.X' }] }))
+
+    await sendCloudText('123456', 'token', '5511999999999', 'oi')
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://graph.facebook.com/v99.0/123456/messages')
+  })
+
+  it('throws with the readable Meta error message on failure, not the raw body', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(401, {
+      error: { message: 'Invalid OAuth access token', type: 'OAuthException', code: 190 },
+    }))
+
+    await expect(sendCloudText('123456', 'bad-token', '5511999999999', 'oi'))
+      .rejects.toThrow('Invalid OAuth access token')
+  })
+
+  it('propagates a network-level failure (e.g. timeout) instead of swallowing it', async () => {
+    const abortError = new Error('aborted')
+    abortError.name = 'AbortError'
+    fetchMock.mockRejectedValue(abortError)
+
+    await expect(sendCloudText('123456', 'token', '5511999999999', 'oi')).rejects.toThrow('aborted')
+  })
+})
+
+describe('verifyCloudCredentials', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('queries verified_name and display_phone_number with the bearer token', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {
+      verified_name: 'Minha Loja',
+      display_phone_number: '+55 11 99999-9999',
+    }))
+
+    const result = await verifyCloudCredentials('123456', 'token-abc')
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://graph.facebook.com/v21.0/123456?fields=verified_name,display_phone_number')
+    expect(init.headers.Authorization).toBe('Bearer token-abc')
+    expect(result).toEqual({ verifiedName: 'Minha Loja', displayPhoneNumber: '+55 11 99999-9999' })
+  })
+
+  it('throws a readable error for invalid credentials instead of returning a falsy result', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(400, {
+      error: { message: 'Unsupported get request.', type: 'GraphMethodException', code: 100 },
+    }))
+
+    await expect(verifyCloudCredentials('wrong-id', 'token')).rejects.toThrow('Unsupported get request.')
+  })
+})

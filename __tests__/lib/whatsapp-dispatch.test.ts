@@ -1,9 +1,9 @@
 /**
  * Testes para lib/whatsapp-dispatch.ts — garante que o dispatcher resolve o
  * provedor da conta e delega para o adapter certo, sem alterar os argumentos
- * repassados (a Fase 0 só introduz indireção, não muda payload/comportamento
- * do envio via Evolution).
+ * repassados (indireção pura, não muda payload/comportamento do envio em si).
  */
+export {}
 
 const mockGetAccountProvider = jest.fn()
 jest.mock('@/lib/whatsapp-account-provider', () => ({
@@ -18,6 +18,17 @@ jest.mock('@/lib/whatsapp-evolution-adapter', () => ({
     sendText: (...args: unknown[]) => mockEvolutionSendText(...args),
     sendImage: (...args: unknown[]) => mockEvolutionSendImage(...args),
     sendButtons: (...args: unknown[]) => mockEvolutionSendButtons(...args),
+  },
+}))
+
+const mockCloudSendText = jest.fn()
+const mockCloudSendImage = jest.fn()
+const mockCloudSendButtons = jest.fn()
+jest.mock('@/lib/whatsapp-cloud-adapter', () => ({
+  cloudApiAdapter: {
+    sendText: (...args: unknown[]) => mockCloudSendText(...args),
+    sendImage: (...args: unknown[]) => mockCloudSendImage(...args),
+    sendButtons: (...args: unknown[]) => mockCloudSendButtons(...args),
   },
 }))
 
@@ -70,10 +81,22 @@ describe('whatsapp-dispatch', () => {
     await expect(dispatchSendText('wa-1', 'jid', 'oi')).rejects.toThrow('503')
   })
 
-  it('throws for cloud_api accounts, not yet supported in Fase 0', async () => {
+  it('dispatches sendText to the cloud adapter for a cloud_api account, preserving all args', async () => {
     mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockCloudSendText.mockResolvedValue({ waMessageId: 'wamid.1', raw: {} })
 
-    await expect(dispatchSendText('wa-cloud', 'jid', 'oi')).rejects.toThrow('cloud_api')
+    const result = await dispatchSendText('wa-cloud', '5511999999999', 'oi', 5000)
+
+    expect(mockCloudSendText).toHaveBeenCalledWith('wa-cloud', '5511999999999', 'oi', 5000)
     expect(mockEvolutionSendText).not.toHaveBeenCalled()
+    expect(result).toEqual({ waMessageId: 'wamid.1', raw: {} })
+  })
+
+  it('does not call the evolution adapter for a cloud_api account, and vice versa', async () => {
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockCloudSendImage.mockRejectedValue(new Error('Envio de imagem ainda não suportado'))
+
+    await expect(dispatchSendImage('wa-cloud', 'jid', 'https://example.com/x.jpg')).rejects.toThrow('ainda não suportado')
+    expect(mockEvolutionSendImage).not.toHaveBeenCalled()
   })
 })

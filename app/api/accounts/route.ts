@@ -116,11 +116,28 @@ export async function GET() {
     // /instance/connectionState/{name} still works. Use the per-instance
     // endpoint so a Next.js restart can recover already connected accounts.
     // Sandbox accounts don't correspond to a real Evolution instance, so
-    // skip the real API call and report a fixed synthetic state.
+    // skip the real API call and report a fixed synthetic state. Cloud API
+    // accounts don't have a "connection" to poll either — their state comes
+    // from whatsapp_cloud_credentials instead (set at connect time / on send
+    // failure), never from a live Evolution-style handshake.
     const stateMap = new Map<string, { state: string; profileName?: string | null; profilePicUrl?: string | null; phone?: string | null }>()
     await Promise.all((stored ?? []).map(async (row) => {
       if (row.is_sandbox) {
         stateMap.set(row.instance_name, { state: 'open', profileName: 'Sandbox', profilePicUrl: null, phone: null })
+        return
+      }
+      if (row.provider === 'cloud_api') {
+        const { data: cred } = await supabaseAdmin
+          .from('whatsapp_cloud_credentials')
+          .select('display_phone_number, verified_name, last_verified_at, last_error')
+          .eq('instance_name', row.instance_name)
+          .maybeSingle()
+        stateMap.set(row.instance_name, {
+          state: cred?.last_verified_at && !cred.last_error ? 'open' : 'close',
+          profileName: cred?.verified_name ?? null,
+          profilePicUrl: null,
+          phone: cred?.display_phone_number ?? null,
+        })
         return
       }
       stateMap.set(row.instance_name, await getEvolutionConnectionState(row.instance_name))
@@ -146,8 +163,8 @@ export async function GET() {
     })
 
     // Repair stale/missing per-instance webhook settings in the background.
-    // Sandbox accounts have no real Evolution instance, so skip them.
-    const realInstanceNames = accounts.filter((a) => !a.isSandbox).map((a) => a.instanceName)
+    // Sandbox and Cloud API accounts have no real Evolution instance, so skip them.
+    const realInstanceNames = accounts.filter((a) => !a.isSandbox && a.provider !== 'cloud_api').map((a) => a.instanceName)
     if (realInstanceNames.length > 0 && shouldSyncWebhooks()) {
       void syncWebhooks(realInstanceNames)
     }

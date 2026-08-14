@@ -40,6 +40,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, total: 0, synced: 0, failed: 0 })
   }
 
+  // Cloud API accounts have no Evolution instance either — the Meta Cloud
+  // API has no concept of "sync existing chat history", messages only start
+  // arriving once the webhook is registered.
+  const { data: account } = await supabase
+    .from('accounts')
+    .select('provider')
+    .eq('instance_name', instanceName)
+    .maybeSingle()
+  if (account?.provider === 'cloud_api') {
+    return NextResponse.json({ ok: true, total: 0, synced: 0, failed: 0 })
+  }
+
   if (syncInProgress.has(instanceName)) {
     return NextResponse.json({ ok: true, skipped: true })
   }

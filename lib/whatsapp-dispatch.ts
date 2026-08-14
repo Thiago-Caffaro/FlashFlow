@@ -3,6 +3,7 @@ import type { WhatsAppProvider } from '@/types'
 import type { RenderedMessageContent } from './message-template'
 import { getAccountProvider } from './whatsapp-account-provider'
 import { evolutionAdapter } from './whatsapp-evolution-adapter'
+import { cloudApiAdapter } from './whatsapp-cloud-adapter'
 
 export interface SendResult {
   waMessageId: string | null
@@ -20,17 +21,9 @@ export interface WhatsAppProviderAdapter {
   ): Promise<SendResult>
 }
 
-function cloudApiNotSupported(): never {
-  throw new Error('Provedor cloud_api ainda nao suportado')
-}
-
 const adapters: Record<WhatsAppProvider, WhatsAppProviderAdapter> = {
   evolution: evolutionAdapter,
-  cloud_api: {
-    sendText: async () => cloudApiNotSupported(),
-    sendImage: async () => cloudApiNotSupported(),
-    sendButtons: async () => cloudApiNotSupported(),
-  },
+  cloud_api: cloudApiAdapter,
 }
 
 async function resolveAdapter(instanceName: string): Promise<WhatsAppProviderAdapter> {

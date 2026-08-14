@@ -6,7 +6,7 @@ import { useAccount } from '@/contexts/account-context'
 import { Account } from '@/types'
 import SyncOverlay from './sync-overlay'
 
-type ModalStep = 'label' | 'qr'
+type ModalStep = 'provider' | 'label' | 'qr' | 'cloud-credentials'
 
 const STATE_DOT: Record<string, string> = {
   open:       'bg-[#00a884]',
@@ -29,6 +29,12 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
   const [country, setCountry] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [phoneNumberId, setPhoneNumberId] = useState('')
+  const [wabaId, setWabaId] = useState('')
+  const [accessToken, setAccessToken] = useState('')
+  const [businessId, setBusinessId] = useState('')
+  const [creatingCloud, setCreatingCloud] = useState(false)
+  const [createCloudError, setCreateCloudError] = useState<string | null>(null)
   const [pendingInstance, setPendingInstance] = useState<string | null>(null)
   const [qrCode, setQrCode] = useState<string | null>(null)
   const [timeLeft, setTimeLeft] = useState(60)
@@ -79,6 +85,11 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     setQrCode(null)
     setTimeLeft(60)
     setRegenerating(false)
+    setPhoneNumberId('')
+    setWabaId('')
+    setAccessToken('')
+    setBusinessId('')
+    setCreateCloudError(null)
   }
 
   async function handleDeletePending(instanceName: string) {
@@ -179,6 +190,39 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
     }
   }
 
+  // Sem QR, sem polling — a Meta confirma as credenciais na hora
+  // (verifyCloudCredentials no servidor) e a conexão é síncrona.
+  async function handleCreateCloudApi() {
+    if (!label.trim() || !country.trim() || !phoneNumberId.trim() || !wabaId.trim() || !accessToken.trim()) return
+    setCreatingCloud(true)
+    setCreateCloudError(null)
+    try {
+      const res = await fetch('/api/accounts/cloud-api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: label.trim(),
+          country: country.trim().toUpperCase(),
+          phoneNumberId: phoneNumberId.trim(),
+          wabaId: wabaId.trim(),
+          accessToken: accessToken.trim(),
+          businessId: businessId.trim() || undefined,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) { setCreateCloudError(json.error ?? 'Erro ao conectar conta'); return }
+      closeModal()
+      const fresh = await refreshAccounts()
+      const newAcc = fresh.find((a) => a.instanceName === json.instanceName)
+      if (newAcc) setActiveAccount(newAcc)
+      setOpen(false)
+    } catch {
+      setCreateCloudError('Erro de conexão')
+    } finally {
+      setCreatingCloud(false)
+    }
+  }
+
   async function handleDelete(account: Account) {
     setDeleting(true)
     try {
@@ -245,10 +289,36 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white dark:bg-[#233138] rounded-xl shadow-xl p-5 w-80 space-y-4">
 
-            {modalStep === 'label' && (
+            {modalStep === 'provider' && (
               <>
                 <div className="flex items-center justify-between">
                   <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Nova conta</p>
+                  <button onClick={closeModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
+                    <X size={18} />
+                  </button>
+                </div>
+                <p className="text-sm text-[#667781] dark:text-[#8696a0]">Como essa conta vai se conectar ao WhatsApp?</p>
+                <button
+                  onClick={() => setModalStep('label')}
+                  className="w-full text-left rounded-lg border border-[#d1d7db] dark:border-[#2a3942] px-3 py-2.5 hover:border-[#00a884] hover:bg-[#f5f6f6] dark:hover:bg-[#182229] transition-colors"
+                >
+                  <p className="text-sm font-medium text-[#111b21] dark:text-[#e9edef]">Evolution API</p>
+                  <p className="text-xs text-[#667781] dark:text-[#8696a0]">Conecta escaneando um QR Code, como o WhatsApp Web</p>
+                </button>
+                <button
+                  onClick={() => setModalStep('cloud-credentials')}
+                  className="w-full text-left rounded-lg border border-[#d1d7db] dark:border-[#2a3942] px-3 py-2.5 hover:border-[#00a884] hover:bg-[#f5f6f6] dark:hover:bg-[#182229] transition-colors"
+                >
+                  <p className="text-sm font-medium text-[#111b21] dark:text-[#e9edef]">API oficial (Cloud API)</p>
+                  <p className="text-xs text-[#667781] dark:text-[#8696a0]">Conecta colando credenciais geradas no Meta Business</p>
+                </button>
+              </>
+            )}
+
+            {modalStep === 'label' && (
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Nova conta (Evolution API)</p>
                   <button onClick={closeModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
                     <X size={18} />
                   </button>
@@ -277,6 +347,72 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                   className="w-full py-2 rounded-lg bg-[#00a884] text-white text-sm font-medium hover:bg-[#008f72] disabled:opacity-60 flex items-center justify-center gap-2"
                 >
                   {creating ? <><Loader2 size={15} className="animate-spin" /> Criando...</> : 'Continuar'}
+                </button>
+              </>
+            )}
+
+            {modalStep === 'cloud-credentials' && (
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold text-[#111b21] dark:text-[#e9edef]">Nova conta (API oficial)</p>
+                  <button onClick={closeModal} className="text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-white">
+                    <X size={18} />
+                  </button>
+                </div>
+                <p className="text-sm text-[#667781] dark:text-[#8696a0]">
+                  Credenciais geradas no painel do App Meta (WhatsApp → API Setup)
+                </p>
+                <input
+                  type="text"
+                  placeholder="Nome, ex: Suporte, Vendas..."
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                  className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
+                  autoFocus
+                />
+                <input
+                  type="text"
+                  placeholder="País, ex: PORTUGAL"
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value.toUpperCase())}
+                  className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
+                />
+                <input
+                  type="text"
+                  placeholder="Phone Number ID"
+                  value={phoneNumberId}
+                  onChange={(e) => setPhoneNumberId(e.target.value)}
+                  className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
+                />
+                <input
+                  type="text"
+                  placeholder="WABA ID"
+                  value={wabaId}
+                  onChange={(e) => setWabaId(e.target.value)}
+                  className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
+                />
+                <input
+                  type="password"
+                  placeholder="Access Token"
+                  value={accessToken}
+                  onChange={(e) => setAccessToken(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCreateCloudApi()}
+                  className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
+                />
+                <input
+                  type="text"
+                  placeholder="Business ID (opcional)"
+                  value={businessId}
+                  onChange={(e) => setBusinessId(e.target.value)}
+                  className="w-full border border-[#d1d7db] dark:border-[#2a3942] dark:bg-[#2a3942] dark:text-[#e9edef] rounded-lg px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#00a884]"
+                />
+                {createCloudError && <p className="text-xs text-red-500">{createCloudError}</p>}
+                <button
+                  onClick={handleCreateCloudApi}
+                  disabled={creatingCloud || !label.trim() || !country.trim() || !phoneNumberId.trim() || !wabaId.trim() || !accessToken.trim()}
+                  className="w-full py-2 rounded-lg bg-[#00a884] text-white text-sm font-medium hover:bg-[#008f72] disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                  {creatingCloud ? <><Loader2 size={15} className="animate-spin" /> Conectando...</> : 'Conectar'}
                 </button>
               </>
             )}
@@ -404,7 +540,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
           </button>
         ) : (
           <button
-            onClick={() => setModalStep('label')}
+            onClick={() => setModalStep('provider')}
             className="flex items-center gap-2 rounded-lg bg-[#00a884] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#008f72]"
           >
             <Plus size={15} />
@@ -433,8 +569,13 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
               >
                 <span className={`shrink-0 w-2 h-2 rounded-full ${STATE_DOT[acc.state]}`} />
                 <span className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-[#111b21] dark:text-[#e9edef] truncate">
+                  <p className="text-xs font-medium text-[#111b21] dark:text-[#e9edef] truncate flex items-center gap-1">
                     {acc.label || acc.instanceName}
+                    {acc.provider === 'cloud_api' && (
+                      <span className="shrink-0 rounded bg-[#f0f2f5] dark:bg-[#2a3942] px-1 py-px text-[9px] font-medium text-[#667781] dark:text-[#8696a0]">
+                        API oficial
+                      </span>
+                    )}
                   </p>
                   {acc.profileName && (
                     <p className="text-[10px] text-[#667781] dark:text-[#8696a0] truncate">{acc.profileName}</p>
@@ -452,7 +593,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
                     <Info size={11} />
                   </button>
                 )}
-                {hoveredName === acc.instanceName && acc.state !== 'open' && (
+                {hoveredName === acc.instanceName && acc.state !== 'open' && acc.provider !== 'cloud_api' && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleReconnect(acc) }}
                     title="Reconectar"
@@ -472,7 +613,7 @@ export default function AccountDropdown({ onConnectingChange }: AccountDropdownP
               </div>
             ))}
             <button
-              onClick={() => { setModalStep('label'); setOpen(false) }}
+              onClick={() => { setModalStep('provider'); setOpen(false) }}
               className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-[#f5f6f6] dark:hover:bg-[#182229] transition-colors border-t border-[#f0f2f5] dark:border-[#2a3942]"
             >
               <div className="w-4 h-4 rounded-full bg-[#00a884] flex items-center justify-center shrink-0">
