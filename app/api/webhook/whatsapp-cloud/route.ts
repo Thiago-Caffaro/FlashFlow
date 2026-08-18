@@ -9,7 +9,8 @@ import {
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 import { normalizeReplyInput } from '@/lib/message-template'
 import { executeTriggers } from '@/lib/message-triggers'
-import { loadCloudCredentialsByPhoneNumberId } from '@/lib/whatsapp-cloud-credentials'
+import { loadCloudCredentialsByPhoneNumberId, type WhatsAppCloudCredentialsRow } from '@/lib/whatsapp-cloud-credentials'
+import { resolveAndStoreCloudMedia } from '@/lib/whatsapp-cloud-media'
 import {
   WHATSAPP_CLOUD_SIGNATURE_HEADER,
   verifyCloudWebhookHandshake,
@@ -28,21 +29,31 @@ const CLOUD_STATUS_MAP: Record<string, string> = {
   failed: 'failed',
 }
 
-// Nesta fase só texto é processado de verdade (Fase 2 adiciona mídia, Fase 3
-// botões interativos) — outros tipos viram um placeholder, mesma filosofia
-// do webhook da Evolution para tipos ainda não suportados.
+// Imagem é resolvida de verdade (Fase 2); botões interativos chegam na Fase 3
+// — outros tipos viram um placeholder, mesma filosofia do webhook da
+// Evolution para tipos ainda não suportados (vídeo/áudio/figurinha nunca
+// baixam mídia lá também — paridade, não regressão).
 const MEDIA_PLACEHOLDERS: Record<string, string> = {
-  image: '[imagem]',
   video: '[vídeo]',
   audio: '[áudio]',
   sticker: '[figurinha]',
 }
 
-function extractContent(message: Record<string, unknown>): { content: string; type: string } {
+async function extractContent(
+  message: Record<string, unknown>,
+  credentials: WhatsAppCloudCredentialsRow
+): Promise<{ content: string; type: string }> {
   const msgType = typeof message.type === 'string' ? message.type : 'unknown'
   if (msgType === 'text') {
     const body = (message.text as Record<string, unknown> | undefined)?.body
     return { content: typeof body === 'string' && body.trim() ? body : '[mensagem vazia]', type: 'text' }
+  }
+  if (msgType === 'image') {
+    const image = message.image as Record<string, unknown> | undefined
+    const mediaId = typeof image?.id === 'string' ? image.id : ''
+    const caption = typeof image?.caption === 'string' && image.caption.trim() ? image.caption : ''
+    const mediaUrl = mediaId ? await resolveAndStoreCloudMedia(mediaId, credentials) : null
+    return { content: mediaUrl ?? (caption || '[imagem]'), type: 'image' }
   }
   const placeholder = MEDIA_PLACEHOLDERS[msgType]
   return placeholder ? { content: placeholder, type: msgType } : { content: '[mídia]', type: 'media' }
@@ -59,7 +70,8 @@ async function applyStatusUpdate(status: Record<string, unknown>): Promise<void>
 async function processInboundMessage(
   instanceName: string,
   message: Record<string, unknown>,
-  contacts: Array<Record<string, unknown>>
+  contacts: Array<Record<string, unknown>>,
+  credentials: WhatsAppCloudCredentialsRow
 ): Promise<void> {
   const waMessageId = typeof message.id === 'string' ? message.id : ''
   const fromDigits = typeof message.from === 'string' ? message.from : ''
@@ -81,7 +93,7 @@ async function processInboundMessage(
   const profile = contactEntry?.profile as Record<string, unknown> | undefined
   const contactName = typeof profile?.name === 'string' ? profile.name : null
 
-  const { content, type } = extractContent(message)
+  const { content, type } = await extractContent(message, credentials)
 
   const { data: conversation, error: convError } = await supabaseAdmin
     .from('conversations')
@@ -91,7 +103,7 @@ async function processInboundMessage(
         instance_name: instanceName,
         contact_phone: remoteJid,
         ...(contactName ? { contact_name: contactName } : {}),
-        last_message: content,
+        last_message: type === 'image' ? '[imagem]' : content,
         last_message_at: new Date().toISOString(),
       },
       { onConflict: 'wa_id, instance_name' }
@@ -195,7 +207,7 @@ async function processMessagesChange(value: Record<string, unknown>): Promise<vo
     await applyStatusUpdate(status)
   }
   for (const message of messages) {
-    await processInboundMessage(instanceName, message, contacts)
+    await processInboundMessage(instanceName, message, contacts, credentials)
   }
 }
 

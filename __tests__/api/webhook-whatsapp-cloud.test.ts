@@ -21,6 +21,11 @@ jest.mock('@supabase/supabase-js', () => ({
   createClient: jest.fn(() => supabaseMock),
 }))
 
+const mockResolveAndStoreCloudMedia = jest.fn()
+jest.mock('@/lib/whatsapp-cloud-media', () => ({
+  resolveAndStoreCloudMedia: (...args: unknown[]) => mockResolveAndStoreCloudMedia(...args),
+}))
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function signBody(rawBody: string, secret = TEST_APP_SECRET): string {
@@ -278,10 +283,70 @@ describe('POST /api/webhook/whatsapp-cloud', () => {
     expect(insertArg.wa_message_id).toBe('wamid.TEST1')
   })
 
-  it('falls back to a placeholder for a non-text message type (image not yet supported in Fase 1)', async () => {
+  it('falls back to a text placeholder for message types with no real handling (video/audio/sticker)', async () => {
     mockSupabaseSuccess()
     const req = buildRequest(buildCloudPayload({
+      messages: [{ from: '5511988887777', id: 'wamid.VID1', type: 'video', video: { id: 'media-1' } }],
+    }))
+    await POST(req)
+
+    const msgCall = supabaseMock.from.mock.results.find(
+      (r) => r.value?.insert && (r.value.insert as jest.Mock).mock?.calls?.length > 0
+    )
+    const insertArg = (msgCall!.value.insert as jest.Mock).mock.calls[0][0]
+    expect(insertArg.content).toBe('[vídeo]')
+    expect(insertArg.type).toBe('video')
+    expect(mockResolveAndStoreCloudMedia).not.toHaveBeenCalled()
+  })
+
+  // ── Imagem (Fase 2) ────────────────────────────────────────────────────────
+
+  it('resolves image media via resolveAndStoreCloudMedia and stores the public URL as content', async () => {
+    mockSupabaseSuccess({ phoneNumberId: '123456', instanceName: 'wa-cloud-1' })
+    mockResolveAndStoreCloudMedia.mockResolvedValue('https://supabase.example/media/foto.jpg')
+    const req = buildRequest(buildCloudPayload({
       messages: [{ from: '5511988887777', id: 'wamid.IMG1', type: 'image', image: { id: 'media-1' } }],
+    }))
+    await POST(req)
+
+    expect(mockResolveAndStoreCloudMedia).toHaveBeenCalledWith(
+      'media-1',
+      expect.objectContaining({ instance_name: 'wa-cloud-1', phone_number_id: '123456' })
+    )
+
+    const msgCall = supabaseMock.from.mock.results.find(
+      (r) => r.value?.insert && (r.value.insert as jest.Mock).mock?.calls?.length > 0
+    )
+    const insertArg = (msgCall!.value.insert as jest.Mock).mock.calls[0][0]
+    expect(insertArg.content).toBe('https://supabase.example/media/foto.jpg')
+    expect(insertArg.type).toBe('image')
+
+    const convCall = supabaseMock.from.mock.results.find((r) => r.value?.upsert)
+    const upsertArg = (convCall!.value.upsert as jest.Mock).mock.calls[0][0]
+    expect(upsertArg.last_message).toBe('[imagem]')
+  })
+
+  it('falls back to the caption, then to a placeholder, when media resolution fails', async () => {
+    mockSupabaseSuccess()
+    mockResolveAndStoreCloudMedia.mockResolvedValue(null)
+    const req = buildRequest(buildCloudPayload({
+      messages: [{ from: '5511988887777', id: 'wamid.IMG2', type: 'image', image: { id: 'media-2', caption: 'legenda' } }],
+    }))
+    await POST(req)
+
+    const msgCall = supabaseMock.from.mock.results.find(
+      (r) => r.value?.insert && (r.value.insert as jest.Mock).mock?.calls?.length > 0
+    )
+    const insertArg = (msgCall!.value.insert as jest.Mock).mock.calls[0][0]
+    expect(insertArg.content).toBe('legenda')
+    expect(insertArg.type).toBe('image')
+  })
+
+  it('falls back to a fixed placeholder when media resolution fails and there is no caption', async () => {
+    mockSupabaseSuccess()
+    mockResolveAndStoreCloudMedia.mockResolvedValue(null)
+    const req = buildRequest(buildCloudPayload({
+      messages: [{ from: '5511988887777', id: 'wamid.IMG3', type: 'image', image: { id: 'media-3' } }],
     }))
     await POST(req)
 

@@ -6,7 +6,7 @@ function apiVersion(): string {
   return process.env.WHATSAPP_CLOUD_API_VERSION || DEFAULT_API_VERSION
 }
 
-function graphUrl(path: string): string {
+export function graphUrl(path: string): string {
   return `https://graph.facebook.com/${apiVersion()}${path}`
 }
 
@@ -26,7 +26,7 @@ function parseJson(raw: string): unknown {
   }
 }
 
-async function fetchCloudApi(
+export async function fetchCloudApi(
   path: string,
   accessToken: string,
   init: RequestInit = {},
@@ -68,6 +68,12 @@ export interface SendCloudTextResult {
   raw: unknown
 }
 
+function extractCloudMessageId(body: unknown): string | null {
+  const record = body && typeof body === 'object' ? body as Record<string, unknown> : {}
+  const messages = Array.isArray(record.messages) ? record.messages as Array<Record<string, unknown>> : []
+  return typeof messages[0]?.id === 'string' ? messages[0].id as string : null
+}
+
 export async function sendCloudText(
   phoneNumberId: string,
   accessToken: string,
@@ -92,10 +98,36 @@ export async function sendCloudText(
     )
   }
 
-  const record = response.body && typeof response.body === 'object' ? response.body as Record<string, unknown> : {}
-  const messages = Array.isArray(record.messages) ? record.messages as Array<Record<string, unknown>> : []
-  const waMessageId = typeof messages[0]?.id === 'string' ? messages[0].id as string : null
-  return { waMessageId, raw: response.body }
+  return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
+}
+
+export async function sendCloudImage(
+  phoneNumberId: string,
+  accessToken: string,
+  to: string,
+  imageUrl: string,
+  caption?: string,
+  timeoutMs?: number
+): Promise<SendCloudTextResult> {
+  const normalizedCaption = caption?.trim() ?? ''
+  const response = await fetchCloudApi(`/${phoneNumberId}/messages`, accessToken, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'image',
+      image: { link: imageUrl, ...(normalizedCaption ? { caption: normalizedCaption } : {}) },
+    }),
+  }, timeoutMs)
+
+  if (!response.ok) {
+    throw new Error(
+      `Falha ao enviar imagem via WhatsApp Cloud API (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`
+    )
+  }
+
+  return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
 }
 
 export interface VerifyCloudCredentialsResult {

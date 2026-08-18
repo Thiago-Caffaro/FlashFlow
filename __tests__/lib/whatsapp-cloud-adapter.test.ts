@@ -1,6 +1,6 @@
 /**
  * Testes para lib/whatsapp-cloud-adapter.ts — a implementação real do
- * WhatsAppProviderAdapter para contas cloud_api (Fase 1: só sendText).
+ * WhatsAppProviderAdapter para contas cloud_api (Fase 1: texto; Fase 2: imagem).
  */
 export {}
 
@@ -14,8 +14,10 @@ jest.mock('@/lib/whatsapp-cloud-credentials', () => ({
 }))
 
 const mockSendCloudText = jest.fn()
+const mockSendCloudImage = jest.fn()
 jest.mock('@/lib/whatsapp-cloud-client', () => ({
   sendCloudText: (...args: unknown[]) => mockSendCloudText(...args),
+  sendCloudImage: (...args: unknown[]) => mockSendCloudImage(...args),
 }))
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -68,15 +70,55 @@ describe('cloudApiAdapter.sendText', () => {
   })
 })
 
-describe('cloudApiAdapter.sendImage / sendButtons (fora do escopo da Fase 1)', () => {
+describe('cloudApiAdapter.sendImage', () => {
   beforeEach(() => {
     jest.clearAllMocks()
   })
 
-  it('sendImage throws "not supported" without touching credentials or the client', async () => {
+  it('loads credentials, decodes the token, and sends via the client with the right args', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({
+      instance_name: 'wa-1',
+      phone_number_id: '123456',
+      encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
+    })
+    mockDecodeCloudAccessToken.mockReturnValue('plain-token')
+    mockSendCloudImage.mockResolvedValue({ waMessageId: 'wamid.2', raw: { ok: true } })
+
+    const result = await cloudApiAdapter.sendImage('wa-1', '5511999999999', 'https://x/img.jpg', 'legenda')
+
+    expect(mockSendCloudImage).toHaveBeenCalledWith('123456', 'plain-token', '5511999999999', 'https://x/img.jpg', 'legenda')
+    expect(result).toEqual({ waMessageId: 'wamid.2', raw: { ok: true } })
+    expect(mockRecordCloudSendError).not.toHaveBeenCalled()
+  })
+
+  it('throws when the account has no cloud_api credentials configured', async () => {
+    mockLoadCloudCredentials.mockResolvedValue(null)
+
+    await expect(cloudApiAdapter.sendImage('wa-sem-credenciais', '5511999999999', 'https://x/img.jpg'))
+      .rejects.toThrow('não tem credenciais')
+    expect(mockSendCloudImage).not.toHaveBeenCalled()
+  })
+
+  it('records the error via recordCloudSendError and re-throws when the send fails', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({
+      instance_name: 'wa-1', phone_number_id: '123456',
+      encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
+    })
+    mockDecodeCloudAccessToken.mockReturnValue('plain-token')
+    mockSendCloudImage.mockRejectedValue(new Error('Falha ao enviar imagem via WhatsApp Cloud API (400): Invalid image URL'))
+
     await expect(cloudApiAdapter.sendImage('wa-1', '5511999999999', 'https://x/img.jpg'))
-      .rejects.toThrow('ainda não suportado')
-    expect(mockLoadCloudCredentials).not.toHaveBeenCalled()
+      .rejects.toThrow('Invalid image URL')
+    expect(mockRecordCloudSendError).toHaveBeenCalledWith(
+      'wa-1',
+      expect.stringContaining('Invalid image URL')
+    )
+  })
+})
+
+describe('cloudApiAdapter.sendButtons (fora do escopo da Fase 2)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
   })
 
   it('sendButtons throws "not supported" without touching credentials or the client', async () => {

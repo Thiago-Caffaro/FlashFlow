@@ -10,7 +10,7 @@ const fetchMock = jest.fn()
 global.fetch = fetchMock
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { sendCloudText, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
+const { sendCloudText, sendCloudImage, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -70,6 +70,51 @@ describe('sendCloudText', () => {
     fetchMock.mockRejectedValue(abortError)
 
     await expect(sendCloudText('123456', 'token', '5511999999999', 'oi')).rejects.toThrow('aborted')
+  })
+})
+
+describe('sendCloudImage', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('posts to the Graph API messages endpoint with image type and link', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.IMG' }] }))
+
+    const result = await sendCloudImage('123456', 'token-abc', '5511999999999', 'https://cdn.example/img.jpg', 'legenda')
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://graph.facebook.com/v21.0/123456/messages')
+    expect(JSON.parse(init.body)).toEqual({
+      messaging_product: 'whatsapp',
+      to: '5511999999999',
+      type: 'image',
+      image: { link: 'https://cdn.example/img.jpg', caption: 'legenda' },
+    })
+    expect(result).toEqual({ waMessageId: 'wamid.IMG', raw: { messages: [{ id: 'wamid.IMG' }] } })
+  })
+
+  it('omits caption from the payload when not provided', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.IMG2' }] }))
+
+    await sendCloudImage('123456', 'token-abc', '5511999999999', 'https://cdn.example/img.jpg')
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(init.body)).toEqual({
+      messaging_product: 'whatsapp',
+      to: '5511999999999',
+      type: 'image',
+      image: { link: 'https://cdn.example/img.jpg' },
+    })
+  })
+
+  it('throws with the readable Meta error message on failure', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(400, {
+      error: { message: 'Invalid image URL', type: 'OAuthException', code: 100 },
+    }))
+
+    await expect(sendCloudImage('123456', 'token', '5511999999999', 'https://cdn.example/bad.jpg'))
+      .rejects.toThrow('Invalid image URL')
   })
 })
 
