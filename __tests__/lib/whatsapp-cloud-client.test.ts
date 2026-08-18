@@ -10,7 +10,7 @@ const fetchMock = jest.fn()
 global.fetch = fetchMock
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { sendCloudText, sendCloudImage, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
+const { sendCloudText, sendCloudImage, sendCloudButtons, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -115,6 +115,82 @@ describe('sendCloudImage', () => {
 
     await expect(sendCloudImage('123456', 'token', '5511999999999', 'https://cdn.example/bad.jpg'))
       .rejects.toThrow('Invalid image URL')
+  })
+})
+
+describe('sendCloudButtons', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('posts an interactive button message with text header, body, footer and buttons', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.BTN' }] }))
+
+    const result = await sendCloudButtons('123456', 'token-abc', '5511999999999', {
+      headerText: 'Confirme',
+      bodyText: 'Pedido correto?',
+      footerText: 'Selecione uma opcao',
+      buttons: [{ id: 'confirm', title: 'CONFIRMAR' }, { id: 'change', title: 'MODIFICAR' }],
+    })
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://graph.facebook.com/v21.0/123456/messages')
+    expect(JSON.parse(init.body)).toEqual({
+      messaging_product: 'whatsapp',
+      to: '5511999999999',
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        header: { type: 'text', text: 'Confirme' },
+        body: { text: 'Pedido correto?' },
+        footer: { text: 'Selecione uma opcao' },
+        action: {
+          buttons: [
+            { type: 'reply', reply: { id: 'confirm', title: 'CONFIRMAR' } },
+            { type: 'reply', reply: { id: 'change', title: 'MODIFICAR' } },
+          ],
+        },
+      },
+    })
+    expect(result).toEqual({ waMessageId: 'wamid.BTN', raw: { messages: [{ id: 'wamid.BTN' }] } })
+  })
+
+  it('uses an image header instead of text when headerImageUrl is provided', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.BTN2' }] }))
+
+    await sendCloudButtons('123456', 'token', '5511999999999', {
+      headerText: 'ignorado quando ha imagem',
+      headerImageUrl: 'https://cdn.example/thumb.jpg',
+      bodyText: 'oi',
+      buttons: [{ id: 'a', title: 'A' }],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(init.body)
+    expect(body.interactive.header).toEqual({ type: 'image', image: { link: 'https://cdn.example/thumb.jpg' } })
+  })
+
+  it('omits header and footer when not provided', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.BTN3' }] }))
+
+    await sendCloudButtons('123456', 'token', '5511999999999', {
+      bodyText: 'oi',
+      buttons: [{ id: 'a', title: 'A' }],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(init.body)
+    expect(body.interactive).not.toHaveProperty('header')
+    expect(body.interactive).not.toHaveProperty('footer')
+  })
+
+  it('throws with the readable Meta error message on failure', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(400, {
+      error: { message: 'Body text cannot be empty', type: 'OAuthException', code: 100 },
+    }))
+
+    await expect(sendCloudButtons('123456', 'token', '5511999999999', { bodyText: '', buttons: [] }))
+      .rejects.toThrow('Body text cannot be empty')
   })
 })
 

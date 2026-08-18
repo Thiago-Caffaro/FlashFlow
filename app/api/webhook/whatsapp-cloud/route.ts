@@ -11,6 +11,7 @@ import { normalizeReplyInput } from '@/lib/message-template'
 import { executeTriggers } from '@/lib/message-triggers'
 import { loadCloudCredentialsByPhoneNumberId, type WhatsAppCloudCredentialsRow } from '@/lib/whatsapp-cloud-credentials'
 import { resolveAndStoreCloudMedia } from '@/lib/whatsapp-cloud-media'
+import { extractCloudInteractiveReplyText } from '@/lib/whatsapp-cloud-message-parser'
 import {
   WHATSAPP_CLOUD_SIGNATURE_HEADER,
   verifyCloudWebhookHandshake,
@@ -44,6 +45,10 @@ async function extractContent(
   credentials: WhatsAppCloudCredentialsRow
 ): Promise<{ content: string; type: string }> {
   const msgType = typeof message.type === 'string' ? message.type : 'unknown'
+  const interactiveReply = extractCloudInteractiveReplyText(message)
+  if (interactiveReply) {
+    return { content: interactiveReply, type: 'text' }
+  }
   if (msgType === 'text') {
     const body = (message.text as Record<string, unknown> | undefined)?.body
     return { content: typeof body === 'string' && body.trim() ? body : '[mensagem vazia]', type: 'text' }

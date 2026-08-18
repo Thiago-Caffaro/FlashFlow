@@ -3,7 +3,7 @@ import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTur
 import { decrypt } from './ai-crypto'
 import { getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
-import { dispatchSendButtons, dispatchSendImage, dispatchSendText } from './whatsapp-dispatch'
+import { dispatchSendButtons, dispatchSendImage, dispatchSendText, supportsNativeButtons } from './whatsapp-dispatch'
 import {
   formatTextReplyMessage,
   getMessagePlaceholders,
@@ -98,11 +98,15 @@ export async function sendWhatsApp(ctx: FlowContext, text: string) {
 export async function sendWhatsAppReplyOptions(
   ctx: FlowContext,
   content: RenderedMessageContent,
-  options: { thumbnailUrl?: string } = {}
+  options: { thumbnailUrl?: string; nativeEnabled?: boolean } = {}
 ): Promise<'native' | 'text'> {
   const persistedText = formatTextReplyMessage(content)
   const realSendTarget = resolveRealSendTarget(ctx)
-  const nativeEnabled = process.env.EVOLUTION_REPLY_BUTTONS_ENABLED === 'true'
+  // Aceita um resultado já resolvido pelo chamador (o node sendMessage já
+  // calcula isso para decidir se combina com a imagem como thumbnail) —
+  // evita uma segunda consulta a accounts para a mesma decisão.
+  const nativeEnabled = options.nativeEnabled
+    ?? (realSendTarget ? await supportsNativeButtons(realSendTarget) : false)
 
   if (!realSendTarget || !nativeEnabled) {
     if (options.thumbnailUrl) {
@@ -1396,9 +1400,10 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
       }
 
       const renderedText = formatTextReplyMessage(rendered)
+      const realSendTargetForButtons = resolveRealSendTarget(ctx)
       const nativeReplyOptionsEnabled = replyButtons.length > 0
-        && process.env.EVOLUTION_REPLY_BUTTONS_ENABLED === 'true'
-        && Boolean(resolveRealSendTarget(ctx))
+        && Boolean(realSendTargetForButtons)
+        && (realSendTargetForButtons ? await supportsNativeButtons(realSendTargetForButtons) : false)
       const imageCaption = combineImageAndMessage
         && images.length > 0
         && renderedText.trim()
@@ -1411,13 +1416,13 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
       const imagesToSendSeparately = nativeReplyThumbnail ? images.slice(1) : images
 
       if (replyButtons.length > 0 && nativeReplyThumbnail) {
-        await sendWhatsAppReplyOptions(ctx, rendered, { thumbnailUrl: nativeReplyThumbnail })
+        await sendWhatsAppReplyOptions(ctx, rendered, { thumbnailUrl: nativeReplyThumbnail, nativeEnabled: nativeReplyOptionsEnabled })
       }
       for (const [index, img] of imagesToSendSeparately.entries()) {
         await sendWhatsAppImage(ctx, img.url, index === 0 ? imageCaption : undefined)
       }
       if (replyButtons.length > 0) {
-        if (!imageCaption && !nativeReplyThumbnail) await sendWhatsAppReplyOptions(ctx, rendered)
+        if (!imageCaption && !nativeReplyThumbnail) await sendWhatsAppReplyOptions(ctx, rendered, { nativeEnabled: nativeReplyOptionsEnabled })
       } else if (renderedText.trim() && !imageCaption) {
         await sendWhatsApp(ctx, renderedText)
       }

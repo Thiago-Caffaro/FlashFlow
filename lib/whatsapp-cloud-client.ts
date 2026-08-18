@@ -101,6 +101,58 @@ export async function sendCloudText(
   return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
 }
 
+export interface SendCloudButtonsInput {
+  headerText?: string
+  headerImageUrl?: string
+  bodyText: string
+  footerText?: string
+  buttons: Array<{ id: string; title: string }>
+}
+
+export async function sendCloudButtons(
+  phoneNumberId: string,
+  accessToken: string,
+  to: string,
+  input: SendCloudButtonsInput,
+  timeoutMs?: number
+): Promise<SendCloudTextResult> {
+  const header = input.headerImageUrl
+    ? { type: 'image', image: { link: input.headerImageUrl } }
+    : input.headerText
+      ? { type: 'text', text: input.headerText }
+      : undefined
+
+  const response = await fetchCloudApi(`/${phoneNumberId}/messages`, accessToken, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        ...(header ? { header } : {}),
+        body: { text: input.bodyText },
+        ...(input.footerText ? { footer: { text: input.footerText } } : {}),
+        action: {
+          buttons: input.buttons.map((button) => ({
+            type: 'reply',
+            reply: { id: button.id, title: button.title },
+          })),
+        },
+      },
+    }),
+  }, timeoutMs)
+
+  if (!response.ok) {
+    throw new Error(
+      `Falha ao enviar botões via WhatsApp Cloud API (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`
+    )
+  }
+
+  return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
+}
+
 export async function sendCloudImage(
   phoneNumberId: string,
   accessToken: string,

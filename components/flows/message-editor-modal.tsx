@@ -69,6 +69,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   const [variableLabel, setVariableLabel] = useState('')
   const [variableValue, setVariableValue] = useState('')
   const [insertTarget, setInsertTarget] = useState<InsertTarget>('message')
+  const [isCloudApiAccount, setIsCloudApiAccount] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -115,6 +116,24 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   useEffect(() => {
     void fetchVariables()
   }, [fetchVariables])
+
+  // Botões interativos da Cloud API têm teto de 20 caracteres por título
+  // (a Evolution não tem esse limite) — só afeta a UI de contagem/corte,
+  // o adaptador (lib/whatsapp-cloud-adapter.ts) já trunca no envio de
+  // qualquer forma.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/accounts')
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return
+        const accounts = Array.isArray(json.accounts) ? json.accounts : []
+        const account = accounts.find((a: { instance_name?: string }) => a.instance_name === instanceName)
+        setIsCloudApiAccount(account?.provider === 'cloud_api')
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [instanceName])
 
   const filteredAutomaticVariables = useMemo(() => {
     const query = variableQuery.trim().toLocaleLowerCase()
@@ -462,14 +481,19 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
                   {replyButtons.map((button, index) => (
                     <div key={button.id} className="flex items-center gap-2">
                       <span className="w-5 text-xs font-semibold text-[#667781]">{index + 1}</span>
-                      <input
-                        value={button.label}
-                        onFocus={() => setInsertTarget(`button:${button.id}`)}
-                        onChange={(event) => updateReplyButton(button.id, event.target.value)}
-                        placeholder={index === 0 ? 'CONFIRMAR PEDIDO' : 'MODIFICAR DADOS'}
-                        maxLength={80}
-                        className="min-w-0 flex-1 text-sm text-[#111b21] dark:text-[#e9edef] bg-[#f0f2f5] dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded-lg px-3 py-2 outline-none focus:border-[#00a884]"
-                      />
+                      <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                        <input
+                          value={button.label}
+                          onFocus={() => setInsertTarget(`button:${button.id}`)}
+                          onChange={(event) => updateReplyButton(button.id, event.target.value)}
+                          placeholder={index === 0 ? 'CONFIRMAR PEDIDO' : 'MODIFICAR DADOS'}
+                          maxLength={isCloudApiAccount ? 20 : 80}
+                          className="w-full text-sm text-[#111b21] dark:text-[#e9edef] bg-[#f0f2f5] dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded-lg px-3 py-2 outline-none focus:border-[#00a884]"
+                        />
+                        {isCloudApiAccount && (
+                          <span className="text-[10px] text-[#8696a0] text-right">{button.label.length}/20</span>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => removeReplyButton(button.id)}

@@ -358,6 +358,45 @@ describe('POST /api/webhook/whatsapp-cloud', () => {
     expect(insertArg.type).toBe('image')
   })
 
+  // ── Resposta a botão interativo (Fase 3) ──────────────────────────────────
+
+  it('resolves an interactive button_reply as a text message using the button title', async () => {
+    mockSupabaseSuccess()
+    const req = buildRequest(buildCloudPayload({
+      messages: [{
+        from: '5511988887777', id: 'wamid.BTN1', type: 'interactive',
+        interactive: { type: 'button_reply', button_reply: { id: 'confirm', title: 'CONFIRMAR PEDIDO' } },
+      }],
+    }))
+    await POST(req)
+
+    const msgCall = supabaseMock.from.mock.results.find(
+      (r) => r.value?.insert && (r.value.insert as jest.Mock).mock?.calls?.length > 0
+    )
+    const insertArg = (msgCall!.value.insert as jest.Mock).mock.calls[0][0]
+    expect(insertArg.content).toBe('CONFIRMAR PEDIDO')
+    expect(insertArg.type).toBe('text')
+    expect(mockResolveAndStoreCloudMedia).not.toHaveBeenCalled()
+  })
+
+  it('resolves the legacy button payload as a text message', async () => {
+    mockSupabaseSuccess()
+    const req = buildRequest(buildCloudPayload({
+      messages: [{
+        from: '5511988887777', id: 'wamid.BTN2', type: 'button',
+        button: { text: 'CONFIRMAR', payload: 'confirm' },
+      }],
+    }))
+    await POST(req)
+
+    const msgCall = supabaseMock.from.mock.results.find(
+      (r) => r.value?.insert && (r.value.insert as jest.Mock).mock?.calls?.length > 0
+    )
+    const insertArg = (msgCall!.value.insert as jest.Mock).mock.calls[0][0]
+    expect(insertArg.content).toBe('CONFIRMAR')
+    expect(insertArg.type).toBe('text')
+  })
+
   // ── Status updates de mensagens enviadas ──────────────────────────────────
 
   it('maps a delivered status update to messages.status by wa_message_id', async () => {

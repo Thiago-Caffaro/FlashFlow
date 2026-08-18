@@ -60,3 +60,12 @@ export async function dispatchSendButtons(
   const adapter = await resolveAdapter(instanceName)
   return adapter.sendButtons(instanceName, remoteJid, content, opts)
 }
+
+// Evolution depende de um fork com patch de botões nativos (rollout
+// controlado pela env var); a Cloud API tem botões interativos como recurso
+// estável da própria Meta, sempre disponível.
+export async function supportsNativeButtons(instanceName: string): Promise<boolean> {
+  const provider = await getAccountProvider(instanceName)
+  if (provider === 'cloud_api') return true
+  return process.env.EVOLUTION_REPLY_BUTTONS_ENABLED === 'true'
+}
