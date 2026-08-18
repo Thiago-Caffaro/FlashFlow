@@ -13,27 +13,31 @@ jest.mock('@/lib/whatsapp-account-provider', () => ({
 const mockEvolutionSendText = jest.fn()
 const mockEvolutionSendImage = jest.fn()
 const mockEvolutionSendButtons = jest.fn()
+const mockEvolutionSendTemplate = jest.fn()
 jest.mock('@/lib/whatsapp-evolution-adapter', () => ({
   evolutionAdapter: {
     sendText: (...args: unknown[]) => mockEvolutionSendText(...args),
     sendImage: (...args: unknown[]) => mockEvolutionSendImage(...args),
     sendButtons: (...args: unknown[]) => mockEvolutionSendButtons(...args),
+    sendTemplate: (...args: unknown[]) => mockEvolutionSendTemplate(...args),
   },
 }))
 
 const mockCloudSendText = jest.fn()
 const mockCloudSendImage = jest.fn()
 const mockCloudSendButtons = jest.fn()
+const mockCloudSendTemplate = jest.fn()
 jest.mock('@/lib/whatsapp-cloud-adapter', () => ({
   cloudApiAdapter: {
     sendText: (...args: unknown[]) => mockCloudSendText(...args),
     sendImage: (...args: unknown[]) => mockCloudSendImage(...args),
     sendButtons: (...args: unknown[]) => mockCloudSendButtons(...args),
+    sendTemplate: (...args: unknown[]) => mockCloudSendTemplate(...args),
   },
 }))
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { dispatchSendText, dispatchSendImage, dispatchSendButtons } = require('@/lib/whatsapp-dispatch')
+const { dispatchSendText, dispatchSendImage, dispatchSendButtons, dispatchSendTemplate } = require('@/lib/whatsapp-dispatch')
 
 describe('whatsapp-dispatch', () => {
   beforeEach(() => {
@@ -98,5 +102,24 @@ describe('whatsapp-dispatch', () => {
 
     await expect(dispatchSendImage('wa-cloud', 'jid', 'https://example.com/x.jpg')).rejects.toThrow('ainda não suportado')
     expect(mockEvolutionSendImage).not.toHaveBeenCalled()
+  })
+
+  it('dispatches sendTemplate to the cloud adapter, preserving all args', async () => {
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockCloudSendTemplate.mockResolvedValue({ waMessageId: 'wamid.tpl', raw: {} })
+
+    const result = await dispatchSendTemplate('wa-cloud', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'])
+
+    expect(mockCloudSendTemplate).toHaveBeenCalledWith('wa-cloud', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'])
+    expect(result).toEqual({ waMessageId: 'wamid.tpl', raw: {} })
+  })
+
+  it('dispatches sendTemplate to the evolution adapter, which rejects as unsupported', async () => {
+    mockGetAccountProvider.mockResolvedValue('evolution')
+    mockEvolutionSendTemplate.mockRejectedValue(new Error('Templates não são suportados para contas Evolution'))
+
+    await expect(dispatchSendTemplate('wa-1', 'jid', 'tpl', 'pt_BR', []))
+      .rejects.toThrow('não são suportados')
+    expect(mockCloudSendTemplate).not.toHaveBeenCalled()
   })
 })

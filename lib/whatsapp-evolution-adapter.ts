@@ -77,4 +77,12 @@ async function sendButtons(
   return { waMessageId: extractWaMessageId(response.body), raw: response.body }
 }
 
-export const evolutionAdapter: WhatsAppProviderAdapter = { sendText, sendImage, sendButtons }
+// Templates são um conceito exclusivo da WhatsApp Cloud API (Meta) — a
+// Evolution não tem equivalente. Nunca deveria ser chamado na prática (a UI
+// só oferece modo Template para contas cloud_api), mas existe para manter a
+// interface do dispatcher uniforme entre os dois provedores.
+async function sendTemplate(): Promise<SendResult> {
+  throw new Error('Templates não são suportados para contas Evolution')
+}
+
+export const evolutionAdapter: WhatsAppProviderAdapter = { sendText, sendImage, sendButtons, sendTemplate }

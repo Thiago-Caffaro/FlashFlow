@@ -10,7 +10,7 @@ const fetchMock = jest.fn()
 global.fetch = fetchMock
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { sendCloudText, sendCloudImage, sendCloudButtons, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
+const { sendCloudText, sendCloudImage, sendCloudButtons, sendCloudTemplate, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -191,6 +191,51 @@ describe('sendCloudButtons', () => {
 
     await expect(sendCloudButtons('123456', 'token', '5511999999999', { bodyText: '', buttons: [] }))
       .rejects.toThrow('Body text cannot be empty')
+  })
+})
+
+describe('sendCloudTemplate', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('posts a template message with body parameters', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.TPL' }] }))
+
+    const result = await sendCloudTemplate('123456', 'token-abc', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'])
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://graph.facebook.com/v21.0/123456/messages')
+    expect(JSON.parse(init.body)).toEqual({
+      messaging_product: 'whatsapp',
+      to: '5511999999999',
+      type: 'template',
+      template: {
+        name: 'order_confirmation',
+        language: { code: 'pt_BR' },
+        components: [{ type: 'body', parameters: [{ type: 'text', text: 'João' }, { type: 'text', text: '#123' }] }],
+      },
+    })
+    expect(result).toEqual({ waMessageId: 'wamid.TPL', raw: { messages: [{ id: 'wamid.TPL' }] } })
+  })
+
+  it('omits components entirely when the template has no variables', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.TPL2' }] }))
+
+    await sendCloudTemplate('123456', 'token', '5511999999999', 'welcome', 'pt_BR', [])
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(init.body)
+    expect(body.template).not.toHaveProperty('components')
+  })
+
+  it('throws with the readable Meta error message on failure', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(400, {
+      error: { message: 'Template name does not exist', type: 'OAuthException', code: 132001 },
+    }))
+
+    await expect(sendCloudTemplate('123456', 'token', '5511999999999', 'inexistente', 'pt_BR', []))
+      .rejects.toThrow('Template name does not exist')
   })
 })
 

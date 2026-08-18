@@ -1,6 +1,7 @@
 /**
  * Testes para lib/whatsapp-cloud-adapter.ts — a implementação real do
- * WhatsAppProviderAdapter para contas cloud_api (Fase 1: texto; Fase 2: imagem).
+ * WhatsAppProviderAdapter para contas cloud_api (Fase 1: texto; Fase 2:
+ * imagem; Fase 3: botões; Fase 4: templates).
  */
 export {}
 
@@ -16,10 +17,12 @@ jest.mock('@/lib/whatsapp-cloud-credentials', () => ({
 const mockSendCloudText = jest.fn()
 const mockSendCloudImage = jest.fn()
 const mockSendCloudButtons = jest.fn()
+const mockSendCloudTemplate = jest.fn()
 jest.mock('@/lib/whatsapp-cloud-client', () => ({
   sendCloudText: (...args: unknown[]) => mockSendCloudText(...args),
   sendCloudImage: (...args: unknown[]) => mockSendCloudImage(...args),
   sendCloudButtons: (...args: unknown[]) => mockSendCloudButtons(...args),
+  sendCloudTemplate: (...args: unknown[]) => mockSendCloudTemplate(...args),
 }))
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -228,6 +231,50 @@ describe('cloudApiAdapter.sendButtons', () => {
     expect(mockRecordCloudSendError).toHaveBeenCalledWith(
       'wa-1',
       expect.stringContaining('Body text cannot be empty')
+    )
+  })
+})
+
+describe('cloudApiAdapter.sendTemplate', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('loads credentials, decodes the token, and sends via the client with the right args', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({
+      instance_name: 'wa-1', phone_number_id: '123456',
+      encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
+    })
+    mockDecodeCloudAccessToken.mockReturnValue('plain-token')
+    mockSendCloudTemplate.mockResolvedValue({ waMessageId: 'wamid.tpl', raw: { ok: true } })
+
+    const result = await cloudApiAdapter.sendTemplate('wa-1', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'])
+
+    expect(mockSendCloudTemplate).toHaveBeenCalledWith('123456', 'plain-token', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'])
+    expect(result).toEqual({ waMessageId: 'wamid.tpl', raw: { ok: true } })
+  })
+
+  it('throws when the account has no cloud_api credentials configured', async () => {
+    mockLoadCloudCredentials.mockResolvedValue(null)
+
+    await expect(cloudApiAdapter.sendTemplate('wa-sem-credenciais', '5511999999999', 'tpl', 'pt_BR', []))
+      .rejects.toThrow('não tem credenciais')
+    expect(mockSendCloudTemplate).not.toHaveBeenCalled()
+  })
+
+  it('records the error via recordCloudSendError and re-throws when the send fails', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({
+      instance_name: 'wa-1', phone_number_id: '123456',
+      encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
+    })
+    mockDecodeCloudAccessToken.mockReturnValue('plain-token')
+    mockSendCloudTemplate.mockRejectedValue(new Error('Falha ao enviar template via WhatsApp Cloud API (400): Template name does not exist'))
+
+    await expect(cloudApiAdapter.sendTemplate('wa-1', '5511999999999', 'inexistente', 'pt_BR', []))
+      .rejects.toThrow('Template name does not exist')
+    expect(mockRecordCloudSendError).toHaveBeenCalledWith(
+      'wa-1',
+      expect.stringContaining('Template name does not exist')
     )
   })
 })

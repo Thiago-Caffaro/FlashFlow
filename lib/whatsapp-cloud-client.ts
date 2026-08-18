@@ -182,6 +182,41 @@ export async function sendCloudImage(
   return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
 }
 
+export async function sendCloudTemplate(
+  phoneNumberId: string,
+  accessToken: string,
+  to: string,
+  templateName: string,
+  languageCode: string,
+  parameters: string[],
+  timeoutMs?: number
+): Promise<SendCloudTextResult> {
+  const response = await fetchCloudApi(`/${phoneNumberId}/messages`, accessToken, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: languageCode },
+        ...(parameters.length > 0
+          ? { components: [{ type: 'body', parameters: parameters.map((text) => ({ type: 'text', text })) }] }
+          : {}),
+      },
+    }),
+  }, timeoutMs)
+
+  if (!response.ok) {
+    throw new Error(
+      `Falha ao enviar template via WhatsApp Cloud API (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`
+    )
+  }
+
+  return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
+}
+
 export interface VerifyCloudCredentialsResult {
   verifiedName: string | null
   displayPhoneNumber: string | null

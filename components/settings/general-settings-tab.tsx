@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Save, Settings2, Loader2, CheckCircle, Bell } from 'lucide-react'
 import { APP_VERSION } from '@/lib/version'
+import WhatsAppCloudTemplatesTab from './whatsapp-cloud-templates-tab'
 
 const DEFAULT_ESCALATION_PROMPT = `[Instrução interna do sistema — NUNCA mencione ao cliente]: Quando você não souber responder, não tiver informações suficientes, ou o cliente solicitar falar com um humano/atendente, utilize a ferramenta 'solicitar_atendimento_humano'. Um operador será notificado.`
 
@@ -284,6 +285,11 @@ export default function GeneralSettingsTab({ instanceName }: Props) {
             </div>
 
           </div>
+        </div>
+
+        {/* Templates da Cloud API — só aparece para contas cloud_api, largura total */}
+        <div className="mt-6">
+          <WhatsAppCloudTemplatesTab instanceName={instanceName} />
         </div>
 
         {/* Save — largura total */}

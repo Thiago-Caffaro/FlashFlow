@@ -160,6 +160,10 @@ export interface FlowNodeData {
   // order state capture
   orderStateField?: OrderStateField
   orderStateValue?: string
+  // sendMessage em modo Template (WhatsApp Cloud API) — quando setado,
+  // substitui o envio de texto livre pelo template aprovado correspondente
+  templateId?: string
+  templateVariableMap?: Record<string, string>
   [key: string]: unknown
 }
 

@@ -1,6 +1,6 @@
 import 'server-only'
 import { decodeCloudAccessToken, loadCloudCredentials, recordCloudSendError } from './whatsapp-cloud-credentials'
-import { sendCloudButtons, sendCloudImage, sendCloudText } from './whatsapp-cloud-client'
+import { sendCloudButtons, sendCloudImage, sendCloudTemplate, sendCloudText } from './whatsapp-cloud-client'
 import type { SendResult, WhatsAppProviderAdapter } from './whatsapp-dispatch'
 import type { RenderedMessageContent } from './message-template'
 
@@ -88,8 +88,27 @@ async function sendButtons(
   }
 }
 
+async function sendTemplate(
+  instanceName: string,
+  remoteJid: string,
+  templateName: string,
+  language: string,
+  parameters: string[]
+): Promise<SendResult> {
+  const row = await requireCredentials(instanceName)
+  try {
+    const result = await sendCloudTemplate(row.phone_number_id, decodeCloudAccessToken(row), remoteJid, templateName, language, parameters)
+    return { waMessageId: result.waMessageId, raw: result.raw }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Falha ao enviar template via WhatsApp Cloud API'
+    await recordCloudSendError(instanceName, message)
+    throw error
+  }
+}
+
 export const cloudApiAdapter: WhatsAppProviderAdapter = {
   sendText,
   sendImage,
   sendButtons,
+  sendTemplate,
 }

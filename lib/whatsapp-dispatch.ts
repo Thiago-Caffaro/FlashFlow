@@ -19,6 +19,13 @@ export interface WhatsAppProviderAdapter {
     content: RenderedMessageContent,
     opts?: { thumbnailUrl?: string }
   ): Promise<SendResult>
+  sendTemplate(
+    instanceName: string,
+    remoteJid: string,
+    templateName: string,
+    language: string,
+    parameters: string[]
+  ): Promise<SendResult>
 }
 
 const adapters: Record<WhatsAppProvider, WhatsAppProviderAdapter> = {
@@ -59,6 +66,17 @@ export async function dispatchSendButtons(
 ): Promise<SendResult> {
   const adapter = await resolveAdapter(instanceName)
   return adapter.sendButtons(instanceName, remoteJid, content, opts)
+}
+
+export async function dispatchSendTemplate(
+  instanceName: string,
+  remoteJid: string,
+  templateName: string,
+  language: string,
+  parameters: string[]
+): Promise<SendResult> {
+  const adapter = await resolveAdapter(instanceName)
+  return adapter.sendTemplate(instanceName, remoteJid, templateName, language, parameters)
 }
 
 // Evolution depende de um fork com patch de botões nativos (rollout
