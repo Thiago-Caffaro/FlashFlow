@@ -250,7 +250,16 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
 
+  // Log incondicional antes de qualquer verificação — sem isso, uma rejeição
+  // de assinatura (401) não deixa rastro nenhum, indistinguível de "a
+  // requisição nunca chegou" na hora de diagnosticar problemas de entrega.
+  const hasSignatureHeader = Boolean(req.headers.get(WHATSAPP_CLOUD_SIGNATURE_HEADER))
+  console.log(
+    `[webhook-whatsapp-cloud] POST recebido bodyLen=${rawBody.length} hasSignatureHeader=${hasSignatureHeader} secretConfigured=${Boolean(process.env.WHATSAPP_CLOUD_APP_SECRET)}`
+  )
+
   if (!verifyCloudWebhookSignature(rawBody, req.headers.get(WHATSAPP_CLOUD_SIGNATURE_HEADER))) {
+    console.error('[webhook-whatsapp-cloud] assinatura inválida ou ausente — rejeitando com 401')
     return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
   }
 
