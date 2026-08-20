@@ -79,14 +79,17 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       if (json.ok) {
         const msgs: Message[] = json.messages
         setMessages((prev) => {
-          const sending = prev.filter(
-            (m) => m.id.startsWith('temp-') && m.status === 'sending'
-          )
-          if (msgs.length === 0 && sending.length > 0) return prev
-          const confirmed = msgs.filter(
-            (m) => !sending.some((s) => s.content === m.content && s.direction === m.direction)
-          )
-          return [...confirmed, ...sending].sort((a, b) =>
+          if (msgs.length === 0 && prev.length > 0) return prev
+          // Uma vez que a mensagem real (confirmada pelo banco) aparece com o
+          // mesmo conteúdo/direção de uma otimista "sending" ainda pendente,
+          // a otimista precisa sumir — senão o ícone de "enviando" nunca
+          // troca pro de confirmado, mesmo com o envio já concluído.
+          const stillPending = prev.filter((m) => (
+            m.id.startsWith('temp-')
+            && m.status === 'sending'
+            && !msgs.some((real) => real.content === m.content && real.direction === m.direction)
+          ))
+          return [...msgs, ...stillPending].sort((a, b) =>
             a.created_at.localeCompare(b.created_at)
           )
         })
