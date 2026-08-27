@@ -9,7 +9,12 @@ import {
   isSendStatus,
   shouldSubmitToFenix,
 } from './order-state'
-import { executeFlow } from './flow-engine'
+import { executeFlow, interpolateTemplateBody } from './flow-engine'
+import { getAccountProvider } from './whatsapp-account-provider'
+import { isWithinMessagingWindow, OutsideMessagingWindowError } from './messaging-window'
+import { loadWhatsAppTemplateById } from './whatsapp-templates'
+import { dispatchSendTemplate } from './whatsapp-dispatch'
+import { buildMessageTemplateValues, getMessagePlaceholders, renderMessageTemplate } from './message-template'
 import { supabaseAdmin } from './supabase-admin'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import { normalizePhone } from './phone'
@@ -907,6 +912,12 @@ export async function updateAbandonedCheckout(checkoutId: string, body: Record<s
   return data
 }
 
+// Recuperação de carrinho abandonado é, por definição, sempre iniciada pela
+// empresa — o cliente nunca escreveu sobre esse carrinho especificamente, e
+// pode nunca ter escrito nada em até 24h. Numa conta cloud_api fora da
+// janela, texto livre é rejeitado pela Meta; se houver um template de
+// recuperação configurado na integração, usa ele em vez de tentar o texto
+// livre fadado ao fracasso (mesma filosofia da Fase 4 no flow-engine).
 export async function sendAbandonedCheckoutRecovery(checkoutId: string) {
   const { data: checkout, error } = await supabaseAdmin
     .from('shopify_abandoned_checkouts')
@@ -921,18 +932,28 @@ export async function sendAbandonedCheckoutRecovery(checkoutId: string) {
   if (!instanceName) throw new Error('Checkout sem conta WhatsApp atribuída')
   if (!phone) throw new Error('Checkout sem telefone')
 
+  const { conversationId, remoteJid } = await resolveConversationForOrder(
+    instanceName,
+    phone,
+    String(checkout.customer_name || '')
+  )
+
   let recoveryTemplateText: string | null = null
+  let recoveryTemplateId: string | null = null
+  let recoveryTemplateVariableMap: Record<string, string> = {}
   if (checkout.shopify_integration_id) {
     const { data: integrationRow } = await supabaseAdmin
       .from('shopify_integrations')
-      .select('recovery_message_template')
+      .select('recovery_message_template, recovery_template_id, recovery_template_variable_map')
       .eq('id', checkout.shopify_integration_id)
       .maybeSingle()
     recoveryTemplateText = integrationRow?.recovery_message_template ?? null
+    recoveryTemplateId = integrationRow?.recovery_template_id ?? null
+    recoveryTemplateVariableMap = (integrationRow?.recovery_template_variable_map as Record<string, string> | null) ?? {}
   }
 
   const link = checkout.abandoned_checkout_url ? `\n${String(checkout.abandoned_checkout_url)}` : ''
-  const message = interpolateTemplate(recoveryTemplateText || DEFAULT_RECOVERY_TEMPLATE, {
+  const freeTextMessage = interpolateTemplate(recoveryTemplateText || DEFAULT_RECOVERY_TEMPLATE, {
     nome: checkout.customer_name ? `, ${String(checkout.customer_name)}` : '',
     total: Number(checkout.total ?? 0).toFixed(2),
     currency: String(checkout.currency),
@@ -940,7 +961,47 @@ export async function sendAbandonedCheckoutRecovery(checkoutId: string) {
   })
 
   try {
-    const sent = await sendWhatsAppText({ instanceName, number: phone, text: message })
+    const provider = await getAccountProvider(instanceName)
+    const withinWindow = provider !== 'cloud_api' || await isWithinMessagingWindow(conversationId)
+
+    let waMessageId: string | null = null
+    let persistedContent = freeTextMessage
+
+    if (withinWindow) {
+      const sent = await sendWhatsAppText({ instanceName, number: phone, text: freeTextMessage })
+      waMessageId = sent.messageId
+    } else if (recoveryTemplateId) {
+      const template = await loadWhatsAppTemplateById(recoveryTemplateId)
+      if (!template) throw new Error('Template de recuperação configurado não foi encontrado — sincronize os templates novamente')
+      const rawValues = Array.from({ length: template.variable_count }, (_, i) => recoveryTemplateVariableMap[String(i + 1)] ?? '')
+      const hasVariables = getMessagePlaceholders(...rawValues).length > 0
+      const values = buildMessageTemplateValues(
+        hasVariables
+          ? { contact: { name: checkout.customer_name ?? null, number: phone }, customVariables: {} }
+          : { contact: { name: null, number: phone }, customVariables: {} }
+      )
+      const parameters = rawValues.map((raw) => renderMessageTemplate(raw, values))
+      persistedContent = interpolateTemplateBody(template.body_text, parameters)
+      const result = await dispatchSendTemplate(instanceName, remoteJid, template.meta_template_name, template.language, parameters)
+      waMessageId = result.waMessageId
+    } else {
+      throw new OutsideMessagingWindowError(conversationId)
+    }
+
+    await supabaseAdmin.from('messages').insert({
+      conversation_id: conversationId,
+      wa_message_id: waMessageId,
+      content: persistedContent,
+      type: 'text',
+      direction: 'outbound',
+      status: 'sent',
+      sender_type: 'ai',
+    })
+    await supabaseAdmin.from('conversations').update({
+      last_message: persistedContent,
+      last_message_at: new Date().toISOString(),
+    }).eq('id', conversationId)
+
     const { data: updated, error: updateError } = await supabaseAdmin
       .from('shopify_abandoned_checkouts')
       .update({
@@ -953,16 +1014,19 @@ export async function sendAbandonedCheckoutRecovery(checkoutId: string) {
       .select()
       .single()
     if (updateError) throw new Error(updateError.message)
-    return { checkout: updated, messageId: sent.messageId }
+    return { checkout: updated, messageId: waMessageId }
   } catch (error) {
+    const messageText = error instanceof OutsideMessagingWindowError
+      ? 'Fora da janela de 24h de atendimento e nenhum template de recuperação configurado — configure um template aprovado nas integrações do Shopify.'
+      : (error instanceof Error ? error.message : 'Falha ao enviar recuperação')
     await supabaseAdmin
       .from('shopify_abandoned_checkouts')
       .update({
-        last_error: error instanceof Error ? error.message : 'Falha ao enviar recuperação',
+        last_error: messageText,
         updated_at: new Date().toISOString(),
       })
       .eq('id', checkoutId)
-    throw error
+    throw new Error(messageText)
   }
 }
 

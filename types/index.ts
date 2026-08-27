@@ -286,6 +286,8 @@ export interface ShopifyIntegration {
   oauth_connected: boolean
   confirmation_message_template: string | null
   recovery_message_template: string | null
+  recovery_template_id: string | null
+  recovery_template_variable_map: Record<string, string> | null
   created_at: string
   updated_at: string
 }

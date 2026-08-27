@@ -13,6 +13,16 @@ type ShopifyIntegrationForm = {
   active: boolean
   confirmation_message_template: string
   recovery_message_template: string
+  recovery_template_id: string
+  recovery_template_variable_map: Record<string, string>
+}
+
+interface CloudApiTemplateOption {
+  id: string
+  meta_template_name: string
+  language: string
+  variable_count: number
+  instanceLabel: string
 }
 
 type AppCredentials = {
@@ -25,6 +35,7 @@ type AppCredentials = {
 const emptyForm: ShopifyIntegrationForm = {
   shop_domain: '', default_country: '', active: true,
   confirmation_message_template: '', recovery_message_template: '',
+  recovery_template_id: '', recovery_template_variable_map: {},
 }
 
 interface ShopifyConfigProps {
@@ -69,6 +80,47 @@ export default function ShopifyConfig({
 
   const [webhookBusy, setWebhookBusy] = useState(false)
   const [webhookResult, setWebhookResult] = useState<{ text: string; error?: boolean } | null>(null)
+
+  const [cloudApiTemplates, setCloudApiTemplates] = useState<CloudApiTemplateOption[]>([])
+  const [cloudApiTemplatesLoading, setCloudApiTemplatesLoading] = useState(false)
+
+  // Templates só existem pra contas cloud_api — o carrinho abandonado pode
+  // cair em qualquer conta atribuída por país, então agrega os templates
+  // aprovados de todas as contas cloud_api em vez de amarrar a uma só.
+  useEffect(() => {
+    const cloudAccounts = accounts.filter((a) => a.provider === 'cloud_api')
+    if (cloudAccounts.length === 0) {
+      setCloudApiTemplates([])
+      return
+    }
+    let cancelled = false
+    setCloudApiTemplatesLoading(true)
+    Promise.all(cloudAccounts.map((account) =>
+      fetch(`/api/whatsapp-cloud/templates?instance=${encodeURIComponent(account.instanceName)}`)
+        .then(getJson)
+        .then((json) => {
+          if (!json.ok) return []
+          const templates = Array.isArray(json.templates) ? json.templates : []
+          return templates
+            .filter((t: { status?: string }) => t.status === 'approved')
+            .map((t: { id: string; meta_template_name: string; language: string; variable_count: number }) => ({
+              id: t.id,
+              meta_template_name: t.meta_template_name,
+              language: t.language,
+              variable_count: t.variable_count,
+              instanceLabel: account.label,
+            }))
+        })
+        .catch(() => [] as CloudApiTemplateOption[])
+    )).then((lists) => {
+      if (!cancelled) setCloudApiTemplates(lists.flat())
+    }).finally(() => {
+      if (!cancelled) setCloudApiTemplatesLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [accounts])
+
+  const selectedRecoveryTemplate = cloudApiTemplates.find((t) => t.id === form.recovery_template_id) ?? null
 
   useEffect(() => {
     fetch('/api/settings/shopify').then(getJson).then((json) => {
@@ -161,6 +213,8 @@ export default function ShopifyConfig({
       active: integration.active,
       confirmation_message_template: integration.confirmation_message_template ?? '',
       recovery_message_template: integration.recovery_message_template ?? '',
+      recovery_template_id: integration.recovery_template_id ?? '',
+      recovery_template_variable_map: integration.recovery_template_variable_map ?? {},
     })
     setShowForm(true)
     setActiveStep(1)
@@ -472,6 +526,58 @@ export default function ShopifyConfig({
                     onChange={(e) => setForm((f) => ({ ...f, recovery_message_template: e.target.value }))}
                   />
                   <p className="mt-1 text-xs text-[#667781]">Deixe em branco para usar o modelo padrão.</p>
+                </div>
+
+                <div className="rounded-lg border border-[#f0f2f5] bg-[#f8f9fa] p-4 dark:border-[#2a3942] dark:bg-[#182229]">
+                  <label className="mb-1 block text-xs font-semibold text-[#667781]">
+                    Template para contas API oficial (opcional)
+                  </label>
+                  <p className="mb-2 text-xs text-[#667781]">
+                    Carrinho abandonado é sempre uma mensagem iniciada pela empresa — numa conta cloud_api fora da janela de 24h de atendimento, a mensagem acima (texto livre) é rejeitada pela Meta. Configure um template aprovado aqui para esses casos; sem ele, o envio falha com um erro claro em vez de tentar e ser recusado.
+                  </p>
+                  {cloudApiTemplatesLoading ? (
+                    <div className="flex items-center gap-2 text-xs text-[#667781]">
+                      <Loader2 size={13} className="animate-spin" /> Carregando templates...
+                    </div>
+                  ) : cloudApiTemplates.length === 0 ? (
+                    <p className="text-xs text-[#8696a0]">
+                      Nenhum template aprovado sincronizado ainda (ou nenhuma conta API oficial configurada). Sincronize em Configurações Gerais da conta.
+                    </p>
+                  ) : (
+                    <>
+                      <select
+                        className={inputClass}
+                        value={form.recovery_template_id}
+                        onChange={(e) => setForm((f) => ({ ...f, recovery_template_id: e.target.value, recovery_template_variable_map: {} }))}
+                      >
+                        <option value="">Nenhum — só usar texto livre</option>
+                        {cloudApiTemplates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.meta_template_name} ({t.language}) — {t.instanceLabel}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedRecoveryTemplate && selectedRecoveryTemplate.variable_count > 0 && (
+                        <div className="mt-3 flex flex-col gap-2">
+                          <span className="text-xs font-semibold text-[#667781]">Variáveis do template</span>
+                          {Array.from({ length: selectedRecoveryTemplate.variable_count }, (_, i) => String(i + 1)).map((key) => (
+                            <label key={key} className="flex flex-col gap-1">
+                              <span className="text-xs text-[#8696a0]">{`{{${key}}}`}</span>
+                              <input
+                                className={inputClass}
+                                placeholder="Texto literal ou {{contato.primeiro_nome}}"
+                                value={form.recovery_template_variable_map[key] ?? ''}
+                                onChange={(e) => setForm((f) => ({
+                                  ...f,
+                                  recovery_template_variable_map: { ...f.recovery_template_variable_map, [key]: e.target.value },
+                                }))}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </>
             )}

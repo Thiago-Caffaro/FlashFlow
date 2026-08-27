@@ -184,7 +184,7 @@ export async function sendWhatsAppImage(
   }).eq('id', ctx.conversationId)
 }
 
-function interpolateTemplateBody(bodyText: string, parameters: string[]): string {
+export function interpolateTemplateBody(bodyText: string, parameters: string[]): string {
   return bodyText.replace(/\{\{(\d+)\}\}/g, (match, num: string) => {
     const index = Number.parseInt(num, 10) - 1
     return parameters[index] ?? match
