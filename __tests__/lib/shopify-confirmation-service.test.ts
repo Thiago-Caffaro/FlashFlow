@@ -14,8 +14,36 @@ jest.mock('@/lib/supabase-admin', () => ({
   supabaseAdmin: { from: mockFrom, rpc: mockRpc },
 }))
 
+const mockInterpolateTemplateBody = jest.fn((bodyText: string, parameters: string[]) =>
+  bodyText.replace(/\{\{(\d+)\}\}/g, (match: string, num: string) => parameters[Number(num) - 1] ?? match)
+)
 jest.mock('@/lib/flow-engine', () => ({
   executeFlow: mockExecuteFlow,
+  interpolateTemplateBody: (...args: [string, string[]]) => mockInterpolateTemplateBody(...args),
+}))
+
+const mockGetAccountProvider = jest.fn()
+jest.mock('@/lib/whatsapp-account-provider', () => ({
+  getAccountProvider: (...args: unknown[]) => mockGetAccountProvider(...args),
+}))
+
+const mockIsWithinMessagingWindow = jest.fn()
+jest.mock('@/lib/messaging-window', () => {
+  const actual = jest.requireActual('@/lib/messaging-window')
+  return {
+    isWithinMessagingWindow: (...args: unknown[]) => mockIsWithinMessagingWindow(...args),
+    OutsideMessagingWindowError: actual.OutsideMessagingWindowError,
+  }
+})
+
+const mockLoadWhatsAppTemplateById = jest.fn()
+jest.mock('@/lib/whatsapp-templates', () => ({
+  loadWhatsAppTemplateById: (...args: unknown[]) => mockLoadWhatsAppTemplateById(...args),
+}))
+
+const mockDispatchSendTemplate = jest.fn()
+jest.mock('@/lib/whatsapp-dispatch', () => ({
+  dispatchSendTemplate: (...args: unknown[]) => mockDispatchSendTemplate(...args),
 }))
 
 jest.mock('@/lib/flow-jobs', () => ({
@@ -157,6 +185,7 @@ const {
   upsertShopifyOrder,
   runShopifyOrderTrigger,
   reserveConfirmationSendSlot,
+  sendAbandonedCheckoutRecovery,
   _resetConfirmationSendPacingForTests,
 } = require('@/lib/shopify-confirmation-service')
 
@@ -734,5 +763,147 @@ describe('shopify-confirmation-service', () => {
 
     await expect(updateConfirmationOrder('order-1', { country: 'MARS' }))
       .rejects.toThrow('Integração de fulfillment não configurada para MARS')
+  })
+
+  describe('sendAbandonedCheckoutRecovery', () => {
+    function checkoutRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'checkout-1',
+        is_simulation: false,
+        recovery_status: 'Pendente',
+        assigned_instance_name: 'wa-1',
+        contact_phone: '351900000000',
+        customer_name: 'Maria',
+        shopify_integration_id: 'int-1',
+        abandoned_checkout_url: 'https://loja.example/cart/abc',
+        total: 49.9,
+        currency: 'EUR',
+        ...overrides,
+      }
+    }
+
+    function integrationRow(overrides: Record<string, unknown> = {}) {
+      return {
+        recovery_message_template: null,
+        recovery_template_id: null,
+        recovery_template_variable_map: {},
+        ...overrides,
+      }
+    }
+
+    function existingConversation() {
+      return { id: 'conv-1', wa_id: '351900000000@s.whatsapp.net', sandbox_source_instance: null, sandbox_real_send_enabled: false }
+    }
+
+    it('sends free text on an evolution account without ever checking the messaging window', async () => {
+      mockGetAccountProvider.mockResolvedValue('evolution')
+      mockSendWhatsAppText.mockResolvedValue({ messageId: 'wamid.1', response: {} })
+      const checkout = queryBuilder({ data: checkoutRow(), error: null })
+      const conversations = queryBuilder({ data: existingConversation(), error: null })
+      const integration = queryBuilder({ data: integrationRow(), error: null })
+      const messages = queryBuilder()
+      const conversationsUpdate = queryBuilder()
+      const checkoutUpdate = queryBuilder({ data: { id: 'checkout-1', recovery_status: 'Enviado' }, error: null })
+      setTableQueues({
+        shopify_abandoned_checkouts: [checkout, checkoutUpdate],
+        conversations: [conversations, conversationsUpdate],
+        shopify_integrations: [integration],
+        messages: [messages],
+      })
+
+      const result = await sendAbandonedCheckoutRecovery('checkout-1')
+
+      expect(mockIsWithinMessagingWindow).not.toHaveBeenCalled()
+      expect(mockSendWhatsAppText).toHaveBeenCalledWith(expect.objectContaining({ instanceName: 'wa-1', number: '351900000000' }))
+      expect(mockDispatchSendTemplate).not.toHaveBeenCalled()
+      expect(messages.inserts[0]).toMatchObject({ conversation_id: 'conv-1', direction: 'outbound', wa_message_id: 'wamid.1' })
+      expect(checkoutUpdate.updates[0]).toMatchObject({ recovery_status: 'Enviado', last_error: null })
+      expect(result.messageId).toBe('wamid.1')
+    })
+
+    it('sends free text on a cloud_api account when within the 24h window', async () => {
+      mockGetAccountProvider.mockResolvedValue('cloud_api')
+      mockIsWithinMessagingWindow.mockResolvedValue(true)
+      mockSendWhatsAppText.mockResolvedValue({ messageId: 'wamid.2', response: {} })
+      const checkout = queryBuilder({ data: checkoutRow(), error: null })
+      const conversations = queryBuilder({ data: existingConversation(), error: null })
+      const integration = queryBuilder({ data: integrationRow(), error: null })
+      const messages = queryBuilder()
+      const conversationsUpdate = queryBuilder()
+      const checkoutUpdate = queryBuilder({ data: { id: 'checkout-1' }, error: null })
+      setTableQueues({
+        shopify_abandoned_checkouts: [checkout, checkoutUpdate],
+        conversations: [conversations, conversationsUpdate],
+        shopify_integrations: [integration],
+        messages: [messages],
+      })
+
+      await sendAbandonedCheckoutRecovery('checkout-1')
+
+      expect(mockIsWithinMessagingWindow).toHaveBeenCalledWith('conv-1')
+      expect(mockSendWhatsAppText).toHaveBeenCalled()
+      expect(mockDispatchSendTemplate).not.toHaveBeenCalled()
+    })
+
+    it('sends via the configured template on a cloud_api account outside the window', async () => {
+      mockGetAccountProvider.mockResolvedValue('cloud_api')
+      mockIsWithinMessagingWindow.mockResolvedValue(false)
+      mockLoadWhatsAppTemplateById.mockResolvedValue({
+        id: 'tpl-1', variable_count: 1, body_text: 'Olá {{1}}, seu carrinho ainda está disponível.',
+        meta_template_name: 'cart_recovery', language: 'pt_BR',
+      })
+      mockDispatchSendTemplate.mockResolvedValue({ waMessageId: 'wamid.tpl', raw: {} })
+      const checkout = queryBuilder({ data: checkoutRow(), error: null })
+      const conversations = queryBuilder({ data: existingConversation(), error: null })
+      const integration = queryBuilder({
+        data: integrationRow({ recovery_template_id: 'tpl-1', recovery_template_variable_map: { '1': 'Maria' } }),
+        error: null,
+      })
+      const messages = queryBuilder()
+      const conversationsUpdate = queryBuilder()
+      const checkoutUpdate = queryBuilder({ data: { id: 'checkout-1' }, error: null })
+      setTableQueues({
+        shopify_abandoned_checkouts: [checkout, checkoutUpdate],
+        conversations: [conversations, conversationsUpdate],
+        shopify_integrations: [integration],
+        messages: [messages],
+      })
+
+      const result = await sendAbandonedCheckoutRecovery('checkout-1')
+
+      expect(mockSendWhatsAppText).not.toHaveBeenCalled()
+      expect(mockLoadWhatsAppTemplateById).toHaveBeenCalledWith('tpl-1')
+      expect(mockDispatchSendTemplate).toHaveBeenCalledWith('wa-1', '351900000000@s.whatsapp.net', 'cart_recovery', 'pt_BR', ['Maria'])
+      expect(messages.inserts[0]).toMatchObject({ content: 'Olá Maria, seu carrinho ainda está disponível.', wa_message_id: 'wamid.tpl' })
+      expect(result.messageId).toBe('wamid.tpl')
+    })
+
+    it('fails clearly instead of attempting a doomed send when outside the window with no template configured', async () => {
+      mockGetAccountProvider.mockResolvedValue('cloud_api')
+      mockIsWithinMessagingWindow.mockResolvedValue(false)
+      const checkout = queryBuilder({ data: checkoutRow(), error: null })
+      const conversations = queryBuilder({ data: existingConversation(), error: null })
+      const integration = queryBuilder({ data: integrationRow(), error: null })
+      const checkoutUpdate = queryBuilder({ data: { id: 'checkout-1' }, error: null })
+      setTableQueues({
+        shopify_abandoned_checkouts: [checkout, checkoutUpdate],
+        conversations: [conversations],
+        shopify_integrations: [integration],
+      })
+
+      await expect(sendAbandonedCheckoutRecovery('checkout-1')).rejects.toThrow('template de recuperação')
+
+      expect(mockSendWhatsAppText).not.toHaveBeenCalled()
+      expect(mockDispatchSendTemplate).not.toHaveBeenCalled()
+      expect(checkoutUpdate.updates[0]).toMatchObject({ last_error: expect.stringContaining('template de recuperação') })
+    })
+
+    it('rejects a simulated checkout without touching any provider/window logic', async () => {
+      const checkout = queryBuilder({ data: checkoutRow({ is_simulation: true }), error: null })
+      setTableQueues({ shopify_abandoned_checkouts: [checkout] })
+
+      await expect(sendAbandonedCheckoutRecovery('checkout-1')).rejects.toThrow('simulação não envia WhatsApp real')
+      expect(mockGetAccountProvider).not.toHaveBeenCalled()
+    })
   })
 })

@@ -3,11 +3,16 @@ import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTur
 import { decrypt } from './ai-crypto'
 import { getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
-import { fetchEvolution } from './evolution-api'
+import { dispatchSendButtons, dispatchSendImage, dispatchSendTemplate, dispatchSendText, supportsNativeButtons } from './whatsapp-dispatch'
+import { getAccountProvider } from './whatsapp-account-provider'
+import { loadWhatsAppTemplateById } from './whatsapp-templates'
+import { isWithinMessagingWindow, OutsideMessagingWindowError } from './messaging-window'
 import {
+  buildMessageTemplateValues,
   formatTextReplyMessage,
   getMessagePlaceholders,
   renderMessageContent,
+  renderMessageTemplate,
   type RenderedMessageContent,
 } from './message-template'
 import { OrderContextPendingError, resolveFlowOrder, resolveMessageTemplateContext } from './message-context'
@@ -75,21 +80,8 @@ export async function sendWhatsApp(ctx: FlowContext, text: string) {
   let waMessageId: string | null = null
   const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
-    const response = await fetchEvolution(`/message/sendText/${encodeURIComponent(realSendTarget)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ number: ctx.remoteJid, text }),
-    }, 15_000)
-    if (!response.ok) {
-      throw new Error(`Falha ao enviar mensagem do fluxo (${response.status}): ${response.text.slice(0, 300)}`)
-    }
-    const record = response.body && typeof response.body === 'object'
-      ? response.body as Record<string, unknown>
-      : {}
-    const key = record.key && typeof record.key === 'object'
-      ? record.key as Record<string, unknown>
-      : {}
-    waMessageId = typeof key.id === 'string' ? key.id : null
+    const result = await dispatchSendText(realSendTarget, ctx.remoteJid, text)
+    waMessageId = result.waMessageId
   }
 
   await supabase.from('messages').insert({
@@ -111,11 +103,15 @@ export async function sendWhatsApp(ctx: FlowContext, text: string) {
 export async function sendWhatsAppReplyOptions(
   ctx: FlowContext,
   content: RenderedMessageContent,
-  options: { thumbnailUrl?: string } = {}
+  options: { thumbnailUrl?: string; nativeEnabled?: boolean } = {}
 ): Promise<'native' | 'text'> {
   const persistedText = formatTextReplyMessage(content)
   const realSendTarget = resolveRealSendTarget(ctx)
-  const nativeEnabled = process.env.EVOLUTION_REPLY_BUTTONS_ENABLED === 'true'
+  // Aceita um resultado já resolvido pelo chamador (o node sendMessage já
+  // calcula isso para decidir se combina com a imagem como thumbnail) —
+  // evita uma segunda consulta a accounts para a mesma decisão.
+  const nativeEnabled = options.nativeEnabled
+    ?? (realSendTarget ? await supportsNativeButtons(realSendTarget) : false)
 
   if (!realSendTarget || !nativeEnabled) {
     if (options.thumbnailUrl) {
@@ -126,26 +122,12 @@ export async function sendWhatsAppReplyOptions(
     return 'text'
   }
 
-  const response = await fetchEvolution(`/message/sendButtons/${encodeURIComponent(realSendTarget)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      number: ctx.remoteJid,
-      title: content.title.trim() || 'Escolha uma opcao',
-      description: content.message,
-      footer: content.footer,
-      ...(options.thumbnailUrl ? { thumbnailUrl: options.thumbnailUrl } : {}),
-      buttons: content.replyButtons.map((button) => ({
-        type: 'reply',
-        displayText: button.label,
-        id: button.id,
-      })),
-    }),
-  }, 15_000)
-
-  if (!response.ok) {
+  let result: Awaited<ReturnType<typeof dispatchSendButtons>>
+  try {
+    result = await dispatchSendButtons(realSendTarget, ctx.remoteJid, content, options)
+  } catch (error) {
     logError('sendWhatsAppReplyOptions: native send failed, using text fallback', {
-      status: response.status,
+      error: error instanceof Error ? error.message : error,
     })
     if (options.thumbnailUrl) {
       await sendWhatsAppImage(ctx, options.thumbnailUrl, persistedText)
@@ -155,15 +137,9 @@ export async function sendWhatsAppReplyOptions(
     return 'text'
   }
 
-  const record = response.body && typeof response.body === 'object'
-    ? response.body as Record<string, unknown>
-    : {}
-  const key = record.key && typeof record.key === 'object'
-    ? record.key as Record<string, unknown>
-    : {}
   await supabase.from('messages').insert({
     conversation_id: ctx.conversationId,
-    wa_message_id: typeof key.id === 'string' ? key.id : null,
+    wa_message_id: result.waMessageId,
     content: options.thumbnailUrl
       ? `${options.thumbnailUrl}\n${persistedText}`
       : persistedText,
@@ -188,26 +164,8 @@ export async function sendWhatsAppImage(
   const normalizedCaption = caption?.trim() ?? ''
   const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
-    const response = await fetchEvolution(`/message/sendMedia/${encodeURIComponent(realSendTarget)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        number: ctx.remoteJid,
-        mediatype: 'image',
-        media: imageUrl,
-        ...(normalizedCaption ? { caption: normalizedCaption } : {}),
-      }),
-    }, 15_000)
-    if (!response.ok) {
-      throw new Error(`Falha ao enviar imagem do fluxo (${response.status}): ${response.text.slice(0, 300)}`)
-    }
-    const record = response.body && typeof response.body === 'object'
-      ? response.body as Record<string, unknown>
-      : {}
-    const key = record.key && typeof record.key === 'object'
-      ? record.key as Record<string, unknown>
-      : {}
-    waMessageId = typeof key.id === 'string' ? key.id : null
+    const result = await dispatchSendImage(realSendTarget, ctx.remoteJid, imageUrl, caption)
+    waMessageId = result.waMessageId
   }
 
   await supabase.from('messages').insert({
@@ -222,6 +180,64 @@ export async function sendWhatsAppImage(
 
   await supabase.from('conversations').update({
     last_message: normalizedCaption || '📷 Imagem',
+    last_message_at: new Date().toISOString(),
+  }).eq('id', ctx.conversationId)
+}
+
+export function interpolateTemplateBody(bodyText: string, parameters: string[]): string {
+  return bodyText.replace(/\{\{(\d+)\}\}/g, (match, num: string) => {
+    const index = Number.parseInt(num, 10) - 1
+    return parameters[index] ?? match
+  })
+}
+
+// Modo Template (Fase 4) — contorna a janela de 24h enviando um template já
+// aprovado pela Meta em vez de texto livre. templateVariableMap mapeia cada
+// posição numerada ("1","2",...) do template para um valor que pode conter
+// {{variavel}} do FlashFlow ou ser texto literal — reaproveita 100% do motor
+// de variáveis já existente (message-template.ts), só trocando o alvo do
+// placeholder (numerado em vez de nomeado).
+export async function sendWhatsAppTemplate(
+  ctx: FlowContext,
+  templateId: string,
+  variableMap: Record<string, string>
+): Promise<void> {
+  const template = await loadWhatsAppTemplateById(templateId)
+  if (!template) throw new Error(`Template "${templateId}" não encontrado`)
+
+  const rawValues = Array.from({ length: template.variable_count }, (_, i) => variableMap[String(i + 1)] ?? '')
+  const hasVariables = getMessagePlaceholders(...rawValues).length > 0
+  const templateContext = hasVariables
+    ? await resolveMessageTemplateContext({
+      instanceName: ctx.instanceName,
+      conversationId: ctx.conversationId,
+      remoteJid: ctx.remoteJid,
+      orderId: ctx.orderId,
+      templates: rawValues,
+    })
+    : { contact: { name: null, number: ctx.remoteJid }, customVariables: {} }
+  const values = buildMessageTemplateValues(templateContext)
+  const parameters = rawValues.map((raw) => renderMessageTemplate(raw, values))
+  const renderedBody = interpolateTemplateBody(template.body_text, parameters)
+
+  let waMessageId: string | null = null
+  const realSendTarget = resolveRealSendTarget(ctx)
+  if (realSendTarget) {
+    const result = await dispatchSendTemplate(realSendTarget, ctx.remoteJid, template.meta_template_name, template.language, parameters)
+    waMessageId = result.waMessageId
+  }
+
+  await supabase.from('messages').insert({
+    conversation_id: ctx.conversationId,
+    wa_message_id: waMessageId,
+    content: renderedBody,
+    type: 'text',
+    direction: 'outbound',
+    status: 'sent',
+    sender_type: 'ai',
+  })
+  await supabase.from('conversations').update({
+    last_message: renderedBody,
     last_message_at: new Date().toISOString(),
   }).eq('id', ctx.conversationId)
 }
@@ -1392,6 +1408,36 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
     }
 
     if (node.type === 'sendMessage') {
+      const templateId = typeof node.data.templateId === 'string' ? node.data.templateId : ''
+      if (templateId) {
+        // Fase 4: modo Template — caminho totalmente separado do texto livre
+        // abaixo (não usa replyButtons/imagens do node nem pausa esperando
+        // clique, um template não tem esse conceito no FlashFlow ainda).
+        const variableMap = (node.data.templateVariableMap as Record<string, string> | undefined) ?? {}
+        try {
+          await sendWhatsAppTemplate(ctx, templateId, variableMap)
+        } catch (error) {
+          if (error instanceof OrderContextPendingError && !ctx.jobId) {
+            await enqueueFlowMessageResumeJob({
+              instanceName: ctx.instanceName,
+              flowId,
+              nodeId: node.id,
+              conversationId: ctx.conversationId,
+              remoteJid: ctx.remoteJid,
+              orderId: ctx.orderId,
+              isSandbox: ctx.isSandbox,
+              realSendInstanceName: ctx.realSendInstanceName,
+            })
+            log('executeFlow sendMessage: waiting for local order context (template)', { nodeId: node.id })
+            return
+          }
+          throw error
+        }
+        anyMessageSent = true
+        currentId = nextNodeId(edges, node.id)
+        continue
+      }
+
       const messageTitle = typeof node.data.messageTitle === 'string' ? node.data.messageTitle : ''
       const msg = typeof node.data.message === 'string' ? node.data.message : ''
       const footer = typeof node.data.footer === 'string' ? node.data.footer : ''
@@ -1447,9 +1493,42 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
       }
 
       const renderedText = formatTextReplyMessage(rendered)
+      const realSendTargetForButtons = resolveRealSendTarget(ctx)
       const nativeReplyOptionsEnabled = replyButtons.length > 0
-        && process.env.EVOLUTION_REPLY_BUTTONS_ENABLED === 'true'
-        && Boolean(resolveRealSendTarget(ctx))
+        && Boolean(realSendTargetForButtons)
+        && (realSendTargetForButtons ? await supportsNativeButtons(realSendTargetForButtons) : false)
+
+      // Fora da janela de 24h, a Cloud API rejeita qualquer mensagem que não
+      // seja Template — inclusive imagem. Em vez de deixar a chamada falhar
+      // (ou enviar só parte do node, ex: imagem sem o texto/botões que a
+      // acompanham, ou pausar o fluxo esperando clique num botão que nunca
+      // chegou), o node inteiro vira uma notificação pro operador.
+      const hasContentToSend = renderedText.trim().length > 0 || images.length > 0
+      try {
+        if (realSendTargetForButtons && hasContentToSend) {
+          const provider = await getAccountProvider(realSendTargetForButtons)
+          if (provider === 'cloud_api' && !(await isWithinMessagingWindow(ctx.conversationId))) {
+            throw new OutsideMessagingWindowError(ctx.conversationId)
+          }
+        }
+      } catch (error) {
+        if (error instanceof OutsideMessagingWindowError) {
+          await supabase.from('notifications').insert({
+            instance_name: ctx.instanceName,
+            type: 'flow',
+            title: 'Fora da janela de 24h',
+            message: 'Mensagem não enviada — fora da janela de atendimento da WhatsApp Cloud API. Use um template aprovado neste no.',
+            conversation_id: ctx.conversationId,
+            flow_id: flowId,
+            flow_node_id: node.id,
+            metadata: { remoteJid: ctx.remoteJid, orderId: ctx.orderId ?? null },
+          })
+          log('executeFlow sendMessage: outside 24h window, notification created instead of sending', { nodeId: node.id })
+          return
+        }
+        throw error
+      }
+
       const imageCaption = combineImageAndMessage
         && images.length > 0
         && renderedText.trim()
@@ -1462,13 +1541,13 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
       const imagesToSendSeparately = nativeReplyThumbnail ? images.slice(1) : images
 
       if (replyButtons.length > 0 && nativeReplyThumbnail) {
-        await sendWhatsAppReplyOptions(ctx, rendered, { thumbnailUrl: nativeReplyThumbnail })
+        await sendWhatsAppReplyOptions(ctx, rendered, { thumbnailUrl: nativeReplyThumbnail, nativeEnabled: nativeReplyOptionsEnabled })
       }
       for (const [index, img] of imagesToSendSeparately.entries()) {
         await sendWhatsAppImage(ctx, img.url, index === 0 ? imageCaption : undefined)
       }
       if (replyButtons.length > 0) {
-        if (!imageCaption && !nativeReplyThumbnail) await sendWhatsAppReplyOptions(ctx, rendered)
+        if (!imageCaption && !nativeReplyThumbnail) await sendWhatsAppReplyOptions(ctx, rendered, { nativeEnabled: nativeReplyOptionsEnabled })
       } else if (renderedText.trim() && !imageCaption) {
         await sendWhatsApp(ctx, renderedText)
       }

@@ -56,6 +56,13 @@ export async function DELETE(
   }
   console.log(`[DELETE accounts] iniciando remoção de "${name}"`)
 
+  const { data: accountRow } = await supabaseAdmin
+    .from('accounts')
+    .select('provider')
+    .eq('instance_name', name)
+    .maybeSingle()
+  const isEvolutionAccount = (accountRow as { provider?: string } | null)?.provider !== 'cloud_api'
+
   // Rastreia falhas por etapa em vez de assumir sucesso silenciosamente.
   // Nenhuma etapa individual usa transação (são tabelas/serviços
   // independentes), mas o retry é seguro: apagar linhas já apagadas não é
@@ -64,30 +71,37 @@ export async function DELETE(
   const failedSteps: string[] = []
 
   try {
-    // Log diagnóstico: verificar IsOnWhatsapp da Evolution API antes de deletar
-    const { data: evoInstance } = await supabaseAdmin
-      .from('Instance')
-      .select('id')
-      .eq('name', name)
-      .maybeSingle()
-    const evoInstanceId = (evoInstance as { id?: string } | null)?.id ?? null
-    if (evoInstanceId) {
-      const { count: isOnWaCount } = await supabaseAdmin
-        .from('IsOnWhatsapp')
-        .select('*', { count: 'exact', head: true })
-        .eq('instanceId', evoInstanceId)
-      console.log(`[DELETE accounts] IsOnWhatsapp count para instanceId="${evoInstanceId}": ${isOnWaCount}`)
-    } else {
-      console.log(`[DELETE accounts] Instance não encontrado no banco para name="${name}"`)
-    }
+    // ── 0/1. Evolution API — só para contas desse provedor. Contas Cloud API
+    // não têm instância na Evolution; whatsapp_cloud_credentials é limpa via
+    // ON DELETE CASCADE quando a linha de accounts (etapa 11) for removida. ──
+    if (isEvolutionAccount) {
+      // Log diagnóstico: verificar IsOnWhatsapp da Evolution API antes de deletar
+      const { data: evoInstance } = await supabaseAdmin
+        .from('Instance')
+        .select('id')
+        .eq('name', name)
+        .maybeSingle()
+      const evoInstanceId = (evoInstance as { id?: string } | null)?.id ?? null
+      if (evoInstanceId) {
+        const { count: isOnWaCount } = await supabaseAdmin
+          .from('IsOnWhatsapp')
+          .select('*', { count: 'exact', head: true })
+          .eq('instanceId', evoInstanceId)
+        console.log(`[DELETE accounts] IsOnWhatsapp count para instanceId="${evoInstanceId}": ${isOnWaCount}`)
+      } else {
+        console.log(`[DELETE accounts] Instance não encontrado no banco para name="${name}"`)
+      }
 
-    // ── 1. Evolution API PRIMEIRO (evita race condition com GET /api/accounts) ──
-    console.log(`[DELETE accounts] removendo instância da Evolution API`)
-    const evoRes = await fetch(`${EVOLUTION_API_URL}/instance/delete/${name}`, {
-      method: 'DELETE',
-      headers: { apikey: EVOLUTION_API_KEY },
-    }).catch((err) => { console.error('[DELETE accounts] fetch Evolution API falhou:', err); return null })
-    console.log(`[DELETE accounts] Evolution API status: ${evoRes?.status ?? 'erro de rede'}`)
+      // ── 1. Evolution API PRIMEIRO (evita race condition com GET /api/accounts) ──
+      console.log(`[DELETE accounts] removendo instância da Evolution API`)
+      const evoRes = await fetch(`${EVOLUTION_API_URL}/instance/delete/${name}`, {
+        method: 'DELETE',
+        headers: { apikey: EVOLUTION_API_KEY },
+      }).catch((err) => { console.error('[DELETE accounts] fetch Evolution API falhou:', err); return null })
+      console.log(`[DELETE accounts] Evolution API status: ${evoRes?.status ?? 'erro de rede'}`)
+    } else {
+      console.log(`[DELETE accounts] conta "${name}" é Cloud API — pulando etapas da Evolution`)
+    }
 
     // ── 2. ai_sessions ──────────────────────────────────────────────────────────
     const { error: sessErr } = await supabaseAdmin.from('ai_sessions').delete().eq('instance_name', name)

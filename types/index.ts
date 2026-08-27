@@ -12,6 +12,8 @@ export interface Conversation {
   updated_at: string
 }
 
+export type WhatsAppProvider = 'evolution' | 'cloud_api'
+
 export interface Account {
   instanceName: string
   label: string
@@ -23,6 +25,7 @@ export interface Account {
   confirmationEnabled?: boolean
   confirmationPriority?: number
   isSandbox?: boolean
+  provider?: WhatsAppProvider
 }
 
 export interface Message {
@@ -157,6 +160,10 @@ export interface FlowNodeData {
   // order state capture
   orderStateField?: OrderStateField
   orderStateValue?: string
+  // sendMessage em modo Template (WhatsApp Cloud API) — quando setado,
+  // substitui o envio de texto livre pelo template aprovado correspondente
+  templateId?: string
+  templateVariableMap?: Record<string, string>
   [key: string]: unknown
 }
 
@@ -279,6 +286,8 @@ export interface ShopifyIntegration {
   oauth_connected: boolean
   confirmation_message_template: string | null
   recovery_message_template: string | null
+  recovery_template_id: string | null
+  recovery_template_variable_map: Record<string, string> | null
   created_at: string
   updated_at: string
 }

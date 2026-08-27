@@ -353,6 +353,18 @@ async function cancelAndCleanup(instanceName: string) {
 export async function POST(req: NextRequest) {
   const instanceName = req.nextUrl.searchParams.get('instance') ?? 'flashflow-main'
 
+  // Cloud API accounts have no Evolution instance to pull history from — the
+  // Meta Cloud API has no "existing chat history" concept to sync.
+  const { data: account } = await supabase
+    .from('accounts')
+    .select('provider')
+    .eq('instance_name', instanceName)
+    .maybeSingle()
+  if (account?.provider === 'cloud_api') {
+    progress.set(instanceName, { stage: 'done', total: 0, done: 0 })
+    return NextResponse.json({ ok: true })
+  }
+
   const current = progress.get(instanceName)
   if (current && current.stage !== 'done' && current.stage !== 'error') {
     return NextResponse.json({ ok: true, alreadyRunning: true })

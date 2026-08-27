@@ -129,6 +129,13 @@ export async function PUT(req: NextRequest) {
     if (body.recovery_message_template !== undefined) {
       patch.recovery_message_template = validText(body.recovery_message_template) || null
     }
+    if (body.recovery_template_id !== undefined) {
+      patch.recovery_template_id = validText(body.recovery_template_id) || null
+    }
+    if (body.recovery_template_variable_map !== undefined) {
+      const map = body.recovery_template_variable_map
+      patch.recovery_template_variable_map = map && typeof map === 'object' && !Array.isArray(map) ? map : {}
+    }
 
     const { data, error } = await supabaseAdmin
       .from('shopify_integrations')

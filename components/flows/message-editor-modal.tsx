@@ -42,6 +42,20 @@ function parseWhatsAppText(text: string): string {
 
 type ImageTab = 'upload' | 'gallery'
 type InsertTarget = 'title' | 'message' | 'footer' | `button:${string}`
+type MessageMode = 'text' | 'template'
+
+interface WhatsAppMessageTemplate {
+  id: string
+  meta_template_name: string
+  language: string
+  status: 'pending' | 'approved' | 'rejected' | 'paused' | 'disabled'
+  body_text: string
+  variable_count: number
+}
+
+function interpolatePreview(bodyText: string, map: Record<string, string>): string {
+  return bodyText.replace(/\{\{(\d+)\}\}/g, (match, num: string) => map[num]?.trim() || match)
+}
 
 export default function MessageEditorModal({ node, onChange, onClose, instanceName }: Props) {
   const [title, setTitle] = useState<string>((node.data.messageTitle as string) ?? '')
@@ -69,25 +83,33 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   const [variableLabel, setVariableLabel] = useState('')
   const [variableValue, setVariableValue] = useState('')
   const [insertTarget, setInsertTarget] = useState<InsertTarget>('message')
+  const [isCloudApiAccount, setIsCloudApiAccount] = useState(false)
+  const [messageMode, setMessageMode] = useState<MessageMode>(node.data.templateId ? 'template' : 'text')
+  const [templateId, setTemplateId] = useState<string>((node.data.templateId as string) ?? '')
+  const [templateVariableMap, setTemplateVariableMap] = useState<Record<string, string>>(
+    (node.data.templateVariableMap as Record<string, string> | undefined) ?? {}
+  )
+  const [templates, setTemplates] = useState<WhatsAppMessageTemplate[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const messageDataRef = useRef({
+  const buildSaveData = useCallback((): Partial<FlowNodeData> => ({
     messageTitle: title,
     message: text,
     footer,
     replyButtons,
     images,
     combineImageAndMessage,
-  })
-  messageDataRef.current = {
-    messageTitle: title,
-    message: text,
-    footer,
-    replyButtons,
-    images,
-    combineImageAndMessage,
-  }
+    // Modo Template (Fase 4) substitui o texto livre inteiramente na
+    // execução do fluxo (lib/flow-engine.ts) — limpa templateId ao voltar
+    // para "Texto livre" pra não deixar um valor obsoleto ativo.
+    templateId: messageMode === 'template' ? templateId : '',
+    templateVariableMap: messageMode === 'template' ? templateVariableMap : {},
+  }), [title, text, footer, replyButtons, images, combineImageAndMessage, messageMode, templateId, templateVariableMap])
+
+  const messageDataRef = useRef(buildSaveData())
+  messageDataRef.current = buildSaveData()
 
   // Save on unmount (closing without Salvar)
   useEffect(() => {
@@ -115,6 +137,57 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   useEffect(() => {
     void fetchVariables()
   }, [fetchVariables])
+
+  // Botões interativos da Cloud API têm teto de 20 caracteres por título
+  // (a Evolution não tem esse limite) — só afeta a UI de contagem/corte,
+  // o adaptador (lib/whatsapp-cloud-adapter.ts) já trunca no envio de
+  // qualquer forma.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/accounts')
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return
+        const accounts = Array.isArray(json.accounts) ? json.accounts : []
+        const account = accounts.find((a: { instance_name?: string }) => a.instance_name === instanceName)
+        setIsCloudApiAccount(account?.provider === 'cloud_api')
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [instanceName])
+
+  // Modo Template (Fase 4) — só busca a lista quando a conta é cloud_api,
+  // já sincronizada localmente via Configurações Gerais (esta tela não
+  // sincroniza com a Meta, só lê o que já foi sincronizado).
+  useEffect(() => {
+    if (!isCloudApiAccount) return
+    let cancelled = false
+    setTemplatesLoading(true)
+    fetch(`/api/whatsapp-cloud/templates?instance=${encodeURIComponent(instanceName)}`)
+      .then((res) => res.json())
+      .then((json) => { if (!cancelled && json.ok) setTemplates(json.templates ?? []) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setTemplatesLoading(false) })
+    return () => { cancelled = true }
+  }, [isCloudApiAccount, instanceName])
+
+  const approvedTemplates = useMemo(
+    () => templates.filter((t) => t.status === 'approved'),
+    [templates]
+  )
+  const selectedTemplate = useMemo(
+    () => approvedTemplates.find((t) => t.id === templateId) ?? null,
+    [approvedTemplates, templateId]
+  )
+  const templateValidationError = useMemo(() => {
+    if (messageMode !== 'template') return null
+    if (!templateId) return 'Selecione um template'
+    if (!selectedTemplate) return 'Template selecionado não está mais disponível — escolha outro'
+    for (let i = 1; i <= selectedTemplate.variable_count; i++) {
+      if (!templateVariableMap[String(i)]?.trim()) return `Preencha o valor de {{${i}}}`
+    }
+    return null
+  }, [messageMode, templateId, selectedTemplate, templateVariableMap])
 
   const filteredAutomaticVariables = useMemo(() => {
     const query = variableQuery.trim().toLocaleLowerCase()
@@ -324,27 +397,14 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   }
 
   function handleSave() {
-    onChange(node.id, {
-      messageTitle: title,
-      message: text,
-      footer,
-      replyButtons,
-      images,
-      combineImageAndMessage,
-    })
+    if (messageMode === 'template' && templateValidationError) return
+    onChange(node.id, buildSaveData())
     onClose()
   }
 
   function handleOverlayClick(e: React.MouseEvent) {
     if (e.target === e.currentTarget) {
-      onChange(node.id, {
-        messageTitle: title,
-        message: text,
-        footer,
-        replyButtons,
-        images,
-        combineImageAndMessage,
-      })
+      onChange(node.id, buildSaveData())
       onClose()
     }
   }
@@ -370,14 +430,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
           <h2 className="text-base font-bold text-[#111b21] dark:text-[#e9edef]">Editar Mensagem</h2>
           <button
             onClick={() => {
-              onChange(node.id, {
-                messageTitle: title,
-                message: text,
-                footer,
-                replyButtons,
-                images,
-                combineImageAndMessage,
-              })
+              onChange(node.id, buildSaveData())
               onClose()
             }}
             className="p-1.5 rounded-lg text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors"
@@ -390,6 +443,98 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
         <div className="flex flex-1 min-h-0 divide-x divide-[#f0f2f5] dark:divide-[#2a3942]">
           {/* Left: Editor */}
           <div className="flex flex-col w-[55%] p-5 gap-4 min-w-0 overflow-y-auto">
+            {isCloudApiAccount && (
+              <div className="flex items-center gap-1 p-1 bg-[#f0f2f5] dark:bg-[#2a3942] rounded-xl w-fit">
+                <button
+                  type="button"
+                  onClick={() => setMessageMode('text')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    messageMode === 'text'
+                      ? 'bg-white dark:bg-[#111b21] text-[#111b21] dark:text-[#e9edef] shadow-sm'
+                      : 'text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-[#e9edef]'
+                  }`}
+                >
+                  Texto livre
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMessageMode('template')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    messageMode === 'template'
+                      ? 'bg-white dark:bg-[#111b21] text-[#111b21] dark:text-[#e9edef] shadow-sm'
+                      : 'text-[#667781] dark:text-[#8696a0] hover:text-[#111b21] dark:hover:text-[#e9edef]'
+                  }`}
+                >
+                  Template aprovado
+                </button>
+              </div>
+            )}
+
+            {messageMode === 'template' ? (
+              <div className="flex flex-col gap-4">
+                {templatesLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-[#667781] dark:text-[#8696a0]">
+                    <Loader2 size={14} className="animate-spin" /> Carregando templates...
+                  </div>
+                ) : approvedTemplates.length === 0 ? (
+                  <p className="text-sm text-[#8696a0]">
+                    Nenhum template aprovado sincronizado ainda. Sincronize em Configurações Gerais depois de aprovar um template no Gerenciador do WhatsApp da Meta.
+                  </p>
+                ) : (
+                  <>
+                    <label className="flex flex-col gap-1.5">
+                      <span className="text-xs font-semibold text-[#667781] uppercase tracking-wide">Template</span>
+                      <select
+                        value={templateId}
+                        onChange={(event) => { setTemplateId(event.target.value); setTemplateVariableMap({}) }}
+                        className="w-full text-sm text-[#111b21] dark:text-[#e9edef] bg-[#f0f2f5] dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded-lg px-3 py-2 outline-none focus:border-[#00a884]"
+                      >
+                        <option value="">Selecione um template</option>
+                        {approvedTemplates.map((template) => (
+                          <option key={template.id} value={template.id}>
+                            {template.meta_template_name} ({template.language})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {selectedTemplate && (
+                      <>
+                        <div className="text-sm text-[#3b4a54] dark:text-[#d1d7db] bg-[#f0f2f5] dark:bg-[#2a3942] rounded-lg p-3 whitespace-pre-wrap">
+                          {selectedTemplate.body_text}
+                        </div>
+                        {selectedTemplate.variable_count > 0 && (
+                          <div className="flex flex-col gap-2">
+                            <span className="text-xs font-semibold text-[#667781] uppercase tracking-wide">Variáveis do template</span>
+                            <p className="text-xs text-[#8696a0] -mt-1">
+                              Texto literal ou {'{{variavel}}'} do FlashFlow (ex.: {'{{contato.nome_completo}}'})
+                            </p>
+                            {Array.from({ length: selectedTemplate.variable_count }, (_, i) => String(i + 1)).map((key) => (
+                              <label key={key} className="flex flex-col gap-1">
+                                <span className="text-xs text-[#8696a0]">{`{{${key}}}`}</span>
+                                <input
+                                  value={templateVariableMap[key] ?? ''}
+                                  onChange={(event) => setTemplateVariableMap((prev) => ({ ...prev, [key]: event.target.value }))}
+                                  placeholder="Texto literal ou {{variavel}}"
+                                  className="w-full text-sm text-[#111b21] dark:text-[#e9edef] bg-[#f0f2f5] dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded-lg px-3 py-2 outline-none focus:border-[#00a884]"
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+                {templateValidationError && (
+                  <div className="flex items-center gap-2 text-xs text-red-500" role="alert">
+                    <AlertCircle size={13} />
+                    {templateValidationError}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-[#667781] uppercase tracking-wide">Titulo</span>
               <input
@@ -462,14 +607,19 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
                   {replyButtons.map((button, index) => (
                     <div key={button.id} className="flex items-center gap-2">
                       <span className="w-5 text-xs font-semibold text-[#667781]">{index + 1}</span>
-                      <input
-                        value={button.label}
-                        onFocus={() => setInsertTarget(`button:${button.id}`)}
-                        onChange={(event) => updateReplyButton(button.id, event.target.value)}
-                        placeholder={index === 0 ? 'CONFIRMAR PEDIDO' : 'MODIFICAR DADOS'}
-                        maxLength={80}
-                        className="min-w-0 flex-1 text-sm text-[#111b21] dark:text-[#e9edef] bg-[#f0f2f5] dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded-lg px-3 py-2 outline-none focus:border-[#00a884]"
-                      />
+                      <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                        <input
+                          value={button.label}
+                          onFocus={() => setInsertTarget(`button:${button.id}`)}
+                          onChange={(event) => updateReplyButton(button.id, event.target.value)}
+                          placeholder={index === 0 ? 'CONFIRMAR PEDIDO' : 'MODIFICAR DADOS'}
+                          maxLength={isCloudApiAccount ? 20 : 80}
+                          className="w-full text-sm text-[#111b21] dark:text-[#e9edef] bg-[#f0f2f5] dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded-lg px-3 py-2 outline-none focus:border-[#00a884]"
+                        />
+                        {isCloudApiAccount && (
+                          <span className="text-[10px] text-[#8696a0] text-right">{button.label.length}/20</span>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => removeReplyButton(button.id)}
@@ -756,6 +906,8 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
                 </div>
               )}
             </div>
+              </>
+            )}
           </div>
 
           {/* Right: Preview */}
@@ -763,6 +915,20 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
             <span className="text-xs font-semibold text-[#667781] uppercase tracking-wide shrink-0">Pré-visualização</span>
 
             <div className="flex flex-col gap-2 flex-1">
+              {messageMode === 'template' ? (
+                selectedTemplate ? (
+                  <div className="self-end max-w-[85%] px-4 py-2.5 bg-[#d9fdd3] dark:bg-[#005c4b] rounded-2xl rounded-tr-sm shadow-sm">
+                    <p className="text-sm text-[#111b21] dark:text-[#e9edef] break-words whitespace-pre-wrap">
+                      {interpolatePreview(selectedTemplate.body_text, templateVariableMap)}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[#aebac1] dark:text-[#667781] text-center mt-12">
+                    Selecione um template para pré-visualizar
+                  </p>
+                )
+              ) : (
+                <>
               {images.length > 0 && !showCombinedPreview && (
                 <div className="self-end max-w-[85%]" data-preview-layout="separate">
                   <div className="flex flex-wrap gap-1 justify-end">
@@ -850,6 +1016,8 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
                   A pré-visualização aparecerá aqui
                 </p>
               )}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -858,14 +1026,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
           <button
             onClick={() => {
-              onChange(node.id, {
-                messageTitle: title,
-                message: text,
-                footer,
-                replyButtons,
-                images,
-                combineImageAndMessage,
-              })
+              onChange(node.id, buildSaveData())
               onClose()
             }}
             className="px-4 py-2 text-sm text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors"
@@ -874,7 +1035,8 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
           </button>
           <button
             onClick={handleSave}
-            className="px-5 py-2 text-sm font-semibold bg-[#00a884] text-white rounded-xl hover:bg-[#008f72] transition-colors shadow-sm"
+            disabled={messageMode === 'template' && Boolean(templateValidationError)}
+            className="px-5 py-2 text-sm font-semibold bg-[#00a884] text-white rounded-xl hover:bg-[#008f72] disabled:opacity-50 transition-colors shadow-sm"
           >
             Salvar
           </button>

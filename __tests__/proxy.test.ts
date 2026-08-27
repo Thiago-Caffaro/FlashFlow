@@ -48,6 +48,11 @@ describe('proxy — webhooks servidor-a-servidor (sem cookie)', () => {
     const res = proxy(requestFor('/api/webhook/evolution'))
     expect(isPassthrough(res)).toBe(true)
   })
+
+  it('libera POST /api/webhook/whatsapp-cloud sem cookie', () => {
+    const res = proxy(requestFor('/api/webhook/whatsapp-cloud'))
+    expect(isPassthrough(res)).toBe(true)
+  })
 })
 
 describe('proxy — não libera caminhos parecidos por prefixo', () => {

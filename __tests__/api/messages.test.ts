@@ -80,6 +80,17 @@ function mockSupabaseSuccess(opts: {
 
   let messagesCallCount = 0
   supabaseMock.from.mockImplementation((table: string) => {
+    // lib/whatsapp-text.ts resolve o provedor da conta via
+    // lib/whatsapp-account-provider.ts (SELECT em accounts) antes de enviar.
+    if (table === 'accounts') {
+      return {
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+          }),
+        }),
+      }
+    }
     if (table === 'conversations') {
       return {
         select: jest.fn().mockReturnValue({
@@ -243,14 +254,14 @@ describe('POST /api/messages', () => {
     const req = buildRequest({ conversationId: 'conv-1', content: 'mensagem outbound' })
     await POST(req)
 
-    // from() calls: 0=conversations(select), 1=messages(insert pending), 2=messages(update sent), 3=conversations(update)
+    // from() calls: 0=conversations(select), 1=messages(insert pending), 2=accounts(select), 3=messages(update sent), 4=conversations(update)
     const insertCall = supabaseMock.from.mock.results[1].value.insert
     const insertArg = insertCall.mock.calls[0][0]
     expect(insertArg.status).toBe('sending')
     expect(insertArg.direction).toBe('outbound')
     expect(insertArg.wa_message_id).toBeNull()
 
-    const updateCall = supabaseMock.from.mock.results[2].value.update
+    const updateCall = supabaseMock.from.mock.results[3].value.update
     const updateArg = updateCall.mock.calls[0][0]
     expect(updateArg.status).toBe('sent')
     expect(updateArg.wa_message_id).toBe('evo-msg-id')
@@ -263,7 +274,7 @@ describe('POST /api/messages', () => {
     const req = buildRequest({ conversationId: 'conv-1', content: 'atualiza conversa' })
     await POST(req)
 
-    const updateCall = supabaseMock.from.mock.results[3].value.update
+    const updateCall = supabaseMock.from.mock.results[4].value.update
     const updateArg = updateCall.mock.calls[0][0]
     expect(updateArg.last_message).toBe('atualiza conversa')
     expect(updateArg.last_message_at).toBeDefined()
@@ -295,8 +306,8 @@ describe('POST /api/messages', () => {
     const res = await POST(req)
 
     expect(res.status).toBe(502)
-    // from() calls: 0=conversations(select), 1=messages(insert pending), 2=messages(update failed)
-    const failUpdateCall = supabaseMock.from.mock.results[2].value.update
+    // from() calls: 0=conversations(select), 1=messages(insert pending), 2=accounts(select), 3=messages(update failed)
+    const failUpdateCall = supabaseMock.from.mock.results[3].value.update
     expect(failUpdateCall).toHaveBeenCalledWith({ status: 'failed' })
   })
 

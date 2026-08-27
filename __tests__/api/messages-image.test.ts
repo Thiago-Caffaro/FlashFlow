@@ -64,6 +64,17 @@ function mockSupabaseSuccess(opts: { waId?: string; instanceName?: string } = {}
   let messagesCallCount = 0
 
   supabaseMock.from.mockImplementation((table: string) => {
+    // lib/whatsapp-dispatch.ts resolve o provedor da conta via
+    // lib/whatsapp-account-provider.ts (SELECT em accounts) antes de enviar.
+    if (table === 'accounts') {
+      return {
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+          }),
+        }),
+      }
+    }
     if (table === 'conversations') {
       return {
         select: jest.fn().mockReturnValue({
@@ -200,7 +211,8 @@ describe('POST /api/messages/image', () => {
     const res = await POST(buildRequest({ file: fakeFile(), conversationId: 'conv-1' }))
     expect(res.status).toBe(502)
 
-    const failUpdateCall = supabaseMock.from.mock.results[2].value.update
+    // from() calls: 0=conversations(select), 1=messages(insert pending), 2=accounts(select), 3=messages(update failed)
+    const failUpdateCall = supabaseMock.from.mock.results[3].value.update
     expect(failUpdateCall).toHaveBeenCalledWith({ status: 'failed' })
   })
 

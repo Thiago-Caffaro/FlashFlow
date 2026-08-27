@@ -55,6 +55,14 @@ function builder(result: Result = { data: null, error: null }) {
   return { chain, calls }
 }
 
+// dispatchSend* resolve o provedor da conta via lib/whatsapp-account-provider.ts
+// (SELECT em accounts), independente do fetchEvolution mockado aqui — testes
+// que efetivamente enviam algo (não sandbox sem envio real) precisam desse
+// queue. Provisiona generosamente; entradas não consumidas não causam falha.
+function accountsQueue(count = 3) {
+  return Array.from({ length: count }, () => builder({ data: { provider: 'evolution' }, error: null }))
+}
+
 function setQueues(queues: Record<string, ReturnType<typeof builder>[]>) {
   const pending = new Map(Object.entries(queues))
   supabaseMock.from.mockImplementation((table: string) => {
@@ -258,6 +266,7 @@ describe('interactive flow execution', () => {
     setQueues({
       flows: [flows],
       instance_ai_config: [config],
+      accounts: accountsQueue(),
       messages: [messages],
       conversations: [conversations],
     })
@@ -293,6 +302,7 @@ describe('interactive flow execution', () => {
     setQueues({
       flows: [flows],
       instance_ai_config: [config],
+      accounts: accountsQueue(),
       messages: [builder(), builder()],
       conversations: [builder(), builder()],
     })
@@ -359,6 +369,7 @@ describe('interactive flow execution', () => {
     setQueues({
       flows: [flows],
       instance_ai_config: [config],
+      accounts: accountsQueue(),
       messages: [messages],
       conversations: [conversations],
       flow_runs: [runs],
@@ -397,7 +408,7 @@ describe('interactive flow execution', () => {
     })
     const messages = builder()
     const conversations = builder()
-    setQueues({ messages: [messages], conversations: [conversations] })
+    setQueues({ messages: [messages], conversations: [conversations], accounts: accountsQueue() })
 
     await sendWhatsAppReplyOptions({
       instanceName: 'wa-1',
@@ -429,7 +440,7 @@ describe('interactive flow execution', () => {
       .mockResolvedValueOnce({ ok: true, status: 201, body: { key: { id: 'text-1' } }, text: '{}' })
     const messages = builder()
     const conversations = builder()
-    setQueues({ messages: [messages], conversations: [conversations] })
+    setQueues({ messages: [messages], conversations: [conversations], accounts: accountsQueue() })
 
     await sendWhatsAppReplyOptions({
       instanceName: 'wa-1',

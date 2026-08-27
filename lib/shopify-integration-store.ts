@@ -4,7 +4,7 @@ import { ShopifyClient, normalizeShopDomain } from './shopify-client'
 import { supabaseAdmin } from './supabase-admin'
 
 export const SHOPIFY_INTEGRATION_PUBLIC_SELECT =
-  'id, shop_name, shop_domain, default_country, active, oauth_connected, confirmation_message_template, recovery_message_template, created_at, updated_at'
+  'id, shop_name, shop_domain, default_country, active, oauth_connected, confirmation_message_template, recovery_message_template, recovery_template_id, recovery_template_variable_map, created_at, updated_at'
 
 export type ShopifyIntegrationCredentialRow = {
   id: string
@@ -21,6 +21,8 @@ export type ShopifyIntegrationCredentialRow = {
   oauth_connected: boolean
   confirmation_message_template: string | null
   recovery_message_template: string | null
+  recovery_template_id: string | null
+  recovery_template_variable_map: Record<string, string> | null
 }
 
 export function decodeShopifyAdminToken(row: ShopifyIntegrationCredentialRow): string {

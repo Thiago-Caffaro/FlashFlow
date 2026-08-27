@@ -35,6 +35,10 @@ function isMissingSandboxColumn(error: { code?: string; message?: string } | nul
   return error?.code === 'PGRST204' && error.message?.includes("'is_sandbox' column") === true
 }
 
+function isMissingProviderColumn(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === 'PGRST204' && error.message?.includes("'provider' column") === true
+}
+
 // Ensures all instances point their webhook to the current WEBHOOK_BASE_URL and
 // have inbound message events enabled. Retry periodically because Evolution
 // v2.3.7 can return 500 from read endpoints while write endpoints still work.
@@ -69,15 +73,24 @@ export async function GET() {
   try {
     let { data: stored, error } = await supabaseAdmin
       .from('accounts')
-      .select('instance_name, label, country, confirmation_enabled, confirmation_priority, is_sandbox')
+      .select('instance_name, label, country, confirmation_enabled, confirmation_priority, is_sandbox, provider')
       .order('created_at', { ascending: true })
+
+    if (isMissingProviderColumn(error)) {
+      const fallback = await supabaseAdmin
+        .from('accounts')
+        .select('instance_name, label, country, confirmation_enabled, confirmation_priority, is_sandbox')
+        .order('created_at', { ascending: true })
+      stored = fallback.data?.map((row) => ({ ...row, provider: 'evolution' })) ?? null
+      error = fallback.error
+    }
 
     if (isMissingSandboxColumn(error)) {
       const fallback = await supabaseAdmin
         .from('accounts')
         .select('instance_name, label, country, confirmation_enabled, confirmation_priority')
         .order('created_at', { ascending: true })
-      stored = fallback.data?.map((row) => ({ ...row, is_sandbox: false })) ?? null
+      stored = fallback.data?.map((row) => ({ ...row, is_sandbox: false, provider: 'evolution' })) ?? null
       error = fallback.error
     }
 
@@ -92,6 +105,7 @@ export async function GET() {
         confirmation_enabled: true,
         confirmation_priority: 100,
         is_sandbox: false,
+        provider: 'evolution',
       })) ?? null
       error = fallback.error
     }
@@ -102,11 +116,28 @@ export async function GET() {
     // /instance/connectionState/{name} still works. Use the per-instance
     // endpoint so a Next.js restart can recover already connected accounts.
     // Sandbox accounts don't correspond to a real Evolution instance, so
-    // skip the real API call and report a fixed synthetic state.
+    // skip the real API call and report a fixed synthetic state. Cloud API
+    // accounts don't have a "connection" to poll either — their state comes
+    // from whatsapp_cloud_credentials instead (set at connect time / on send
+    // failure), never from a live Evolution-style handshake.
     const stateMap = new Map<string, { state: string; profileName?: string | null; profilePicUrl?: string | null; phone?: string | null }>()
     await Promise.all((stored ?? []).map(async (row) => {
       if (row.is_sandbox) {
         stateMap.set(row.instance_name, { state: 'open', profileName: 'Sandbox', profilePicUrl: null, phone: null })
+        return
+      }
+      if (row.provider === 'cloud_api') {
+        const { data: cred } = await supabaseAdmin
+          .from('whatsapp_cloud_credentials')
+          .select('display_phone_number, verified_name, last_verified_at, last_error')
+          .eq('instance_name', row.instance_name)
+          .maybeSingle()
+        stateMap.set(row.instance_name, {
+          state: cred?.last_verified_at && !cred.last_error ? 'open' : 'close',
+          profileName: cred?.verified_name ?? null,
+          profilePicUrl: null,
+          phone: cred?.display_phone_number ?? null,
+        })
         return
       }
       stateMap.set(row.instance_name, await getEvolutionConnectionState(row.instance_name))
@@ -127,12 +158,13 @@ export async function GET() {
         confirmationEnabled: row.confirmation_enabled ?? true,
         confirmationPriority: row.confirmation_priority ?? 100,
         isSandbox: row.is_sandbox ?? false,
+        provider: row.provider ?? 'evolution',
       }
     })
 
     // Repair stale/missing per-instance webhook settings in the background.
-    // Sandbox accounts have no real Evolution instance, so skip them.
-    const realInstanceNames = accounts.filter((a) => !a.isSandbox).map((a) => a.instanceName)
+    // Sandbox and Cloud API accounts have no real Evolution instance, so skip them.
+    const realInstanceNames = accounts.filter((a) => !a.isSandbox && a.provider !== 'cloud_api').map((a) => a.instanceName)
     if (realInstanceNames.length > 0 && shouldSyncWebhooks()) {
       void syncWebhooks(realInstanceNames)
     }
