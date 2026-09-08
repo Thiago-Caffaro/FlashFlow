@@ -10,18 +10,23 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 FlashFlow is a WhatsApp customer-service and automation application. It includes
 multi-account chat, visual conversation flows, AI-assisted sessions, diagnostics,
-authentication, and fulfillment integrations.
+authentication, and Shopify/FenixCOD fulfillment integrations.
 
 The application is actively evolving. Treat the source code, database migrations,
 and current tests as authoritative when older documentation disagrees with them.
+`PROJECT_CONTEXT.md` at the repo root is a generated, verified snapshot of the
+current architecture, critical flows (with file:line citations), and business
+rules — regenerate it after structural changes instead of trusting older docs.
 
 ## Stack
 
 - Next.js 16 App Router with React 19 and TypeScript
 - Tailwind CSS 4 and shadcn/ui
 - Supabase PostgreSQL and Realtime
-- Evolution API for WhatsApp
-- xyflow for the visual flow builder
+- WhatsApp: both Evolution API (self-hosted) and WhatsApp Cloud API (official),
+  side by side per account
+- xyflow for the visual flow builder, with a custom execution engine (`lib/flow-engine.ts`)
+- Multi-provider AI (Gemini, OpenAI, OpenRouter) inside flow nodes
 - Jest and ts-jest for tests
 
 Local development selects its Evolution API and webhook callback through
@@ -39,7 +44,11 @@ Socket.IO endpoint.
 - `lib/supabase-admin.ts`: server-only privileged Supabase client
 - `types/index.ts`: shared application types
 - `__tests__/`: Jest tests
-- `*_migration.sql`: database migrations
+- `migrations/NNN_description.sql`: database migrations, numbered — note that
+  foundational tables (`conversations`, `messages`, `accounts`, `flows`,
+  `triggers`, `ai_sessions`...) predate this directory and have no `CREATE
+  TABLE` here, only later `ALTER TABLE`s
+- `PROJECT_CONTEXT.md`: generated project context (architecture, flows, business rules)
 
 ## Development Rules
 

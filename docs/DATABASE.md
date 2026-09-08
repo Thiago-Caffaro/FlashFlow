@@ -1,73 +1,70 @@
 # Database
 
-**Engine**: PostgreSQL via Supabase  
-**Cliente**: `@supabase/supabase-js` (sem ORM)  
+**Engine**: PostgreSQL via Supabase
+**Cliente**: `@supabase/supabase-js` (sem ORM)
 **ID padrão**: UUID com `gen_random_uuid()`
 
----
+> Atualizado em 2026-09-08. Este documento descreve a *forma* do banco
+> em alto nível. A fonte de verdade linha-a-linha é `types/index.ts`
+> (cada `interface` corresponde a uma tabela) — mantenha os dois em
+> mente ao alterar schema, mas trate `types/index.ts` como autoritativo
+> quando divergirem.
 
-## Schema atual (MVP semana 1)
+## Particionamento: por instância WhatsApp, não por usuário
 
-```sql
-CREATE TABLE conversations (
-  id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  wa_id            TEXT NOT NULL UNIQUE,
-  contact_name     TEXT,
-  contact_phone    TEXT NOT NULL,
-  last_message     TEXT,
-  last_message_at  TIMESTAMPTZ,
-  unread_count     INT DEFAULT 0,
-  created_at       TIMESTAMPTZ DEFAULT now(),
-  updated_at       TIMESTAMPTZ DEFAULT now()
-);
+Quase toda tabela de domínio carrega uma coluna `instance_name`
+(`conversations`, `triggers`, `flows`, `flow_runs`, `flow_media`,
+`agent_memory_blocks`, `message_variables`, `notifications`,
+`fulfillment_orders`...). O produto não é multi-tenant por cliente final
+— é um único operador administrando várias contas/números de WhatsApp.
+**Nunca confie em `instance_name` vindo do client**: toda rota que
+recebe um `id` de recurso deve validar posse via `lib/instance-guard.ts`
+(`belongsToInstance`) antes de agir — reforçado por uma bateria de
+testes dedicados em `__tests__/api/*-isolation.test.ts`.
 
-CREATE TABLE messages (
-  id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  conversation_id  UUID REFERENCES conversations(id) ON DELETE CASCADE,
-  wa_message_id    TEXT UNIQUE,
-  content          TEXT NOT NULL,
-  type             TEXT DEFAULT 'text',
-  direction        TEXT NOT NULL,   -- 'inbound' | 'outbound'
-  status           TEXT DEFAULT 'sent',
-  created_at       TIMESTAMPTZ DEFAULT now()
-);
+## Tabelas principais (não exaustivo — ver `types/index.ts`)
 
-ALTER PUBLICATION supabase_realtime ADD TABLE conversations;
-ALTER PUBLICATION supabase_realtime ADD TABLE messages;
-ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
-ALTER TABLE messages DISABLE ROW LEVEL SECURITY;
-```
+| Domínio | Tabelas |
+|---|---|
+| Chat | `conversations`, `messages` |
+| Contas WhatsApp | `accounts` (coluna `provider`: `evolution` \| `cloud_api`) |
+| Automação | `triggers`, `flows`, `flow_runs`, `flow_jobs`, `flow_media`, `message_variables` |
+| IA | `ai_sessions`, `agent_memory_blocks`, `ai_provider_keys`, `instance_ai_config` |
+| Shopify | `shopify_integrations`, `shopify_products`, `shopify_abandoned_checkouts` |
+| Fulfillment | `fulfillment_orders`, `fulfillment_products`, `fulfillment_integrations`, `fulfillment_order_events`, `fulfillment_delivery_status_mappings` |
+| Outros | `notifications`, `app_settings` (segredos cifrados em repouso) |
 
----
+## `migrations/` não é o schema completo
 
-## Schema futuro (Fase 2+)
+`migrations/001_fulfillment_shopify_oauth.sql` até `020_shopify_recovery_template.sql`
+existem no repo e são aplicadas manualmente no Supabase SQL Editor (não
+há Supabase CLI/migration runner formal no projeto) — mas a numeração
+começa depois que Shopify/fulfillment já existiam. As tabelas
+fundacionais (`conversations`, `messages`, `accounts`, `flows`,
+`triggers`) e várias tabelas de IA (`ai_sessions`, `agent_memory_blocks`,
+`ai_provider_keys`, `instance_ai_config`) **não têm `CREATE TABLE`
+versionado neste repositório** — só `ALTER TABLE`s incrementais depois
+do fato. Se precisar reconstruir o schema do zero, isso precisa vir de
+um dump real do Supabase de produção, não só de `migrations/`.
 
-Campos a adicionar em `conversations`:
-- `product_id` — produto/fluxo associado
-- `is_human` — atendente assumiu
-- `is_ai_enabled` — IA ativa
-- `status` — ACTIVE, WAITING_HUMAN, RESOLVED
-- `tags` — array de strings
+## Segredos em repouso
 
-Tabelas novas:
-- `products` — keyword de gatilho + prompt Gemini
-- `flows` — JSON do xyflow (nodes + edges)
-- `flow_executions` — histórico por conversa
-- `analytics_events` — eventos para dashboard
-
----
+`app_settings` e `ai_provider_keys` guardam valores sensíveis
+(credenciais de provedor de IA, segredos de integração) cifrados com
+AES-256-GCM (`lib/ai-crypto.ts`), nunca em texto plano — chave de
+cifragem vem de `AI_ENCRYPTION_KEY` (env var, nunca no banco).
 
 ## Clientes Supabase
 
 ```typescript
-// lib/supabase.ts — frontend
+// lib/supabase.ts — client-side (anon key)
 import { createClient } from '@supabase/supabase-js'
 export const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-// lib/supabase-server.ts — API Routes (acesso total)
+// lib/supabase-admin.ts — server-only (service role, acesso total)
 import { createClient } from '@supabase/supabase-js'
 export const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -75,7 +72,8 @@ export const supabaseAdmin = createClient(
 )
 ```
 
----
+`SUPABASE_SERVICE_ROLE_KEY` nunca deve ser usado ou exposto em código
+client-side.
 
 ## Realtime
 
@@ -92,3 +90,14 @@ supabase
   })
   .subscribe()
 ```
+
+## Filas e locks via RPC (Postgres functions)
+
+Duas rotinas de background usam RPCs Postgres com `FOR UPDATE SKIP
+LOCKED` em vez de um broker de fila externo:
+
+- `claim_flow_jobs` — reivindica jobs pendentes de `flow_jobs` para o
+  worker in-process de flow engine (`migrations/009_message_variables_and_flow_jobs.sql`)
+- `claim_fulfillment_delivery_sync` / `apply_fulfillment_delivery_status`
+  / `record_fulfillment_delivery_status` — lease de sincronização de
+  entrega por integração, usado por `lib/fulfillment-delivery-worker.ts`
