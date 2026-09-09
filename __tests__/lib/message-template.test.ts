@@ -56,6 +56,7 @@ function order(overrides: Partial<FulfillmentOrder> = {}): FulfillmentOrder {
     confirmation_message_error: null,
     is_simulation: false,
     simulation_marker: null,
+    order_placed_at: '2026-07-30T10:00:00.000Z',
     created_at: '2026-07-30T10:00:00.000Z',
     updated_at: '2026-07-30T10:00:00.000Z',
     ...overrides,

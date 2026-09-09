@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronUp, Loader2, MessageCircle, Plus, RefreshCw, Save, Send, Trash2, X, XCircle } from 'lucide-react'
+import { Calendar, ChevronDown, ChevronUp, Download, Loader2, MessageCircle, Plus, RefreshCw, Save, Send, Trash2, X, XCircle } from 'lucide-react'
 import {
   Account,
   COMMERCIAL_STATUSES,
@@ -253,6 +253,14 @@ export default function OrderEditModal({
                 <>{order.currency} {Number(order.total).toFixed(2)}</>
               )}
               {' '}· {accountLabel || order.assigned_instance_name || order.instance_name || 'sem conta'}
+            </p>
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+              <span className="flex items-center gap-1 font-medium text-[#54656f] dark:text-[#aebac1]" title="Data e hora do pedido">
+                <Calendar size={12} />{new Date(order.order_placed_at).toLocaleString('pt-BR')}
+              </span>
+              <span className="flex items-center gap-1 text-[#8696a0]" title="Quando este pedido entrou no FlashFlow">
+                <Download size={11} />recebido {new Date(order.created_at).toLocaleString('pt-BR')}
+              </span>
             </p>
             <div className="mt-2"><ShopifyOrderStatusBadges order={order} /></div>
           </div>

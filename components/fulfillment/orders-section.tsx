@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import {
-  ChevronDown, ChevronUp, Loader2, MessageCircle,
+  Calendar, ChevronDown, ChevronUp, Download, Loader2, MessageCircle,
   Package, RefreshCw, Search, Send, Truck, Users, X,
 } from 'lucide-react'
 import {
@@ -104,6 +104,12 @@ function isFallbackLead(lead: ExternalFulfillmentLead) {
   return /^external-\d+$/.test(lead.lead_number)
 }
 
+function formatOrderDateTime(value: string): string {
+  return new Date(value).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 function OrderRow({
   order, accounts, busyId, onOpen, onResendConfirmation, onOrderAction,
 }: {
@@ -149,6 +155,12 @@ function OrderRow({
           )}
         </p>
         {accountLabel && <p className="text-xs text-[#667781]">{accountLabel}</p>}
+        <p className="mt-1 flex items-center gap-1 text-xs font-medium text-[#54656f] dark:text-[#aebac1]" title="Data e hora do pedido">
+          <Calendar size={11} />{formatOrderDateTime(order.order_placed_at)}
+        </p>
+        <p className="flex items-center gap-1 text-[11px] text-[#8696a0]" title="Quando este pedido entrou no FlashFlow">
+          <Download size={10} />recebido {formatOrderDateTime(order.created_at)}
+        </p>
         <div className="mt-1.5"><ShopifyOrderStatusBadges order={order} compact /></div>
         {order.is_simulation && <span className="text-xs text-purple-600 dark:text-purple-400">simulação</span>}
       </div>

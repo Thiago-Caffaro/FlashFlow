@@ -273,6 +273,7 @@ export interface FulfillmentOrder {
   confirmation_message_error: string | null
   is_simulation: boolean
   simulation_marker: string | null
+  order_placed_at: string
   created_at: string
   updated_at: string
 }

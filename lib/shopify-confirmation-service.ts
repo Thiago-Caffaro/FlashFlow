@@ -90,6 +90,7 @@ type ShopifyOrderMappedFields = {
   shopify_cancelled_at: string | null
   shopify_cancel_reason: string | null
   shopify_closed_at: string | null
+  order_placed_at: string
   raw_shopify_payload: Record<string, unknown>
   order_number: string
   instance_name: string
@@ -279,6 +280,9 @@ export async function mapShopifyOrderPayload(
     shopify_cancelled_at: nullableDateString(order.cancelled_at),
     shopify_cancel_reason: nullableString(order.cancel_reason)?.toLowerCase() ?? null,
     shopify_closed_at: nullableDateString(order.closed_at),
+    // A Shopify sempre envia created_at num pedido real; o fallback só
+    // cobre payload malformado, para nunca violar a constraint NOT NULL.
+    order_placed_at: nullableDateString(order.created_at) ?? new Date().toISOString(),
     raw_shopify_payload: order,
     order_number: `shopify-${integration.shopDomain}-${shopifyOrderId}`.slice(0, 240),
     instance_name: assignedInstanceName ?? '',
