@@ -591,7 +591,15 @@ async function resolveConversationForOrder(instanceName: string, phone: string, 
     }
   }
 
-  const remoteJid = `${phone}@s.whatsapp.net`
+  // Cloud API identifica contatos por dígitos puros — o mesmo formato que
+  // a Meta manda em contacts[].wa_id no webhook (ver processInboundMessage
+  // em app/api/webhook/whatsapp-cloud/route.ts). @s.whatsapp.net é um
+  // sufixo de JID exclusivo da Evolution/Baileys: usá-lo aqui quebraria o
+  // campo "to" enviado à Graph API e, pior, criaria uma conversa duplicada
+  // (wa_id diferente) na próxima vez que esse contato mandasse mensagem de
+  // verdade e o webhook fizesse upsert pelo wa_id sem sufixo.
+  const provider = await getAccountProvider(instanceName)
+  const remoteJid = provider === 'cloud_api' ? phone : `${phone}@s.whatsapp.net`
   const { data: created, error } = await supabaseAdmin
     .from('conversations')
     .upsert(
