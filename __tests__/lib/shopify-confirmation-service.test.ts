@@ -81,6 +81,7 @@ type QueryResult = { data: unknown; error: { message: string } | null }
 type QueryBuilder = {
   inserts: unknown[]
   updates: unknown[]
+  upserts: unknown[]
   select: jest.Mock<QueryBuilder, [string?]>
   eq: jest.Mock<QueryBuilder, [string, unknown]>
   is: jest.Mock<QueryBuilder, [string, unknown]>
@@ -90,6 +91,7 @@ type QueryBuilder = {
   single: jest.Mock<Promise<QueryResult>, []>
   insert: jest.Mock<QueryBuilder, [unknown]>
   update: jest.Mock<QueryBuilder, [unknown]>
+  upsert: jest.Mock<QueryBuilder, [unknown, unknown?]>
   then: (
     resolve: (value: QueryResult) => unknown,
     reject?: (reason: unknown) => unknown
@@ -99,10 +101,12 @@ type QueryBuilder = {
 function queryBuilder(result: QueryResult = { data: null, error: null }) {
   const inserts: unknown[] = []
   const updates: unknown[] = []
+  const upserts: unknown[] = []
   let builder: QueryBuilder
   builder = {
     inserts,
     updates,
+    upserts,
     select: jest.fn((_columns?: string) => builder),
     eq: jest.fn((_column: string, _value: unknown) => builder),
     is: jest.fn((_column: string, _value: unknown) => builder),
@@ -116,6 +120,10 @@ function queryBuilder(result: QueryResult = { data: null, error: null }) {
     }),
     update: jest.fn((payload: unknown) => {
       updates.push(payload)
+      return builder
+    }),
+    upsert: jest.fn((payload: unknown, _opts?: unknown) => {
+      upserts.push(payload)
       return builder
     }),
     then: (resolve: (value: QueryResult) => unknown, reject?: (reason: unknown) => unknown) =>
@@ -876,6 +884,39 @@ describe('shopify-confirmation-service', () => {
       expect(mockDispatchSendTemplate).toHaveBeenCalledWith('wa-1', '351900000000@s.whatsapp.net', 'cart_recovery', 'pt_BR', ['Maria'])
       expect(messages.inserts[0]).toMatchObject({ content: 'Olá Maria, seu carrinho ainda está disponível.', wa_message_id: 'wamid.tpl' })
       expect(result.messageId).toBe('wamid.tpl')
+    })
+
+    it('creates a plain-digit conversation (no @s.whatsapp.net JID suffix) for a new cloud_api contact', async () => {
+      mockGetAccountProvider.mockResolvedValue('cloud_api')
+      mockIsWithinMessagingWindow.mockResolvedValue(false)
+      mockLoadWhatsAppTemplateById.mockResolvedValue({
+        id: 'tpl-1', variable_count: 1, body_text: 'Olá {{1}}, seu carrinho ainda está disponível.',
+        meta_template_name: 'cart_recovery', language: 'pt_BR',
+      })
+      mockDispatchSendTemplate.mockResolvedValue({ waMessageId: 'wamid.new', raw: {} })
+      const checkout = queryBuilder({ data: checkoutRow(), error: null })
+      // Sem conversa existente (primeiro contato) — resolveConversationForOrder
+      // cai no branch de criação via upsert.
+      const conversationsLookup = queryBuilder({ data: null, error: null })
+      const conversationsUpsert = queryBuilder({ data: { id: 'conv-new' }, error: null })
+      const integration = queryBuilder({
+        data: integrationRow({ recovery_template_id: 'tpl-1', recovery_template_variable_map: { '1': 'Maria' } }),
+        error: null,
+      })
+      const messages = queryBuilder()
+      const conversationsUpdate = queryBuilder()
+      const checkoutUpdate = queryBuilder({ data: { id: 'checkout-1' }, error: null })
+      setTableQueues({
+        shopify_abandoned_checkouts: [checkout, checkoutUpdate],
+        conversations: [conversationsLookup, conversationsUpsert, conversationsUpdate],
+        shopify_integrations: [integration],
+        messages: [messages],
+      })
+
+      await sendAbandonedCheckoutRecovery('checkout-1')
+
+      expect(conversationsUpsert.upserts[0]).toMatchObject({ wa_id: '351900000000', contact_phone: '351900000000' })
+      expect(mockDispatchSendTemplate).toHaveBeenCalledWith('wa-1', '351900000000', 'cart_recovery', 'pt_BR', ['Maria'])
     })
 
     it('fails clearly instead of attempting a doomed send when outside the window with no template configured', async () => {
