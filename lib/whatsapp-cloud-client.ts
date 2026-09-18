@@ -182,6 +182,18 @@ export async function sendCloudImage(
   return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
 }
 
+// Payload devolvido no webhook quando o cliente toca um botão de resposta
+// rápida do template. index = posição do botão na lista completa de botões
+// do template (a Meta exige esse índice, não a posição entre os quick replies).
+export interface CloudTemplateQuickReplyPayload {
+  index: number
+  payload: string
+}
+
+export interface SendCloudTemplateOptions {
+  quickReplyPayloads?: CloudTemplateQuickReplyPayload[]
+}
+
 export async function sendCloudTemplate(
   phoneNumberId: string,
   accessToken: string,
@@ -189,8 +201,22 @@ export async function sendCloudTemplate(
   templateName: string,
   languageCode: string,
   parameters: string[],
-  timeoutMs?: number
+  timeoutMs?: number,
+  options: SendCloudTemplateOptions = {}
 ): Promise<SendCloudTextResult> {
+  const components: Array<Record<string, unknown>> = []
+  if (parameters.length > 0) {
+    components.push({ type: 'body', parameters: parameters.map((text) => ({ type: 'text', text })) })
+  }
+  for (const { index, payload } of options.quickReplyPayloads ?? []) {
+    components.push({
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: String(index),
+      parameters: [{ type: 'payload', payload }],
+    })
+  }
+
   const response = await fetchCloudApi(`/${phoneNumberId}/messages`, accessToken, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -201,9 +227,7 @@ export async function sendCloudTemplate(
       template: {
         name: templateName,
         language: { code: languageCode },
-        ...(parameters.length > 0
-          ? { components: [{ type: 'body', parameters: parameters.map((text) => ({ type: 'text', text })) }] }
-          : {}),
+        ...(components.length > 0 ? { components } : {}),
       },
     }),
   }, timeoutMs)

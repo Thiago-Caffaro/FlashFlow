@@ -300,3 +300,175 @@ describe('sendMessage node — janela de 24h para texto livre (Fase 4)', () => {
     expect(mockIsWithinMessagingWindow).not.toHaveBeenCalled()
   })
 })
+
+function fallbackFlow(nodeData: Record<string, unknown>, options: { withFollowUp?: boolean } = {}) {
+  const followUp = options.withFollowUp !== false
+  return {
+    nodes: [
+      { id: 'start', type: 'start', position: { x: 0, y: 0 }, data: {} },
+      { id: 'message', type: 'sendMessage', position: { x: 0, y: 0 }, data: nodeData },
+      ...(followUp
+        ? [{ id: 'next', type: 'sendMessage', position: { x: 0, y: 0 }, data: { message: 'Obrigado pela confirmação!' } }]
+        : []),
+      { id: 'end', type: 'end', position: { x: 0, y: 0 }, data: {} },
+    ],
+    edges: [
+      { id: 'e1', source: 'start', target: 'message' },
+      { id: 'e2', source: 'message', target: followUp ? 'next' : 'end' },
+      ...(followUp ? [{ id: 'e3', source: 'next', target: 'end' }] : []),
+    ],
+  }
+}
+
+describe('sendMessage node — template de fallback fora da janela de 24h', () => {
+  const ctx = { instanceName: 'wa-1', remoteJid: '5511999999999', conversationId: 'conv-1', incomingMessage: '' }
+
+  it('sends the fallback template instead of notifying, and pauses the flow until the customer replies', async () => {
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockIsWithinMessagingWindow.mockResolvedValue(false)
+    mockLoadWhatsAppTemplateById.mockResolvedValue({
+      id: 'tpl-1', variable_count: 1, body_text: 'Olá {{1}}, confirma seu pedido?',
+      meta_template_name: 'order_confirmation', language: 'pt_BR', buttons: [],
+    })
+    mockDispatchSendTemplate.mockResolvedValue({ waMessageId: 'wamid.fb', raw: {} })
+
+    const flow = fallbackFlow({
+      message: 'Seu pedido foi confirmado!',
+      fallbackTemplateId: 'tpl-1',
+      fallbackTemplateVariableMap: { '1': 'Maria' },
+    })
+    const flows = builder({ data: { json: flow, ativo: true }, error: null })
+    const config = builder({ data: null, error: null })
+    const messages = builder()
+    const conversations = builder()
+    const flowRuns = builder()
+    setQueues({ flows: [flows], instance_ai_config: [config], messages: [messages], conversations: [conversations], flow_runs: [flowRuns] })
+
+    await executeFlow('flow-1', ctx)
+
+    expect(mockDispatchSendText).not.toHaveBeenCalled()
+    expect(mockDispatchSendTemplate).toHaveBeenCalledWith('wa-1', '5511999999999', 'order_confirmation', 'pt_BR', ['Maria'])
+    expect(messages.calls.inserted[0]).toMatchObject({ content: 'Olá Maria, confirma seu pedido?', wa_message_id: 'wamid.fb' })
+    expect(flowRuns.calls.upserted[0]).toMatchObject({
+      flow_id: 'flow-1',
+      node_id: 'next',
+      status: 'waiting_confirmation',
+      variables: { replyButtons: [] },
+    })
+  })
+
+  it('maps template quick-reply buttons to the node reply buttons by position, using the button id as payload', async () => {
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockIsWithinMessagingWindow.mockResolvedValue(false)
+    mockLoadWhatsAppTemplateById.mockResolvedValue({
+      id: 'tpl-2', variable_count: 0, body_text: 'Confirma seu pedido?',
+      meta_template_name: 'confirm_buttons', language: 'es',
+      // O botão de URL ocupa o índice 1: o payload do segundo quick reply
+      // tem que usar o índice real (2), não a posição entre os quick replies.
+      buttons: [
+        { type: 'QUICK_REPLY', text: 'Sí, confirmo' },
+        { type: 'URL', text: 'Ver pedido', url: 'https://example.com' },
+        { type: 'QUICK_REPLY', text: 'No, cancelar' },
+      ],
+    })
+    mockDispatchSendTemplate.mockResolvedValue({ waMessageId: 'wamid.btn', raw: {} })
+
+    const flow = fallbackFlow({
+      message: 'Confirma seu pedido?',
+      replyButtons: [{ id: 'btn-yes', label: 'Confirmar' }, { id: 'btn-no', label: 'Cancelar' }],
+      fallbackTemplateId: 'tpl-2',
+    })
+    const flows = builder({ data: { json: flow, ativo: true }, error: null })
+    const config = builder({ data: null, error: null })
+    const messages = builder()
+    const conversations = builder()
+    const flowRuns = builder()
+    setQueues({ flows: [flows], instance_ai_config: [config], messages: [messages], conversations: [conversations], flow_runs: [flowRuns] })
+
+    await executeFlow('flow-1', ctx)
+
+    expect(mockDispatchSendTemplate).toHaveBeenCalledWith(
+      'wa-1', '5511999999999', 'confirm_buttons', 'es', [],
+      { quickReplyPayloads: [{ index: 0, payload: 'btn-yes' }, { index: 2, payload: 'btn-no' }] }
+    )
+    // O run pausado guarda os botões do node (id + label), que é o que
+    // normalizeReplyWithPayload usa para traduzir o toque no label esperado
+    // pelos nós seguintes.
+    expect(flowRuns.calls.upserted[0]).toMatchObject({
+      node_id: 'next',
+      variables: { replyButtons: [{ id: 'btn-yes', label: 'Confirmar' }, { id: 'btn-no', label: 'Cancelar' }] },
+    })
+  })
+
+  it('does not pause when the fallback message is the last step of the flow', async () => {
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockIsWithinMessagingWindow.mockResolvedValue(false)
+    mockLoadWhatsAppTemplateById.mockResolvedValue({
+      id: 'tpl-1', variable_count: 0, body_text: 'Seu pedido saiu para entrega.',
+      meta_template_name: 'shipped', language: 'pt_BR', buttons: [],
+    })
+    mockDispatchSendTemplate.mockResolvedValue({ waMessageId: 'wamid.last', raw: {} })
+
+    const flow = fallbackFlow({ message: 'Seu pedido saiu!', fallbackTemplateId: 'tpl-1' }, { withFollowUp: false })
+    const flows = builder({ data: { json: flow, ativo: true }, error: null })
+    const config = builder({ data: null, error: null })
+    const messages = builder()
+    const conversations = builder()
+    // Sem fila para flow_runs: qualquer tentativa de pausar lançaria
+    // "Unexpected table flow_runs" e falharia o teste.
+    setQueues({ flows: [flows], instance_ai_config: [config], messages: [messages], conversations: [conversations] })
+
+    await executeFlow('flow-1', ctx)
+
+    expect(mockDispatchSendTemplate).toHaveBeenCalled()
+  })
+
+  it('keeps sending free text inside the 24h window even when a fallback template is configured', async () => {
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockIsWithinMessagingWindow.mockResolvedValue(true)
+    mockDispatchSendText.mockResolvedValue({ waMessageId: 'msg-1', raw: {} })
+
+    const flow = fallbackFlow({ message: 'Seu pedido foi confirmado!', fallbackTemplateId: 'tpl-1' }, { withFollowUp: false })
+    const flows = builder({ data: { json: flow, ativo: true }, error: null })
+    const config = builder({ data: null, error: null })
+    const messages = builder()
+    const conversations = builder()
+    setQueues({ flows: [flows], instance_ai_config: [config], messages: [messages], conversations: [conversations] })
+
+    await executeFlow('flow-1', ctx)
+
+    expect(mockDispatchSendText).toHaveBeenCalledWith('wa-1', '5511999999999', 'Seu pedido foi confirmado!')
+    expect(mockDispatchSendTemplate).not.toHaveBeenCalled()
+  })
+
+  it('ignores the fallback template on an evolution account', async () => {
+    mockGetAccountProvider.mockResolvedValue('evolution')
+    mockDispatchSendText.mockResolvedValue({ waMessageId: 'msg-1', raw: {} })
+
+    const flow = fallbackFlow({ message: 'Seu pedido foi confirmado!', fallbackTemplateId: 'tpl-1' }, { withFollowUp: false })
+    const flows = builder({ data: { json: flow, ativo: true }, error: null })
+    const config = builder({ data: null, error: null })
+    const messages = builder()
+    const conversations = builder()
+    setQueues({ flows: [flows], instance_ai_config: [config], messages: [messages], conversations: [conversations] })
+
+    await executeFlow('flow-1', ctx)
+
+    expect(mockIsWithinMessagingWindow).not.toHaveBeenCalled()
+    expect(mockDispatchSendText).toHaveBeenCalled()
+    expect(mockDispatchSendTemplate).not.toHaveBeenCalled()
+  })
+
+  it('fails loudly when the configured fallback template no longer exists', async () => {
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockIsWithinMessagingWindow.mockResolvedValue(false)
+    mockLoadWhatsAppTemplateById.mockResolvedValue(null)
+
+    const flow = fallbackFlow({ message: 'Oi', fallbackTemplateId: 'tpl-deleted' })
+    const flows = builder({ data: { json: flow, ativo: true }, error: null })
+    const config = builder({ data: null, error: null })
+    setQueues({ flows: [flows], instance_ai_config: [config] })
+
+    await expect(executeFlow('flow-1', ctx)).rejects.toThrow('não encontrado')
+  })
+})

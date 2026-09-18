@@ -4,6 +4,7 @@ import {
   formatTextReplyMessage,
   MessageTemplateError,
   normalizeReplyInput,
+  normalizeReplyWithPayload,
   renderMessageContent,
   renderMessageTemplate,
   validateMessagePlaceholders,
@@ -145,5 +146,23 @@ describe('message templates', () => {
     expect(normalizeReplyInput('1', buttons)).toBe('CONFIRMAR PEDIDO')
     expect(normalizeReplyInput('change', buttons)).toBe('MODIFICAR DADOS')
     expect(normalizeReplyInput('modificar dados', buttons)).toBe('MODIFICAR DADOS')
+  })
+
+  it('resolves a tapped button by its payload id even when the displayed text differs from the flow label', () => {
+    const buttons = [
+      { id: 'btn-yes', label: 'CONFIRMAR PEDIDO' },
+      { id: 'btn-no', label: 'MODIFICAR DADOS' },
+    ]
+    // Botão de template escrito em outro idioma na Meta: o texto não bate
+    // com o label do fluxo, mas o payload é o id do botão do fluxo.
+    expect(normalizeReplyWithPayload('Sí, confirmo', 'btn-yes', buttons)).toBe('CONFIRMAR PEDIDO')
+    expect(normalizeReplyWithPayload('No, cambiar', 'BTN-NO', buttons)).toBe('MODIFICAR DADOS')
+  })
+
+  it('falls back to the text-based normalization when the payload is missing or not one of the flow buttons', () => {
+    const buttons = [{ id: 'btn-yes', label: 'CONFIRMAR PEDIDO' }]
+    expect(normalizeReplyWithPayload('confirmar pedido', null, buttons)).toBe('CONFIRMAR PEDIDO')
+    expect(normalizeReplyWithPayload('confirmar pedido', 'payload-de-outra-integracao', buttons)).toBe('CONFIRMAR PEDIDO')
+    expect(normalizeReplyWithPayload('quero falar com alguém', 'x', buttons)).toBe('quero falar com alguém')
   })
 })

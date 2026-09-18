@@ -7,11 +7,12 @@ import {
   handleActiveSession,
 } from '@/lib/flow-engine'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
-import { normalizeReplyInput } from '@/lib/message-template'
+import { normalizeReplyWithPayload } from '@/lib/message-template'
 import { executeTriggers } from '@/lib/message-triggers'
 import { loadCloudCredentialsByPhoneNumberId, type WhatsAppCloudCredentialsRow } from '@/lib/whatsapp-cloud-credentials'
 import { resolveAndStoreCloudMedia } from '@/lib/whatsapp-cloud-media'
-import { extractCloudInteractiveReplyText } from '@/lib/whatsapp-cloud-message-parser'
+import { extractCloudInteractiveReplyText, extractCloudReplyPayload } from '@/lib/whatsapp-cloud-message-parser'
+import { applyTemplateStatusUpdate, syncTemplatesForWaba } from '@/lib/whatsapp-templates'
 import {
   WHATSAPP_CLOUD_SIGNATURE_HEADER,
   verifyCloudWebhookHandshake,
@@ -162,7 +163,7 @@ async function processInboundMessage(
         const replyButtons = Array.isArray(variables.replyButtons)
           ? variables.replyButtons as FlowReplyButton[]
           : []
-        const normalizedContent = normalizeReplyInput(content, replyButtons)
+        const normalizedContent = normalizeReplyWithPayload(content, extractCloudReplyPayload(message), replyButtons)
         await executeFlow(flowRun.flow_id, {
           instanceName: flowRunIsSandboxFallback ? SANDBOX_INSTANCE_NAME : instanceName,
           remoteJid,
@@ -216,20 +217,66 @@ async function processMessagesChange(value: Record<string, unknown>): Promise<vo
   }
 }
 
-function extractChangesValues(body: unknown): Array<Record<string, unknown>> {
+interface WebhookChange {
+  field: string
+  value: Record<string, unknown>
+  // entry.id: ID da WABA que gerou o evento.
+  entryId: string
+}
+
+function extractChanges(body: unknown): WebhookChange[] {
   const record = body && typeof body === 'object' ? body as Record<string, unknown> : {}
   const entries = Array.isArray(record.entry) ? record.entry as Array<Record<string, unknown>> : []
-  const values: Array<Record<string, unknown>> = []
+  const result: WebhookChange[] = []
   for (const entry of entries) {
+    const entryId = entry.id != null ? String(entry.id) : ''
     const changes = Array.isArray(entry.changes) ? entry.changes as Array<Record<string, unknown>> : []
     for (const change of changes) {
-      if (change.field !== 'messages') continue
+      if (typeof change.field !== 'string') continue
       if (change.value && typeof change.value === 'object') {
-        values.push(change.value as Record<string, unknown>)
+        result.push({ field: change.field, value: change.value as Record<string, unknown>, entryId })
       }
     }
   }
-  return values
+  return result
+}
+
+// Status de template em tempo real (aprovado/rejeitado/pausado...) — evita
+// depender do botão "Sincronizar". Best-effort: uma falha aqui nunca pode
+// derrubar o processamento de mensagens que vieram no mesmo POST (um 500
+// faria a Meta reentregar tudo).
+async function processTemplateStatusChange(change: WebhookChange): Promise<void> {
+  try {
+    const metaTemplateId = change.value.message_template_id != null ? String(change.value.message_template_id) : ''
+    const event = typeof change.value.event === 'string' ? change.value.event : ''
+    if (!metaTemplateId || !event) return
+
+    const result = await applyTemplateStatusUpdate({
+      metaTemplateId,
+      event,
+      reason: typeof change.value.reason === 'string' ? change.value.reason : null,
+    })
+    console.log(
+      `[webhook-whatsapp-cloud] template status event="${event}" name="${String(change.value.message_template_name ?? '')}" resultado=${result}`
+    )
+    // Template criado no Gerenciador do WhatsApp depois da última
+    // sincronização: ainda não existe aqui, então busca da Meta.
+    if (result === 'unknown') await syncTemplatesForWaba(change.entryId)
+  } catch (error) {
+    console.error('[webhook-whatsapp-cloud] falha ao processar status de template:', error)
+  }
+}
+
+// account_update traz o motivo real de uma desconexão do número
+// (PARTNER_REMOVED + disconnection_info) — sem isso, a única pista era o
+// erro no primeiro envio. Só registra em log; não altera estado.
+function logAccountUpdate(change: WebhookChange): void {
+  const info = change.value.disconnection_info && typeof change.value.disconnection_info === 'object'
+    ? change.value.disconnection_info as Record<string, unknown>
+    : null
+  console.warn(
+    `[webhook-whatsapp-cloud] account_update event="${String(change.value.event ?? '')}" waba="${change.entryId}" reason="${String(info?.reason ?? '')}" initiated_by="${String(info?.initiated_by ?? '')}"`
+  )
 }
 
 // GET — handshake de verificação exigido pela Meta ao registrar o webhook no
@@ -271,9 +318,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const values = extractChangesValues(body)
-    for (const value of values) {
-      await processMessagesChange(value)
+    for (const change of extractChanges(body)) {
+      if (change.field === 'messages') {
+        await processMessagesChange(change.value)
+      } else if (change.field === 'message_template_status_update') {
+        await processTemplateStatusChange(change)
+      } else if (change.field === 'account_update') {
+        logAccountUpdate(change)
+      }
     }
     return NextResponse.json({ ok: true })
   } catch (err) {

@@ -25,3 +25,29 @@ export function extractCloudInteractiveReplyText(message: unknown): string | nul
 
   return null
 }
+
+// Identificador exato do botão tocado: o id que nós mesmos definimos ao enviar
+// (interactive.button_reply.id, ou o payload de um quick reply de template).
+// O texto exibido pode divergir do label do botão do fluxo — títulos
+// interativos são truncados em 20 caracteres e o texto de um botão de
+// template é escrito à parte na Meta — então casar pelo id é o único jeito
+// de resolver de forma confiável qual botão do fluxo foi escolhido.
+export function extractCloudReplyPayload(message: unknown): string | null {
+  const root = message && typeof message === 'object' ? message as Record<string, unknown> : {}
+  const msgType = typeof root.type === 'string' ? root.type : ''
+
+  if (msgType === 'interactive') {
+    const interactive = root.interactive as Record<string, unknown> | undefined
+    const buttonReply = interactive?.button_reply as Record<string, unknown> | undefined
+    const id = typeof buttonReply?.id === 'string' ? buttonReply.id.trim() : ''
+    return id || null
+  }
+
+  if (msgType === 'button') {
+    const button = root.button as Record<string, unknown> | undefined
+    const payload = typeof button?.payload === 'string' ? button.payload.trim() : ''
+    return payload || null
+  }
+
+  return null
+}

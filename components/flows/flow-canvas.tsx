@@ -21,6 +21,7 @@ import { AlertTriangle, ArrowLeft, Save, Plus, Trash2, Copy, Lock } from 'lucide
 import { Flow, FlowNode, FlowEdge, FlowNodeData, FlowNodeType, SwitchCase } from '@/types'
 import { FEATURES } from '@/lib/features'
 import { findReplyConnectionIssue } from '@/lib/flow-connection-validation'
+import { findFirstMessagesWithoutTemplate } from '@/lib/flow-template-lint'
 import { buildReplyCasesForConnection } from '@/lib/flow-switch-cases'
 import StartNode from './nodes/start-node'
 import SendMessageNode from './nodes/send-message-node'
@@ -133,6 +134,29 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
   const replyConnectionIssue = useMemo(
     () => findReplyConnectionIssue(serializedNodes, serializedEdges),
     [serializedNodes, serializedEdges]
+  )
+
+  // Conta oficial (Cloud API): a mensagem inicial de um fluxo disparado pelo
+  // sistema só chega ao cliente como template. Aviso não bloqueante — o fluxo
+  // pode ser sempre iniciado por resposta do cliente, caso em que a janela
+  // de 24h já está aberta.
+  const [isCloudApiAccount, setIsCloudApiAccount] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/accounts')
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled) return
+        const accounts = Array.isArray(json.accounts) ? json.accounts : []
+        const account = accounts.find((a: { instance_name?: string }) => a.instance_name === flow.instance_name)
+        setIsCloudApiAccount(account?.provider === 'cloud_api')
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [flow.instance_name])
+  const firstMessagesWithoutTemplate = useMemo(
+    () => (isCloudApiAccount ? findFirstMessagesWithoutTemplate(serializedNodes, serializedEdges) : []),
+    [isCloudApiAccount, serializedNodes, serializedEdges]
   )
 
   const onConnect = useCallback(
@@ -367,6 +391,29 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
               Destacar nó
             </button>
           )}
+        </div>
+      )}
+
+      {firstMessagesWithoutTemplate.length > 0 && (
+        <div className="flex items-center gap-3 border-b border-sky-200 bg-sky-50 px-6 py-3 text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-200">
+          <AlertTriangle size={17} className="shrink-0" />
+          <p className="min-w-0 flex-1 text-sm">
+            {firstMessagesWithoutTemplate.length === 1
+              ? `A mensagem inicial "${firstMessagesWithoutTemplate[0].preview}" não tem template.`
+              : `${firstMessagesWithoutTemplate.length} mensagens iniciais deste fluxo não têm template.`}
+            {' '}Numa conta oficial, se o cliente não tiver escrito nas últimas 24h (ex.: fluxo disparado por pedido), ela não é enviada e o fluxo para.
+            Abra a mensagem e escolha um template de fallback.
+          </p>
+          <button
+            type="button"
+            onClick={() => setNodes((current) => current.map((node) => ({
+              ...node,
+              selected: node.id === firstMessagesWithoutTemplate[0].nodeId,
+            })))}
+            className="shrink-0 text-sm font-semibold underline underline-offset-2"
+          >
+            Destacar nó
+          </button>
         </div>
       )}
 

@@ -263,3 +263,18 @@ export function normalizeReplyInput(
   ))
   return matching?.label ?? trimmed
 }
+
+// Resposta a botão vinda da Cloud API: o id que enviamos (payload) é o dado
+// confiável para achar o botão do fluxo; o texto exibido só serve de
+// fallback (digitado à mão, ou payload que não é nosso).
+export function normalizeReplyWithPayload(
+  content: string,
+  payload: string | null,
+  buttons: FlowReplyButton[]
+): string {
+  const normalizedPayload = payload?.trim().toLocaleLowerCase()
+  const byPayload = normalizedPayload
+    ? buttons.find((button) => button.id.toLocaleLowerCase() === normalizedPayload)
+    : undefined
+  return byPayload?.label ?? normalizeReplyInput(content, buttons)
+}

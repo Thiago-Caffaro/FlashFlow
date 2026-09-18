@@ -10,6 +10,13 @@ export interface SendResult {
   raw: unknown
 }
 
+// Botões de resposta rápida de um template: cada payload volta no webhook
+// quando o cliente toca no botão correspondente (ver
+// extractCloudReplyPayload) — é como o fluxo sabe qual opção foi escolhida.
+export interface SendTemplateOptions {
+  quickReplyPayloads?: Array<{ index: number; payload: string }>
+}
+
 export interface WhatsAppProviderAdapter {
   sendText(instanceName: string, remoteJid: string, text: string, timeoutMs?: number): Promise<SendResult>
   sendImage(instanceName: string, remoteJid: string, imageUrl: string, caption?: string): Promise<SendResult>
@@ -24,7 +31,8 @@ export interface WhatsAppProviderAdapter {
     remoteJid: string,
     templateName: string,
     language: string,
-    parameters: string[]
+    parameters: string[],
+    options?: SendTemplateOptions
   ): Promise<SendResult>
 }
 
@@ -73,10 +81,11 @@ export async function dispatchSendTemplate(
   remoteJid: string,
   templateName: string,
   language: string,
-  parameters: string[]
+  parameters: string[],
+  options?: SendTemplateOptions
 ): Promise<SendResult> {
   const adapter = await resolveAdapter(instanceName)
-  return adapter.sendTemplate(instanceName, remoteJid, templateName, language, parameters)
+  return adapter.sendTemplate(instanceName, remoteJid, templateName, language, parameters, options)
 }
 
 // Evolution depende de um fork com patch de botões nativos (rollout

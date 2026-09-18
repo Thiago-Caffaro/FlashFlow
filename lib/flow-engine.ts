@@ -6,6 +6,7 @@ import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import { dispatchSendButtons, dispatchSendImage, dispatchSendTemplate, dispatchSendText, supportsNativeButtons } from './whatsapp-dispatch'
 import { getAccountProvider } from './whatsapp-account-provider'
 import { loadWhatsAppTemplateById } from './whatsapp-templates'
+import { getTemplateQuickReplyButtons } from './whatsapp-template-buttons'
 import { isWithinMessagingWindow, OutsideMessagingWindowError } from './messaging-window'
 import {
   buildMessageTemplateValues,
@@ -197,13 +198,24 @@ export function interpolateTemplateBody(bodyText: string, parameters: string[]):
 // {{variavel}} do FlashFlow ou ser texto literal — reaproveita 100% do motor
 // de variáveis já existente (message-template.ts), só trocando o alvo do
 // placeholder (numerado em vez de nomeado).
+//
+// replyButtons (opcional): os botões de resposta do node. Se o template tem
+// botões de resposta rápida, cada um recebe como payload o id do botão do
+// node na mesma posição — é esse id que volta no webhook quando o cliente
+// toca, e que o fluxo usa para saber qual opção foi escolhida (mesmo que o
+// texto do botão do template seja diferente do label no fluxo).
 export async function sendWhatsAppTemplate(
   ctx: FlowContext,
   templateId: string,
-  variableMap: Record<string, string>
+  variableMap: Record<string, string>,
+  replyButtons: FlowReplyButton[] = []
 ): Promise<void> {
   const template = await loadWhatsAppTemplateById(templateId)
   if (!template) throw new Error(`Template "${templateId}" não encontrado`)
+  const quickReplyPayloads = getTemplateQuickReplyButtons(template.buttons).map((button, position) => ({
+    index: button.index,
+    payload: replyButtons[position]?.id ?? button.text,
+  }))
 
   const rawValues = Array.from({ length: template.variable_count }, (_, i) => variableMap[String(i + 1)] ?? '')
   const hasVariables = getMessagePlaceholders(...rawValues).length > 0
@@ -223,7 +235,10 @@ export async function sendWhatsAppTemplate(
   let waMessageId: string | null = null
   const realSendTarget = resolveRealSendTarget(ctx)
   if (realSendTarget) {
-    const result = await dispatchSendTemplate(realSendTarget, ctx.remoteJid, template.meta_template_name, template.language, parameters)
+    const sendArgs = [realSendTarget, ctx.remoteJid, template.meta_template_name, template.language, parameters] as const
+    const result = quickReplyPayloads.length > 0
+      ? await dispatchSendTemplate(...sendArgs, { quickReplyPayloads })
+      : await dispatchSendTemplate(...sendArgs)
     waMessageId = result.waMessageId
   }
 
@@ -240,6 +255,32 @@ export async function sendWhatsAppTemplate(
     last_message: renderedBody,
     last_message_at: new Date().toISOString(),
   }).eq('id', ctx.conversationId)
+}
+
+// Pausa o fluxo até o cliente responder: a próxima mensagem recebida retoma
+// a execução em resumeAt (ver webhook → checkActiveFlowRun). replyButtons
+// alimenta normalizeReplyInput para traduzir o toque num botão (ou o texto
+// digitado) no label que os nós seguintes esperam.
+async function pauseFlowForReply(
+  ctx: FlowContext,
+  flowId: string,
+  resumeAt: string,
+  replyButtons: FlowReplyButton[]
+): Promise<void> {
+  const { error } = await supabase.from('flow_runs').upsert({
+    instance_name: ctx.instanceName,
+    remote_jid: ctx.remoteJid,
+    conversation_id: ctx.conversationId,
+    flow_id: flowId,
+    node_id: resumeAt,
+    status: 'waiting_confirmation',
+    variables: {
+      orderId: ctx.orderId ?? null,
+      replyButtons,
+    },
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'instance_name,remote_jid' })
+  if (error) throw new Error(`Falha ao pausar fluxo: ${error.message}`)
 }
 
 // ─── Memory injection ─────────────────────────────────────────────────────────
@@ -1513,6 +1554,49 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
         }
       } catch (error) {
         if (error instanceof OutsideMessagingWindowError) {
+          // Template de fallback: o node inteiro (texto, imagens e botões) é
+          // trocado pelo template aprovado. Como o resto do fluxo é texto
+          // livre e a janela continua fechada, o fluxo pausa aqui e só
+          // segue quando o cliente responder — o toque num botão do
+          // template chega como resposta e reabre a janela.
+          const fallbackTemplateId = typeof node.data.fallbackTemplateId === 'string' ? node.data.fallbackTemplateId : ''
+          if (fallbackTemplateId) {
+            const fallbackVariableMap = (node.data.fallbackTemplateVariableMap as Record<string, string> | undefined) ?? {}
+            try {
+              await sendWhatsAppTemplate(ctx, fallbackTemplateId, fallbackVariableMap, rendered.replyButtons)
+            } catch (templateError) {
+              if (templateError instanceof OrderContextPendingError && !ctx.jobId) {
+                await enqueueFlowMessageResumeJob({
+                  instanceName: ctx.instanceName,
+                  flowId,
+                  nodeId: node.id,
+                  conversationId: ctx.conversationId,
+                  remoteJid: ctx.remoteJid,
+                  orderId: ctx.orderId,
+                  isSandbox: ctx.isSandbox,
+                  realSendInstanceName: ctx.realSendInstanceName,
+                })
+                log('executeFlow sendMessage: waiting for local order context (fallback template)', { nodeId: node.id })
+                return
+              }
+              throw templateError
+            }
+            anyMessageSent = true
+            // Só pausa se ainda há o que executar depois — pausar num fluxo
+            // que termina aqui deixaria uma execução "esperando" que
+            // engoliria a primeira resposta do cliente em vez de deixá-la
+            // seguir para gatilhos/sessão de IA.
+            const resumeAfterTemplate = nextNodeId(edges, node.id)
+            const resumeNode = resumeAfterTemplate ? nodeMap.get(resumeAfterTemplate) : undefined
+            if (resumeAfterTemplate && resumeNode && resumeNode.type !== 'end') {
+              await pauseFlowForReply(ctx, flowId, resumeAfterTemplate, rendered.replyButtons)
+            }
+            log('executeFlow sendMessage: outside 24h window, sent fallback template', {
+              nodeId: node.id,
+              resumeAt: resumeNode && resumeNode.type !== 'end' ? resumeAfterTemplate : null,
+            })
+            return
+          }
           await supabase.from('notifications').insert({
             instance_name: ctx.instanceName,
             type: 'flow',
@@ -1556,20 +1640,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
       if (replyButtons.length > 0) {
         const resumeAt = nextNodeId(edges, node.id)
         if (!resumeAt) throw new Error('Mensagem com respostas nao possui proximo no')
-        const { error: runError } = await supabase.from('flow_runs').upsert({
-          instance_name: ctx.instanceName,
-          remote_jid: ctx.remoteJid,
-          conversation_id: ctx.conversationId,
-          flow_id: flowId,
-          node_id: resumeAt,
-          status: 'waiting_confirmation',
-          variables: {
-            orderId: ctx.orderId ?? null,
-            replyButtons: rendered.replyButtons,
-          },
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'instance_name,remote_jid' })
-        if (runError) throw new Error(`Falha ao pausar fluxo: ${runError.message}`)
+        await pauseFlowForReply(ctx, flowId, resumeAt, rendered.replyButtons)
         log('executeFlow sendMessage: waiting for reply', { nodeId: node.id, resumeAt })
         return
       }

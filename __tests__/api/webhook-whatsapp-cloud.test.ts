@@ -26,6 +26,14 @@ jest.mock('@/lib/whatsapp-cloud-media', () => ({
   resolveAndStoreCloudMedia: (...args: unknown[]) => mockResolveAndStoreCloudMedia(...args),
 }))
 
+const mockApplyTemplateStatusUpdate = jest.fn()
+const mockSyncTemplatesForWaba = jest.fn()
+jest.mock('@/lib/whatsapp-templates', () => ({
+  applyTemplateStatusUpdate: (...args: unknown[]) => mockApplyTemplateStatusUpdate(...args),
+  syncTemplatesForWaba: (...args: unknown[]) => mockSyncTemplatesForWaba(...args),
+  loadWhatsAppTemplateById: jest.fn(),
+}))
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function signBody(rawBody: string, secret = TEST_APP_SECRET): string {
@@ -488,14 +496,130 @@ describe('POST /api/webhook/whatsapp-cloud', () => {
     expect(await res.json()).toEqual({ ok: true })
   })
 
-  it('ignores changes with field other than "messages"', async () => {
+  it('ignores changes with a field we do not handle', async () => {
     const payload = {
       object: 'whatsapp_business_account',
-      entry: [{ id: 'waba-1', changes: [{ field: 'message_template_status_update', value: {} }] }],
+      entry: [{ id: 'waba-1', changes: [{ field: 'phone_number_quality_update', value: { event: 'FLAGGED' } }] }],
     }
     const req = buildRequest(payload)
     const res = await POST(req)
     expect(res.status).toBe(200)
     expect(supabaseMock.from).not.toHaveBeenCalled()
+    expect(mockApplyTemplateStatusUpdate).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /api/webhook/whatsapp-cloud — message_template_status_update', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    process.env.WHATSAPP_CLOUD_APP_SECRET = TEST_APP_SECRET
+  })
+
+  function templateStatusPayload(value: Record<string, unknown>, entryId = 'waba-1') {
+    return {
+      object: 'whatsapp_business_account',
+      entry: [{ id: entryId, changes: [{ field: 'message_template_status_update', value }] }],
+    }
+  }
+
+  it('applies the status change by Meta template id (numeric ids from Meta become strings)', async () => {
+    mockApplyTemplateStatusUpdate.mockResolvedValue('updated')
+
+    const res = await POST(buildRequest(templateStatusPayload({
+      event: 'REJECTED',
+      message_template_id: 1626546565544992,
+      message_template_name: 'test_template_shipment',
+      message_template_language: 'en',
+      reason: 'INVALID_FORMAT',
+    })))
+
+    expect(res.status).toBe(200)
+    expect(mockApplyTemplateStatusUpdate).toHaveBeenCalledWith({
+      metaTemplateId: '1626546565544992',
+      event: 'REJECTED',
+      reason: 'INVALID_FORMAT',
+    })
+    expect(mockSyncTemplatesForWaba).not.toHaveBeenCalled()
+    expect(supabaseMock.from).not.toHaveBeenCalled()
+  })
+
+  it('syncs templates for the entry WABA when the template is not known locally yet', async () => {
+    mockApplyTemplateStatusUpdate.mockResolvedValue('unknown')
+    mockSyncTemplatesForWaba.mockResolvedValue(3)
+
+    await POST(buildRequest(templateStatusPayload({ event: 'APPROVED', message_template_id: 99, reason: 'NONE' }, 'waba-9')))
+
+    expect(mockSyncTemplatesForWaba).toHaveBeenCalledWith('waba-9')
+  })
+
+  it('skips events without a template id or event name', async () => {
+    const res = await POST(buildRequest(templateStatusPayload({ message_template_name: 'x' })))
+
+    expect(res.status).toBe(200)
+    expect(mockApplyTemplateStatusUpdate).not.toHaveBeenCalled()
+  })
+
+  it('never fails the webhook when template processing throws, so Meta does not redeliver the whole payload', async () => {
+    mockApplyTemplateStatusUpdate.mockRejectedValue(new Error('db down'))
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    const res = await POST(buildRequest(templateStatusPayload({ event: 'APPROVED', message_template_id: 1 })))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    errorSpy.mockRestore()
+  })
+
+  it('still saves an inbound message that arrives in the same POST as a failing template event', async () => {
+    mockSupabaseSuccess()
+    mockApplyTemplateStatusUpdate.mockRejectedValue(new Error('db down'))
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    const payload = {
+      object: 'whatsapp_business_account',
+      entry: [{
+        id: 'waba-1',
+        changes: [
+          { field: 'message_template_status_update', value: { event: 'APPROVED', message_template_id: 1 } },
+          { field: 'messages', value: messagesChangeValue() },
+        ],
+      }],
+    }
+
+    const res = await POST(buildRequest(payload))
+
+    expect(res.status).toBe(200)
+    expect(supabaseMock.from).toHaveBeenCalledWith('conversations')
+    errorSpy.mockRestore()
+  })
+})
+
+describe('POST /api/webhook/whatsapp-cloud — account_update', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    process.env.WHATSAPP_CLOUD_APP_SECRET = TEST_APP_SECRET
+  })
+
+  it('logs the disconnection reason and who initiated it, without changing any state', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const payload = {
+      object: 'whatsapp_business_account',
+      entry: [{
+        id: 'waba-1',
+        changes: [{
+          field: 'account_update',
+          value: { event: 'PARTNER_REMOVED', disconnection_info: { reason: 'ACCOUNT_DISCONNECTED', initiated_by: 'SYSTEM' } },
+        }],
+      }],
+    }
+
+    const res = await POST(buildRequest(payload))
+
+    expect(res.status).toBe(200)
+    const logged = warnSpy.mock.calls.map((call) => String(call[0])).join(' | ')
+    expect(logged).toContain('PARTNER_REMOVED')
+    expect(logged).toContain('ACCOUNT_DISCONNECTED')
+    expect(logged).toContain('SYSTEM')
+    expect(supabaseMock.from).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 })

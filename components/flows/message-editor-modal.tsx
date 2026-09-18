@@ -20,6 +20,8 @@ import {
 import { FlowImage, FlowMedia, FlowNode, FlowNodeData, FlowReplyButton, MessageVariable } from '@/types'
 import { FEATURES } from '@/lib/features'
 import { AUTOMATIC_MESSAGE_VARIABLES } from '@/lib/message-template'
+import { templateStatusLabel } from '@/lib/whatsapp-template-status'
+import TemplateFallbackPicker, { type FallbackTemplateOption } from './template-fallback-picker'
 
 interface Props {
   node: FlowNode
@@ -44,14 +46,7 @@ type ImageTab = 'upload' | 'gallery'
 type InsertTarget = 'title' | 'message' | 'footer' | `button:${string}`
 type MessageMode = 'text' | 'template'
 
-interface WhatsAppMessageTemplate {
-  id: string
-  meta_template_name: string
-  language: string
-  status: 'pending' | 'approved' | 'rejected' | 'paused' | 'disabled'
-  body_text: string
-  variable_count: number
-}
+type WhatsAppMessageTemplate = FallbackTemplateOption
 
 function interpolatePreview(bodyText: string, map: Record<string, string>): string {
   return bodyText.replace(/\{\{(\d+)\}\}/g, (match, num: string) => map[num]?.trim() || match)
@@ -89,8 +84,13 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   const [templateVariableMap, setTemplateVariableMap] = useState<Record<string, string>>(
     (node.data.templateVariableMap as Record<string, string> | undefined) ?? {}
   )
+  const [fallbackTemplateId, setFallbackTemplateId] = useState<string>((node.data.fallbackTemplateId as string) ?? '')
+  const [fallbackVariableMap, setFallbackVariableMap] = useState<Record<string, string>>(
+    (node.data.fallbackTemplateVariableMap as Record<string, string> | undefined) ?? {}
+  )
   const [templates, setTemplates] = useState<WhatsAppMessageTemplate[]>([])
   const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [templatesRefreshing, setTemplatesRefreshing] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -106,7 +106,11 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
     // para "Texto livre" pra não deixar um valor obsoleto ativo.
     templateId: messageMode === 'template' ? templateId : '',
     templateVariableMap: messageMode === 'template' ? templateVariableMap : {},
-  }), [title, text, footer, replyButtons, images, combineImageAndMessage, messageMode, templateId, templateVariableMap])
+    // O fallback só faz sentido junto do texto livre (o modo Template já
+    // envia sempre o template) — limpa ao trocar de modo.
+    fallbackTemplateId: messageMode === 'text' ? fallbackTemplateId : '',
+    fallbackTemplateVariableMap: messageMode === 'text' ? fallbackVariableMap : {},
+  }), [title, text, footer, replyButtons, images, combineImageAndMessage, messageMode, templateId, templateVariableMap, fallbackTemplateId, fallbackVariableMap])
 
   const messageDataRef = useRef(buildSaveData())
   messageDataRef.current = buildSaveData()
@@ -171,6 +175,27 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
     return () => { cancelled = true }
   }, [isCloudApiAccount, instanceName])
 
+  // Busca a lista e o status atuais na Meta (o status também chega sozinho
+  // pelo webhook, mas isto cobre templates criados antes de o webhook estar
+  // ativo ou eventos perdidos) e recarrega o espelho local.
+  const refreshTemplates = useCallback(async () => {
+    setTemplatesRefreshing(true)
+    try {
+      await fetch('/api/whatsapp-cloud/templates/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instance: instanceName }),
+      })
+      const res = await fetch(`/api/whatsapp-cloud/templates?instance=${encodeURIComponent(instanceName)}`)
+      const json = await res.json()
+      if (json.ok) setTemplates(json.templates ?? [])
+    } catch {
+      // mantém a lista atual — o botão pode ser clicado de novo
+    } finally {
+      setTemplatesRefreshing(false)
+    }
+  }, [instanceName])
+
   const approvedTemplates = useMemo(
     () => templates.filter((t) => t.status === 'approved'),
     [templates]
@@ -188,6 +213,25 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
     }
     return null
   }, [messageMode, templateId, selectedTemplate, templateVariableMap])
+
+  // Fallback opcional: sem template escolhido não há o que validar; com um
+  // escolhido, precisa estar aprovado e com todas as variáveis preenchidas —
+  // um valor vazio só falharia na hora do envio, com o cliente esperando.
+  const selectedFallbackTemplate = useMemo(
+    () => approvedTemplates.find((t) => t.id === fallbackTemplateId) ?? null,
+    [approvedTemplates, fallbackTemplateId]
+  )
+  const fallbackValidationError = useMemo(() => {
+    if (messageMode !== 'text' || !fallbackTemplateId) return null
+    // Lista ainda carregando ou indisponível: não dá para julgar, não bloqueia.
+    if (templatesLoading || templates.length === 0) return null
+    if (!selectedFallbackTemplate) return 'O template de fallback selecionado não está mais aprovado — escolha outro'
+    for (let i = 1; i <= selectedFallbackTemplate.variable_count; i++) {
+      if (!fallbackVariableMap[String(i)]?.trim()) return `Preencha o valor de {{${i}}} no template de fallback`
+    }
+    return null
+  }, [messageMode, fallbackTemplateId, templatesLoading, templates.length, selectedFallbackTemplate, fallbackVariableMap])
+  const saveBlockedReason = messageMode === 'template' ? templateValidationError : fallbackValidationError
 
   const filteredAutomaticVariables = useMemo(() => {
     const query = variableQuery.trim().toLocaleLowerCase()
@@ -397,7 +441,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   }
 
   function handleSave() {
-    if (messageMode === 'template' && templateValidationError) return
+    if (saveBlockedReason) return
     onChange(node.id, buildSaveData())
     onClose()
   }
@@ -476,9 +520,9 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
                   <div className="flex items-center gap-2 text-sm text-[#667781] dark:text-[#8696a0]">
                     <Loader2 size={14} className="animate-spin" /> Carregando templates...
                   </div>
-                ) : approvedTemplates.length === 0 ? (
+                ) : templates.length === 0 ? (
                   <p className="text-sm text-[#8696a0]">
-                    Nenhum template aprovado sincronizado ainda. Sincronize em Configurações Gerais depois de aprovar um template no Gerenciador do WhatsApp da Meta.
+                    Nenhum template sincronizado ainda. Crie um no Gerenciador do WhatsApp da Meta e sincronize em Configurações Gerais.
                   </p>
                 ) : (
                   <>
@@ -490,9 +534,10 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
                         className="w-full text-sm text-[#111b21] dark:text-[#e9edef] bg-[#f0f2f5] dark:bg-[#2a3942] border border-[#d1d7db] dark:border-[#3d4f5a] rounded-lg px-3 py-2 outline-none focus:border-[#00a884]"
                       >
                         <option value="">Selecione um template</option>
-                        {approvedTemplates.map((template) => (
-                          <option key={template.id} value={template.id}>
+                        {templates.map((template) => (
+                          <option key={template.id} value={template.id} disabled={template.status !== 'approved'}>
                             {template.meta_template_name} ({template.language})
+                            {template.status !== 'approved' ? ` — ${templateStatusLabel(template.status, template.status_reason)}` : ''}
                           </option>
                         ))}
                       </select>
@@ -906,6 +951,19 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
                 </div>
               )}
             </div>
+
+            {isCloudApiAccount && (
+              <TemplateFallbackPicker
+                templates={templates}
+                loading={templatesLoading}
+                refreshing={templatesRefreshing}
+                templateId={fallbackTemplateId}
+                variableMap={fallbackVariableMap}
+                replyButtons={replyButtons}
+                onChange={(id, map) => { setFallbackTemplateId(id); setFallbackVariableMap(map) }}
+                onRefresh={() => { void refreshTemplates() }}
+              />
+            )}
               </>
             )}
           </div>
@@ -1035,7 +1093,8 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
           </button>
           <button
             onClick={handleSave}
-            disabled={messageMode === 'template' && Boolean(templateValidationError)}
+            disabled={Boolean(saveBlockedReason)}
+            title={saveBlockedReason ?? undefined}
             className="px-5 py-2 text-sm font-semibold bg-[#00a884] text-white rounded-xl hover:bg-[#008f72] disabled:opacity-50 transition-colors shadow-sm"
           >
             Salvar

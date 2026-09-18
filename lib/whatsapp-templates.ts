@@ -18,10 +18,43 @@ export interface WhatsAppMessageTemplateRow {
   header_type: string | null
   footer_text: string | null
   buttons: unknown
+  status_reason: string | null
+  status_updated_at: string | null
   last_synced_at: string | null
 }
 
 const KNOWN_STATUSES: WhatsAppTemplateStatus[] = ['pending', 'approved', 'rejected', 'paused', 'disabled']
+
+// A Meta usa "NONE" quando não há motivo (aprovação, por exemplo) — guarda
+// null nesse caso para a UI não precisar conhecer esse valor mágico.
+function normalizeReason(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  return trimmed && trimmed.toUpperCase() !== 'NONE' ? trimmed : null
+}
+
+// Eventos do webhook message_template_status_update → status local. null =
+// evento irrelevante para o envio (ex: aviso de qualidade), o status atual
+// fica como está.
+export function mapTemplateEventToStatus(event: string): WhatsAppTemplateStatus | null {
+  switch (event.toUpperCase()) {
+    case 'APPROVED':
+    case 'REINSTATED':
+      return 'approved'
+    case 'REJECTED':
+      return 'rejected'
+    case 'PENDING':
+    case 'IN_APPEAL':
+      return 'pending'
+    case 'PAUSED':
+      return 'paused'
+    case 'DISABLED':
+    case 'DELETED':
+      return 'disabled'
+    default:
+      return null
+  }
+}
 
 function asComponentList(components: unknown): Array<Record<string, unknown>> {
   return Array.isArray(components) ? components as Array<Record<string, unknown>> : []
@@ -67,7 +100,7 @@ export async function syncWhatsAppTemplates(instanceName: string): Promise<{ syn
 
   const accessToken = decodeCloudAccessToken(credentials)
   const response = await fetchCloudApi(
-    `/${credentials.waba_id}/message_templates?fields=id,name,language,category,status,components&limit=250`,
+    `/${credentials.waba_id}/message_templates?fields=id,name,language,category,status,rejected_reason,components&limit=250`,
     accessToken,
     { method: 'GET' },
     15_000
@@ -93,6 +126,7 @@ export async function syncWhatsAppTemplates(instanceName: string): Promise<{ syn
       language,
       category: typeof raw.category === 'string' ? raw.category : null,
       status: normalizeStatus(raw.status),
+      status_reason: normalizeReason(raw.rejected_reason),
       body_text: bodyText,
       variable_count: variableCount,
       header_type: extractHeaderType(raw.components),
@@ -105,6 +139,62 @@ export async function syncWhatsAppTemplates(instanceName: string): Promise<{ syn
   }
 
   return { synced, total: data.length }
+}
+
+export interface TemplateStatusUpdate {
+  metaTemplateId: string
+  event: string
+  reason: string | null
+}
+
+// Aplica um evento message_template_status_update ao espelho local.
+// 'unknown' = o template ainda não existe aqui (criado no Gerenciador do
+// WhatsApp depois da última sincronização) — o chamador decide sincronizar.
+export async function applyTemplateStatusUpdate(
+  update: TemplateStatusUpdate
+): Promise<'updated' | 'unknown' | 'ignored'> {
+  const status = mapTemplateEventToStatus(update.event)
+  if (!status) return 'ignored'
+
+  const now = new Date().toISOString()
+  const { data, error } = await supabaseAdmin
+    .from('whatsapp_message_templates')
+    .update({
+      status,
+      status_reason: normalizeReason(update.reason),
+      status_updated_at: now,
+      updated_at: now,
+    })
+    .eq('meta_template_id', update.metaTemplateId)
+    .select('id')
+  if (error) throw new Error(`Falha ao atualizar status do template: ${error.message}`)
+  return data && data.length > 0 ? 'updated' : 'unknown'
+}
+
+// O entry.id do webhook é o ID da WABA — mas a mesma conta pode aparecer
+// sob dois IDs (o que gravamos na conta e o que a Meta manda), então se
+// nenhuma conta bate com ele sincroniza todas as contas Cloud API (poucas,
+// e cada sincronização é uma única chamada à Meta).
+export async function syncTemplatesForWaba(wabaId: string): Promise<number> {
+  const { data: matching } = await supabaseAdmin
+    .from('whatsapp_cloud_credentials')
+    .select('instance_name')
+    .eq('waba_id', wabaId)
+  let instances = (matching ?? []) as Array<{ instance_name: string }>
+  if (instances.length === 0) {
+    const { data: all } = await supabaseAdmin.from('whatsapp_cloud_credentials').select('instance_name')
+    instances = (all ?? []) as Array<{ instance_name: string }>
+  }
+
+  let synced = 0
+  for (const { instance_name } of instances) {
+    try {
+      synced += (await syncWhatsAppTemplates(instance_name)).synced
+    } catch (error) {
+      console.error(`[whatsapp-templates] sincronização de "${instance_name}" falhou:`, error instanceof Error ? error.message : error)
+    }
+  }
+  return synced
 }
 
 export async function loadWhatsAppTemplates(instanceName: string): Promise<WhatsAppMessageTemplateRow[]> {

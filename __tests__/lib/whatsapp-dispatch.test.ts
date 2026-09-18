@@ -110,8 +110,18 @@ describe('whatsapp-dispatch', () => {
 
     const result = await dispatchSendTemplate('wa-cloud', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'])
 
-    expect(mockCloudSendTemplate).toHaveBeenCalledWith('wa-cloud', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'])
+    expect(mockCloudSendTemplate).toHaveBeenCalledWith('wa-cloud', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'], undefined)
     expect(result).toEqual({ waMessageId: 'wamid.tpl', raw: {} })
+  })
+
+  it('passes quick reply options through to the cloud adapter', async () => {
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockCloudSendTemplate.mockResolvedValue({ waMessageId: 'wamid.tpl', raw: {} })
+    const options = { quickReplyPayloads: [{ index: 1, payload: 'btn-2' }] }
+
+    await dispatchSendTemplate('wa-cloud', '5511999999999', 'order_confirmation', 'pt_BR', [], options)
+
+    expect(mockCloudSendTemplate).toHaveBeenCalledWith('wa-cloud', '5511999999999', 'order_confirmation', 'pt_BR', [], options)
   })
 
   it('dispatches sendTemplate to the evolution adapter, which rejects as unsupported', async () => {

@@ -250,8 +250,22 @@ describe('cloudApiAdapter.sendTemplate', () => {
 
     const result = await cloudApiAdapter.sendTemplate('wa-1', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'])
 
-    expect(mockSendCloudTemplate).toHaveBeenCalledWith('123456', 'plain-token', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'])
+    expect(mockSendCloudTemplate).toHaveBeenCalledWith('123456', 'plain-token', '5511999999999', 'order_confirmation', 'pt_BR', ['João', '#123'], undefined, undefined)
     expect(result).toEqual({ waMessageId: 'wamid.tpl', raw: { ok: true } })
+  })
+
+  it('forwards quick reply payloads to the client so button taps can be traced back', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({
+      instance_name: 'wa-1', phone_number_id: '123456',
+      encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
+    })
+    mockDecodeCloudAccessToken.mockReturnValue('plain-token')
+    mockSendCloudTemplate.mockResolvedValue({ waMessageId: 'wamid.tpl', raw: {} })
+    const options = { quickReplyPayloads: [{ index: 0, payload: 'btn-yes' }] }
+
+    await cloudApiAdapter.sendTemplate('wa-1', '5511999999999', 'order_confirmation', 'pt_BR', [], options)
+
+    expect(mockSendCloudTemplate).toHaveBeenCalledWith('123456', 'plain-token', '5511999999999', 'order_confirmation', 'pt_BR', [], undefined, options)
   })
 
   it('throws when the account has no cloud_api credentials configured', async () => {

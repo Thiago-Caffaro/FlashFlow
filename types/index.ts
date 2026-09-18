@@ -164,6 +164,11 @@ export interface FlowNodeData {
   // substitui o envio de texto livre pelo template aprovado correspondente
   templateId?: string
   templateVariableMap?: Record<string, string>
+  // Template de fallback (WhatsApp Cloud API): o texto/botões do node seguem
+  // sendo o envio normal; o template só entra no lugar quando a conta é
+  // oficial e a janela de 24h está fechada.
+  fallbackTemplateId?: string
+  fallbackTemplateVariableMap?: Record<string, string>
   [key: string]: unknown
 }
 

@@ -229,6 +229,34 @@ describe('sendCloudTemplate', () => {
     expect(body.template).not.toHaveProperty('components')
   })
 
+  it('adds a quick_reply button component per payload, keeping the template button index as a string', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.TPL3' }] }))
+
+    await sendCloudTemplate('123456', 'token', '5511999999999', 'confirm_buttons', 'es', ['Maria'], undefined, {
+      quickReplyPayloads: [{ index: 0, payload: 'btn-yes' }, { index: 2, payload: 'btn-no' }],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(init.body).template.components).toEqual([
+      { type: 'body', parameters: [{ type: 'text', text: 'Maria' }] },
+      { type: 'button', sub_type: 'quick_reply', index: '0', parameters: [{ type: 'payload', payload: 'btn-yes' }] },
+      { type: 'button', sub_type: 'quick_reply', index: '2', parameters: [{ type: 'payload', payload: 'btn-no' }] },
+    ])
+  })
+
+  it('sends only button components when the template has buttons but no body variables', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { messages: [{ id: 'wamid.TPL4' }] }))
+
+    await sendCloudTemplate('123456', 'token', '5511999999999', 'buttons_only', 'es', [], undefined, {
+      quickReplyPayloads: [{ index: 0, payload: 'btn-yes' }],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(init.body).template.components).toEqual([
+      { type: 'button', sub_type: 'quick_reply', index: '0', parameters: [{ type: 'payload', payload: 'btn-yes' }] },
+    ])
+  })
+
   it('throws with the readable Meta error message on failure', async () => {
     fetchMock.mockResolvedValue(jsonResponse(400, {
       error: { message: 'Template name does not exist', type: 'OAuthException', code: 132001 },
