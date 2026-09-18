@@ -21,9 +21,14 @@ const REASON_LABELS: Record<string, string> = {
   SCAM: 'suspeita de golpe',
 }
 
+export function templateReasonLabel(reason?: string | null): string | null {
+  const trimmed = reason?.trim()
+  if (!trimmed) return null
+  return REASON_LABELS[trimmed.toUpperCase()] ?? trimmed
+}
+
 export function templateStatusLabel(status: TemplateStatus, reason?: string | null): string {
   const label = STATUS_LABELS[status] ?? status
-  const trimmed = reason?.trim()
-  if (!trimmed) return label
-  return `${label}: ${REASON_LABELS[trimmed.toUpperCase()] ?? trimmed}`
+  const reasonLabel = templateReasonLabel(reason)
+  return reasonLabel ? `${label}: ${reasonLabel}` : label
 }

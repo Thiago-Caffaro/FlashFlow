@@ -22,6 +22,7 @@ import { Flow, FlowNode, FlowEdge, FlowNodeData, FlowNodeType, SwitchCase } from
 import { FEATURES } from '@/lib/features'
 import { findReplyConnectionIssue } from '@/lib/flow-connection-validation'
 import { findFirstMessagesWithoutTemplate } from '@/lib/flow-template-lint'
+import { isCloudApiAccount as isCloudApiAccountInList } from '@/lib/account-provider-lookup'
 import { buildReplyCasesForConnection } from '@/lib/flow-switch-cases'
 import StartNode from './nodes/start-node'
 import SendMessageNode from './nodes/send-message-node'
@@ -147,9 +148,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
       .then((res) => res.json())
       .then((json) => {
         if (cancelled) return
-        const accounts = Array.isArray(json.accounts) ? json.accounts : []
-        const account = accounts.find((a: { instance_name?: string }) => a.instance_name === flow.instance_name)
-        setIsCloudApiAccount(account?.provider === 'cloud_api')
+        setIsCloudApiAccount(isCloudApiAccountInList(json.accounts, flow.instance_name))
       })
       .catch(() => {})
     return () => { cancelled = true }

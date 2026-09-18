@@ -1,4 +1,14 @@
-import { templateStatusLabel } from '@/lib/whatsapp-template-status'
+import { templateReasonLabel, templateStatusLabel } from '@/lib/whatsapp-template-status'
+
+describe('templateReasonLabel', () => {
+  it('translates known reasons, keeps unknown ones as they came, and returns null when empty', () => {
+    expect(templateReasonLabel('INVALID_FORMAT')).toBe('formato inválido')
+    expect(templateReasonLabel('SOMETHING_NEW')).toBe('SOMETHING_NEW')
+    expect(templateReasonLabel('  ')).toBeNull()
+    expect(templateReasonLabel(null)).toBeNull()
+    expect(templateReasonLabel(undefined)).toBeNull()
+  })
+})
 
 describe('templateStatusLabel', () => {
   it('labels each status in Portuguese', () => {

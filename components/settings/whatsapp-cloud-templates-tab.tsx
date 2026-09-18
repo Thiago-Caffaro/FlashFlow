@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { FileText, Loader2, RefreshCw } from 'lucide-react'
+import { isCloudApiAccount as isCloudApiAccountInList } from '@/lib/account-provider-lookup'
+import { getTemplateQuickReplyButtons } from '@/lib/whatsapp-template-buttons'
+import { templateReasonLabel } from '@/lib/whatsapp-template-status'
 
 interface WhatsAppMessageTemplate {
   id: string
@@ -11,6 +14,9 @@ interface WhatsAppMessageTemplate {
   status: 'pending' | 'approved' | 'rejected' | 'paused' | 'disabled'
   body_text: string
   variable_count: number
+  buttons?: unknown
+  status_reason?: string | null
+  status_updated_at?: string | null
   last_synced_at: string | null
 }
 
@@ -50,9 +56,7 @@ export default function WhatsAppCloudTemplatesTab({ instanceName }: Props) {
       .then((res) => res.json())
       .then((json) => {
         if (cancelled) return
-        const accounts = Array.isArray(json.accounts) ? json.accounts : []
-        const account = accounts.find((a: { instance_name?: string }) => a.instance_name === instanceName)
-        setIsCloudApiAccount(account?.provider === 'cloud_api')
+        setIsCloudApiAccount(isCloudApiAccountInList(json.accounts, instanceName))
       })
       .catch(() => { if (!cancelled) setIsCloudApiAccount(false) })
     return () => { cancelled = true }
@@ -115,7 +119,7 @@ export default function WhatsAppCloudTemplatesTab({ instanceName }: Props) {
         </button>
       </div>
       <p className="text-sm text-[#aebac1] dark:text-[#667781]">
-        Somente leitura — a criação e edição de templates continua no Gerenciador do WhatsApp da Meta. Sincronize aqui depois de aprovar um template novo para usá-lo nos fluxos.
+        Somente leitura — a criação e edição de templates continua no Gerenciador do WhatsApp da Meta. O status (aprovado, rejeitado...) é atualizado sozinho quando a Meta decide; use Sincronizar para buscar templates novos ou conferir manualmente.
       </p>
 
       {error && <p className="text-sm text-red-500">{error}</p>}
@@ -140,7 +144,19 @@ export default function WhatsAppCloudTemplatesTab({ instanceName }: Props) {
                 {template.language}{template.category ? ` · ${template.category}` : ''}
                 {template.variable_count > 0 ? ` · ${template.variable_count} variável(is)` : ''}
               </p>
+              {templateReasonLabel(template.status_reason) && (
+                <p className="text-xs text-red-500">Motivo: {templateReasonLabel(template.status_reason)}</p>
+              )}
               <p className="text-sm text-[#3b4a54] dark:text-[#d1d7db] whitespace-pre-wrap">{template.body_text}</p>
+              {getTemplateQuickReplyButtons(template.buttons).length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {getTemplateQuickReplyButtons(template.buttons).map((button) => (
+                    <span key={button.index} className="rounded-full border border-[#d1d7db] dark:border-[#3d4f5a] px-2.5 py-0.5 text-xs text-[#3b4a54] dark:text-[#d1d7db]">
+                      {button.text}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>

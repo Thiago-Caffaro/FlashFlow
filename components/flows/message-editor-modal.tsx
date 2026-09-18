@@ -21,6 +21,7 @@ import { FlowImage, FlowMedia, FlowNode, FlowNodeData, FlowReplyButton, MessageV
 import { FEATURES } from '@/lib/features'
 import { AUTOMATIC_MESSAGE_VARIABLES } from '@/lib/message-template'
 import { templateStatusLabel } from '@/lib/whatsapp-template-status'
+import { isCloudApiAccount as isCloudApiAccountInList } from '@/lib/account-provider-lookup'
 import TemplateFallbackPicker, { type FallbackTemplateOption } from './template-fallback-picker'
 
 interface Props {
@@ -152,9 +153,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
       .then((res) => res.json())
       .then((json) => {
         if (cancelled) return
-        const accounts = Array.isArray(json.accounts) ? json.accounts : []
-        const account = accounts.find((a: { instance_name?: string }) => a.instance_name === instanceName)
-        setIsCloudApiAccount(account?.provider === 'cloud_api')
+        setIsCloudApiAccount(isCloudApiAccountInList(json.accounts, instanceName))
       })
       .catch(() => {})
     return () => { cancelled = true }
