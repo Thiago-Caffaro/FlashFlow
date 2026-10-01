@@ -2,7 +2,7 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { supabaseAdmin } from './supabase-admin'
 
-export type FlowJobType = 'shopify_order_flow' | 'flow_message_resume' | 'delivery_status_flow'
+export type FlowJobType = 'shopify_order_flow' | 'flow_message_resume' | 'delivery_status_flow' | 'abandoned_checkout_flow'
 export type FlowJobStatus = 'pending' | 'processing' | 'completed' | 'failed'
 
 export interface FlowJob {
@@ -13,6 +13,7 @@ export interface FlowJob {
   flow_id: string
   node_id: string | null
   order_id: string | null
+  checkout_id: string | null
   conversation_id: string | null
   remote_jid: string | null
   payload: Record<string, unknown>
@@ -30,7 +31,8 @@ export interface FlowJob {
 }
 
 async function insertJob(
-  job: Omit<FlowJob, 'id' | 'status' | 'attempts' | 'next_attempt_at' | 'locked_at' | 'locked_by' | 'last_error' | 'created_at' | 'updated_at' | 'completed_at'>
+  job: Omit<FlowJob, 'id' | 'status' | 'attempts' | 'next_attempt_at' | 'checkout_id' | 'locked_at' | 'locked_by' | 'last_error' | 'created_at' | 'updated_at' | 'completed_at'>
+    & { checkout_id?: string; next_attempt_at?: string }
 ): Promise<FlowJob | null> {
   const { data, error } = await supabaseAdmin
     .from('flow_jobs')
@@ -61,6 +63,64 @@ export async function enqueueShopifyOrderFlowJob(input: {
   })
 }
 
+// Retries de um job de carrinho só fazem sentido pouco depois do horário
+// agendado — um lembrete de carrinho entregue um dia atrasado só incomoda.
+const ABANDONED_CHECKOUT_JOB_TTL_MS = 6 * 60 * 60 * 1000
+
+// Carrinho abandonado: roda só depois de (última atividade do checkout +
+// delay do gatilho). O dedupe é por checkout+gatilho — vários gatilhos com
+// delays diferentes (ex: 1h e 24h) viram uma sequência de lembretes. Cada
+// checkouts/update da Shopify (cliente ainda preenchendo o checkout) empurra
+// o job pendente para frente, em vez de disparar no meio do preenchimento.
+export async function enqueueAbandonedCheckoutFlowJob(input: {
+  checkoutId: string
+  triggerId: string
+  instanceName: string
+  flowId: string
+  runAt: Date
+}): Promise<FlowJob | null> {
+  const dedupeKey = `abandoned-checkout:${input.checkoutId}:${input.triggerId}`
+  const nextAttemptAt = input.runAt.toISOString()
+  const expiresAt = new Date(input.runAt.getTime() + ABANDONED_CHECKOUT_JOB_TTL_MS).toISOString()
+  const inserted = await insertJob({
+    job_type: 'abandoned_checkout_flow',
+    dedupe_key: dedupeKey,
+    instance_name: input.instanceName,
+    flow_id: input.flowId,
+    node_id: null,
+    order_id: null,
+    checkout_id: input.checkoutId,
+    conversation_id: null,
+    remote_jid: null,
+    payload: { triggerId: input.triggerId },
+    max_attempts: 10,
+    next_attempt_at: nextAttemptAt,
+    expires_at: expiresAt,
+  })
+  if (inserted) return inserted
+
+  const { data, error } = await supabaseAdmin
+    .from('flow_jobs')
+    .update({ next_attempt_at: nextAttemptAt, expires_at: expiresAt, updated_at: new Date().toISOString() })
+    .eq('dedupe_key', dedupeKey)
+    .eq('status', 'pending')
+    .select()
+    .maybeSingle()
+  if (error) throw new Error(`Falha ao reagendar fluxo de carrinho: ${error.message}`)
+  return data as FlowJob | null
+}
+
+export async function cancelPendingAbandonedCheckoutJobs(checkoutIds: string[], reason: string): Promise<void> {
+  if (checkoutIds.length === 0) return
+  const { error } = await supabaseAdmin
+    .from('flow_jobs')
+    .update({ status: 'failed', last_error: reason, updated_at: new Date().toISOString() })
+    .in('checkout_id', checkoutIds)
+    .eq('job_type', 'abandoned_checkout_flow')
+    .eq('status', 'pending')
+  if (error) throw new Error(`Falha ao cancelar fluxos de carrinho pendentes: ${error.message}`)
+}
+
 export async function enqueueFlowMessageResumeJob(input: {
   instanceName: string
   flowId: string
@@ -68,6 +128,7 @@ export async function enqueueFlowMessageResumeJob(input: {
   conversationId: string
   remoteJid: string
   orderId?: string
+  checkoutId?: string
   isSandbox?: boolean
   realSendInstanceName?: string
 }): Promise<FlowJob | null> {
@@ -83,6 +144,7 @@ export async function enqueueFlowMessageResumeJob(input: {
     payload: {
       isSandbox: input.isSandbox === true,
       realSendInstanceName: input.realSendInstanceName,
+      checkoutId: input.checkoutId,
     },
     max_attempts: 20,
     expires_at: new Date(Date.now() + 2 * 60 * 1000).toISOString(),

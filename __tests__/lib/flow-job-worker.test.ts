@@ -5,6 +5,7 @@ const mockFrom = jest.fn()
 const mockExecuteFlow = jest.fn()
 const mockRunShopifyOrderTrigger = jest.fn()
 const mockRunOrderFlow = jest.fn()
+const mockRunAbandonedCheckoutTrigger = jest.fn()
 const mockGetShopifyTriggersEnabled = jest.fn()
 
 jest.mock('@/lib/supabase-admin', () => ({
@@ -18,6 +19,7 @@ jest.mock('@/lib/flow-engine', () => ({
 jest.mock('@/lib/shopify-confirmation-service', () => ({
   runShopifyOrderTrigger: mockRunShopifyOrderTrigger,
   runOrderFlow: mockRunOrderFlow,
+  runAbandonedCheckoutTrigger: mockRunAbandonedCheckoutTrigger,
 }))
 
 jest.mock('@/lib/shopify-trigger-settings', () => ({
@@ -177,5 +179,62 @@ describe('flow job worker', () => {
 
     expect(mockRunOrderFlow).toHaveBeenCalledWith('order-1', 'flow-1')
     expect(completed.updates[0]).toMatchObject({ status: 'completed' })
+  })
+
+  it('executes an abandoned checkout flow for the exact checkout', async () => {
+    mockRpc.mockResolvedValue({
+      data: [job({
+        job_type: 'abandoned_checkout_flow',
+        dedupe_key: 'abandoned-checkout:checkout-1:trigger-1',
+        order_id: null,
+        checkout_id: 'checkout-1',
+      })],
+      error: null,
+    })
+    mockRunAbandonedCheckoutTrigger.mockResolvedValue({ conversationId: 'conv-1' })
+    const completed = updateBuilder()
+    mockFrom.mockReturnValue(completed.chain)
+
+    await runFlowJobWorkerOnce('worker-1')
+
+    expect(mockRunAbandonedCheckoutTrigger).toHaveBeenCalledWith('checkout-1', 'flow-1')
+    expect(completed.updates[0]).toMatchObject({ status: 'completed' })
+  })
+
+  it('completes an abandoned checkout job without sending when Shopify triggers were paused', async () => {
+    mockRpc.mockResolvedValue({
+      data: [job({ job_type: 'abandoned_checkout_flow', order_id: null, checkout_id: 'checkout-1' })],
+      error: null,
+    })
+    mockGetShopifyTriggersEnabled.mockResolvedValue(false)
+    const completed = updateBuilder()
+    mockFrom.mockReturnValue(completed.chain)
+
+    await runFlowJobWorkerOnce('worker-1')
+
+    expect(mockRunAbandonedCheckoutTrigger).not.toHaveBeenCalled()
+    expect(completed.updates[0]).toMatchObject({ status: 'completed' })
+  })
+
+  it('resumes a message job with the persisted checkout context', async () => {
+    mockRpc.mockResolvedValue({
+      data: [job({
+        job_type: 'flow_message_resume',
+        node_id: 'message-1',
+        order_id: null,
+        conversation_id: 'conv-1',
+        remote_jid: '34600000000@s.whatsapp.net',
+        payload: { checkoutId: 'checkout-1' },
+      })],
+      error: null,
+    })
+    mockExecuteFlow.mockResolvedValue(undefined)
+    mockFrom.mockReturnValue(updateBuilder().chain)
+
+    await runFlowJobWorkerOnce('worker-1')
+
+    expect(mockExecuteFlow).toHaveBeenCalledWith('flow-1', expect.objectContaining({
+      checkoutId: 'checkout-1',
+    }), 'message-1')
   })
 })

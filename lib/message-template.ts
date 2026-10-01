@@ -1,9 +1,9 @@
-import type { FlowReplyButton, FulfillmentOrder, ShopifyProduct } from '@/types'
+import type { FlowReplyButton, FulfillmentOrder, ShopifyAbandonedCheckout, ShopifyProduct } from '@/types'
 
 export interface AutomaticMessageVariable {
   key: string
   label: string
-  group: 'Contato' | 'Pedido'
+  group: 'Contato' | 'Pedido' | 'Carrinho'
   description: string
 }
 
@@ -13,6 +13,7 @@ export interface MessageTemplateContext {
     number: string
   }
   order?: FulfillmentOrder | null
+  checkout?: ShopifyAbandonedCheckout | null
   productsByVariantId?: Map<string, ShopifyProduct>
   customVariables?: Record<string, string>
 }
@@ -58,6 +59,13 @@ export const AUTOMATIC_MESSAGE_VARIABLES: AutomaticMessageVariable[] = [
   { key: 'pedido.data', label: 'Data', group: 'Pedido', description: 'Data de criacao do pedido' },
   { key: 'pedido.produtos', label: 'Produtos', group: 'Pedido', description: 'Nomes dos produtos, um por linha' },
   { key: 'pedido.itens', label: 'Itens detalhados', group: 'Pedido', description: 'Produtos com quantidade, SKU e valores' },
+  { key: 'carrinho.link', label: 'Link do carrinho', group: 'Carrinho', description: 'Link para o cliente retomar o checkout abandonado' },
+  { key: 'carrinho.cliente', label: 'Cliente do carrinho', group: 'Carrinho', description: 'Nome do cliente no checkout' },
+  { key: 'carrinho.email', label: 'E-mail do carrinho', group: 'Carrinho', description: 'E-mail informado no checkout' },
+  { key: 'carrinho.total', label: 'Total do carrinho', group: 'Carrinho', description: 'Total do carrinho formatado com moeda' },
+  { key: 'carrinho.moeda', label: 'Moeda do carrinho', group: 'Carrinho', description: 'Codigo da moeda' },
+  { key: 'carrinho.produtos', label: 'Produtos do carrinho', group: 'Carrinho', description: 'Nomes dos produtos, um por linha' },
+  { key: 'carrinho.itens', label: 'Itens do carrinho', group: 'Carrinho', description: 'Produtos com quantidade e valores' },
 ]
 
 const AUTOMATIC_KEYS = new Set(AUTOMATIC_MESSAGE_VARIABLES.map((variable) => variable.key))
@@ -143,6 +151,45 @@ function orderValues(
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+// Os itens do carrinho não são normalizados em colunas próprias — vêm do
+// payload cru do checkout Shopify (line_items: title/variant_title/quantity/price).
+function checkoutLineItems(checkout: ShopifyAbandonedCheckout): Array<{ name: string; quantity: number; total: number }> {
+  const lineItems = asRecord(checkout.raw_shopify_payload).line_items
+  if (!Array.isArray(lineItems)) return []
+  return lineItems.flatMap((entry) => {
+    const item = asRecord(entry)
+    const title = typeof item.title === 'string' ? item.title.trim() : ''
+    const variant = typeof item.variant_title === 'string' ? item.variant_title.trim() : ''
+    const name = [title, variant].filter(Boolean).join(' - ')
+    if (!name) return []
+    const quantity = Math.max(1, Math.trunc(Number(item.quantity) || 1))
+    const price = Number(item.price)
+    return [{ name, quantity, total: Number.isFinite(price) ? price * quantity : 0 }]
+  })
+}
+
+function checkoutValues(checkout: ShopifyAbandonedCheckout): Record<string, string> {
+  const items = checkoutLineItems(checkout)
+  const productNames = items.map((item) => item.name)
+  return {
+    'carrinho.link': checkout.abandoned_checkout_url || '',
+    'carrinho.cliente': checkout.customer_name || '',
+    'carrinho.email': checkout.email || '',
+    'carrinho.total': formatMoney(Number(checkout.total), checkout.currency),
+    'carrinho.moeda': checkout.currency,
+    'carrinho.produtos': productNames.length === 1
+      ? productNames[0]
+      : productNames.map((name) => `- ${name}`).join('\n'),
+    'carrinho.itens': items
+      .map((item) => `${item.name} | Qtd: ${item.quantity} | ${formatMoney(item.total, checkout.currency)}`)
+      .join('\n'),
+  }
+}
+
 export function getMessagePlaceholders(...templates: Array<string | null | undefined>): string[] {
   const placeholders = new Set<string>()
   for (const template of templates) {
@@ -156,6 +203,10 @@ export function getMessagePlaceholders(...templates: Array<string | null | undef
 
 export function messageUsesOrderVariables(...templates: Array<string | null | undefined>): boolean {
   return getMessagePlaceholders(...templates).some((key) => key.startsWith('pedido.'))
+}
+
+export function messageUsesCheckoutVariables(...templates: Array<string | null | undefined>): boolean {
+  return getMessagePlaceholders(...templates).some((key) => key.startsWith('carrinho.'))
 }
 
 export function messageUsesProductVariables(...templates: Array<string | null | undefined>): boolean {
@@ -187,6 +238,9 @@ export function buildMessageTemplateValues(context: MessageTemplateContext): Rec
 
   if (context.order) {
     Object.assign(values, orderValues(context.order, context.productsByVariantId))
+  }
+  if (context.checkout) {
+    Object.assign(values, checkoutValues(context.checkout))
   }
   for (const [key, value] of Object.entries(context.customVariables ?? {})) {
     values[`personalizada.${key}`] = value

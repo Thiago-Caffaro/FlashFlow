@@ -32,6 +32,9 @@ export interface FlowContext {
   conversationId: string
   incomingMessage: string
   orderId?: string
+  // Checkout abandonado que originou o fluxo (gatilho "Carrinho abandonado")
+  // — alimenta as variáveis {{carrinho.*}}.
+  checkoutId?: string
   flowRunId?: string
   jobId?: string
   // True when this conversation belongs to the sandbox test account.
@@ -225,6 +228,7 @@ export async function sendWhatsAppTemplate(
       conversationId: ctx.conversationId,
       remoteJid: ctx.remoteJid,
       orderId: ctx.orderId,
+      checkoutId: ctx.checkoutId,
       templates: rawValues,
     })
     : { contact: { name: null, number: ctx.remoteJid }, customVariables: {} }
@@ -276,6 +280,7 @@ async function pauseFlowForReply(
     status: 'waiting_confirmation',
     variables: {
       orderId: ctx.orderId ?? null,
+      checkoutId: ctx.checkoutId ?? null,
       replyButtons,
     },
     updated_at: new Date().toISOString(),
@@ -1466,6 +1471,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
               conversationId: ctx.conversationId,
               remoteJid: ctx.remoteJid,
               orderId: ctx.orderId,
+              checkoutId: ctx.checkoutId,
               isSandbox: ctx.isSandbox,
               realSendInstanceName: ctx.realSendInstanceName,
             })
@@ -1503,6 +1509,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
             conversationId: ctx.conversationId,
             remoteJid: ctx.remoteJid,
             orderId: ctx.orderId,
+            checkoutId: ctx.checkoutId,
             templates,
           })
           : {
@@ -1524,6 +1531,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
             conversationId: ctx.conversationId,
             remoteJid: ctx.remoteJid,
             orderId: ctx.orderId,
+            checkoutId: ctx.checkoutId,
             isSandbox: ctx.isSandbox,
             realSendInstanceName: ctx.realSendInstanceName,
           })
@@ -1573,6 +1581,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
                   conversationId: ctx.conversationId,
                   remoteJid: ctx.remoteJid,
                   orderId: ctx.orderId,
+                  checkoutId: ctx.checkoutId,
                   isSandbox: ctx.isSandbox,
                   realSendInstanceName: ctx.realSendInstanceName,
                 })
@@ -1663,6 +1672,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
             conversationId: ctx.conversationId,
             remoteJid: ctx.remoteJid,
             orderId: ctx.orderId,
+            checkoutId: ctx.checkoutId,
             templates: [template],
           })
           : {
@@ -1679,6 +1689,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
             conversationId: ctx.conversationId,
             remoteJid: ctx.remoteJid,
             orderId: ctx.orderId,
+            checkoutId: ctx.checkoutId,
             isSandbox: ctx.isSandbox,
             realSendInstanceName: ctx.realSendInstanceName,
           })

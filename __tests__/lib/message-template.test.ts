@@ -1,7 +1,8 @@
-import type { FulfillmentOrder, ShopifyProduct } from '@/types'
+import type { FulfillmentOrder, ShopifyAbandonedCheckout, ShopifyProduct } from '@/types'
 import {
   buildMessageTemplateValues,
   formatTextReplyMessage,
+  messageUsesCheckoutVariables,
   MessageTemplateError,
   normalizeReplyInput,
   normalizeReplyWithPayload,
@@ -64,7 +65,66 @@ function order(overrides: Partial<FulfillmentOrder> = {}): FulfillmentOrder {
   }
 }
 
+function checkout(overrides: Partial<ShopifyAbandonedCheckout> = {}): ShopifyAbandonedCheckout {
+  return {
+    id: 'checkout-1',
+    shopify_integration_id: 'integration-1',
+    shopify_checkout_id: '987',
+    checkout_token: 'cart-token',
+    shop_domain: 'loja.myshopify.com',
+    assigned_instance_name: 'wa-1',
+    country: 'SPAIN',
+    contact_phone: '34600000000',
+    customer_name: 'Maria Silva',
+    email: 'maria@example.com',
+    abandoned_checkout_url: 'https://loja.example/checkouts/cart-token/recover',
+    total: 59.8,
+    currency: 'EUR',
+    recovery_status: 'Pendente',
+    raw_shopify_payload: {
+      line_items: [
+        { title: 'Lipogan', variant_title: '3 Frascos', quantity: 1, price: '49.90' },
+        { title: 'Brinde', variant_title: null, quantity: 2, price: '4.95' },
+      ],
+    },
+    whatsapp_sent_at: null,
+    recovered_at: null,
+    shopify_completed_at: null,
+    last_error: null,
+    is_simulation: false,
+    simulation_marker: null,
+    created_at: '2026-09-30T10:00:00.000Z',
+    updated_at: '2026-09-30T10:00:00.000Z',
+    ...overrides,
+  }
+}
+
 describe('message templates', () => {
+  it('resolves abandoned checkout variables from the checkout row and its Shopify line items', () => {
+    const values = buildMessageTemplateValues({
+      contact: { name: 'Maria Silva', number: '34600000000' },
+      checkout: checkout(),
+    })
+
+    expect(values['carrinho.link']).toBe('https://loja.example/checkouts/cart-token/recover')
+    expect(values['carrinho.cliente']).toBe('Maria Silva')
+    expect(values['carrinho.total']).toContain('59,80')
+    expect(values['carrinho.produtos']).toBe('- Lipogan - 3 Frascos\n- Brinde')
+    expect(values['carrinho.itens']).toContain('Brinde | Qtd: 2 | 9,90')
+    expect(messageUsesCheckoutVariables('Volte: {{carrinho.link}}')).toBe(true)
+    expect(messageUsesCheckoutVariables('{{pedido.total}}')).toBe(false)
+    expect(validateMessagePlaceholders(['{{carrinho.link}} {{carrinho.itens}}'], [])).toEqual({ ok: true })
+  })
+
+  it('refuses to send a checkout message without a recovery link instead of sending an empty placeholder', () => {
+    const values = buildMessageTemplateValues({
+      contact: { name: 'Maria', number: '34600000000' },
+      checkout: checkout({ abandoned_checkout_url: null }),
+    })
+
+    expect(() => renderMessageTemplate('{{carrinho.link}}', values)).toThrow(MessageTemplateError)
+  })
+
   it('resolves readable contact, order and custom variables', () => {
     const values = buildMessageTemplateValues({
       contact: { name: 'Maria Silva', number: '34600000000@s.whatsapp.net' },

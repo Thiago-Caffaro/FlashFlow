@@ -44,7 +44,7 @@ export interface Message {
 
 export type TriggerTipo = 'contains' | 'exact'
 export type TriggerAction = 'send_message' | 'flow'
-export type TriggerSource = 'message' | 'shopify_order' | 'delivery_status'
+export type TriggerSource = 'message' | 'shopify_order' | 'delivery_status' | 'shopify_abandoned_checkout'
 
 export interface Trigger {
   id: string
@@ -364,6 +364,7 @@ export interface ShopifyAbandonedCheckout {
   raw_shopify_payload: Record<string, unknown> | null
   whatsapp_sent_at: string | null
   recovered_at: string | null
+  shopify_completed_at: string | null
   last_error: string | null
   is_simulation: boolean
   simulation_marker: string | null

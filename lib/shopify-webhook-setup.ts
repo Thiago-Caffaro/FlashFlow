@@ -3,12 +3,17 @@ import { getSetting } from './app-settings'
 import { ShopifyClient } from './shopify-client'
 import { shopifyClientFromIntegration, type ShopifyIntegrationCredentialRow } from './shopify-integration-store'
 
-const ORDER_TOPICS = [
-  'orders/create',
-  'orders/updated',
-  'orders/paid',
-  'orders/cancelled',
-  'orders/delete',
+const WEBHOOK_SUBSCRIPTIONS = [
+  { topic: 'orders/create', path: '/api/webhook/shopify/orders' },
+  { topic: 'orders/updated', path: '/api/webhook/shopify/orders' },
+  { topic: 'orders/paid', path: '/api/webhook/shopify/orders' },
+  { topic: 'orders/cancelled', path: '/api/webhook/shopify/orders' },
+  { topic: 'orders/delete', path: '/api/webhook/shopify/orders' },
+  // checkouts/update chega a cada passo do cliente no checkout — é ele que
+  // empurra o gatilho de carrinho abandonado para frente enquanto o cliente
+  // ainda preenche, e que traz completed_at quando o checkout vira pedido.
+  { topic: 'checkouts/create', path: '/api/webhook/shopify/abandoned-checkouts' },
+  { topic: 'checkouts/update', path: '/api/webhook/shopify/abandoned-checkouts' },
 ] as const
 
 export interface WebhookRegistrationResult {
@@ -18,15 +23,15 @@ export interface WebhookRegistrationResult {
   error?: string
 }
 
-async function resolveWebhookAddress(): Promise<string | null> {
+async function resolveWebhookBaseUrl(): Promise<string | null> {
   const appBaseUrl = (await getSetting('shopify_app_base_url')) ?? process.env.APP_BASE_URL ?? ''
   if (!appBaseUrl) return null
-  return `${appBaseUrl.replace(/\/+$/, '')}/api/webhook/shopify/orders`
+  return appBaseUrl.replace(/\/+$/, '')
 }
 
 async function ensureForClient(client: ShopifyClient, shopDomain: string): Promise<WebhookRegistrationResult> {
-  const address = await resolveWebhookAddress()
-  if (!address) {
+  const baseUrl = await resolveWebhookBaseUrl()
+  if (!baseUrl) {
     return {
       shopDomain,
       ok: false,
@@ -37,7 +42,8 @@ async function ensureForClient(client: ShopifyClient, shopDomain: string): Promi
 
   try {
     let alreadyRegistered = true
-    for (const topic of ORDER_TOPICS) {
+    for (const { topic, path } of WEBHOOK_SUBSCRIPTIONS) {
+      const address = `${baseUrl}${path}`
       const existing = await client.listWebhooks({ topic })
       const already = (existing.webhooks ?? []).some((webhook) => webhook.address === address)
       if (already) continue
@@ -50,7 +56,7 @@ async function ensureForClient(client: ShopifyClient, shopDomain: string): Promi
   }
 }
 
-// Registers the order lifecycle subscriptions directly with Shopify via
+// Registers the order lifecycle (and checkout) subscriptions directly with Shopify via
 // the Admin REST API (POST /webhooks.json) so real-time order delivery
 // doesn't depend on the merchant manually configuring it under
 // Settings → Notifications in the Shopify admin. Safe to call repeatedly —

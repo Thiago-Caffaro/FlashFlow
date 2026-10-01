@@ -20,7 +20,11 @@ import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import { normalizePhone } from './phone'
 import { syncShopifyProductsForIntegration } from './shopify-products-service'
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
-import { enqueueShopifyOrderFlowJob } from './flow-jobs'
+import {
+  cancelPendingAbandonedCheckoutJobs,
+  enqueueAbandonedCheckoutFlowJob,
+  enqueueShopifyOrderFlowJob,
+} from './flow-jobs'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
 import { getDefaultShopifyOrderInstance } from './shopify-order-settings'
 import {
@@ -134,6 +138,7 @@ type ShopifyCheckoutMappedFields = {
   abandoned_checkout_url: string | null
   total: number
   currency: string
+  shopify_completed_at: string | null
   raw_shopify_payload: Record<string, unknown>
 }
 
@@ -368,6 +373,8 @@ export async function upsertShopifyOrder(
     throw new Error(result.error?.message ?? 'Falha ao gravar pedido Shopify')
   }
 
+  await markAbandonedCheckoutsConvertedByOrder(integration.id, payload)
+
   if (!isNewOrder && (
     existing.shopify_financial_status !== mapped.shopify_financial_status ||
     existing.shopify_cancelled_at !== mapped.shopify_cancelled_at
@@ -503,13 +510,119 @@ export function mapShopifyAbandonedCheckoutPayload(
     abandoned_checkout_url: nullableString(checkout.abandoned_checkout_url, checkout.web_url),
     total: numberValue(checkout.total_price, numberValue(checkout.current_total_price, 0)),
     currency: stringValue(checkout.currency, checkout.presentment_currency, 'EUR').toUpperCase(),
+    shopify_completed_at: nullableDateString(checkout.completed_at),
     raw_shopify_payload: checkout,
   }
 }
 
+// Sem delay configurado, o gatilho dispararia no instante em que o cliente
+// entra no checkout — ainda pagando. 60 min é o padrão combinado.
+export const DEFAULT_ABANDONED_CHECKOUT_DELAY_MS = 60 * 60 * 1000
+// Checkout cuja hora ideal de envio já passou há mais que isso não é
+// agendado (ex: webhook reentregue dias depois) — lembrete atrasado só incomoda.
+const ABANDONED_CHECKOUT_MAX_LATENESS_MS = 6 * 60 * 60 * 1000
+
+type AbandonedCheckoutRow = {
+  id: string
+  shopify_integration_id: string | null
+  checkout_token: string | null
+  assigned_instance_name: string | null
+  contact_phone: string | null
+  customer_name: string | null
+  recovery_status: string
+  is_simulation: boolean
+  shopify_completed_at: string | null
+  raw_shopify_payload: Record<string, unknown> | null
+  created_at: string
+}
+
+// Última atividade do cliente no checkout segundo a Shopify — é a partir
+// dela que o delay conta, não da hora em que o webhook chegou.
+function checkoutLastActivityAt(checkout: AbandonedCheckoutRow): number {
+  const raw = asRecord(checkout.raw_shopify_payload)
+  const shopifyTimestamp = nullableDateString(raw.updated_at) ?? nullableDateString(raw.created_at)
+  return new Date(shopifyTimestamp ?? checkout.created_at).getTime()
+}
+
+async function scheduleAbandonedCheckoutTriggers(checkout: AbandonedCheckoutRow): Promise<number> {
+  const instanceName = checkout.assigned_instance_name ?? ''
+  if (checkout.is_simulation || checkout.recovery_status !== 'Pendente' || checkout.shopify_completed_at) return 0
+  // Carrinho sem telefone (só e-mail) é ignorado — não há para quem mandar WhatsApp.
+  if (!instanceName || !checkout.contact_phone) return 0
+  if (!(await getShopifyTriggersEnabled())) return 0
+
+  const { data: triggers, error } = await supabaseAdmin
+    .from('triggers')
+    .select('id, delay_ms, action_payload')
+    .eq('instance_name', instanceName)
+    .eq('source', 'shopify_abandoned_checkout')
+    .eq('action', 'flow')
+  if (error) throw new Error(`Falha ao consultar gatilhos de carrinho: ${error.message}`)
+
+  const now = Date.now()
+  const lastActivityAt = checkoutLastActivityAt(checkout)
+  let scheduled = 0
+  for (const trigger of triggers ?? []) {
+    const flowId = asRecord(trigger.action_payload).flow_id
+    if (typeof flowId !== 'string' || !flowId) continue
+    const delayMs = Number(trigger.delay_ms) > 0 ? Number(trigger.delay_ms) : DEFAULT_ABANDONED_CHECKOUT_DELAY_MS
+    const idealRunAt = lastActivityAt + delayMs
+    if (idealRunAt < now - ABANDONED_CHECKOUT_MAX_LATENESS_MS) continue
+    await enqueueAbandonedCheckoutFlowJob({
+      checkoutId: checkout.id,
+      triggerId: String(trigger.id),
+      instanceName,
+      flowId,
+      runAt: new Date(Math.max(now, idealRunAt)),
+    })
+    scheduled += 1
+  }
+  return scheduled
+}
+
+async function markCheckoutsConverted(checkoutIds: string[], reason: string): Promise<void> {
+  if (checkoutIds.length === 0) return
+  const now = new Date().toISOString()
+  const { error } = await supabaseAdmin
+    .from('shopify_abandoned_checkouts')
+    .update({ recovery_status: 'Convertido', recovered_at: now, updated_at: now })
+    .in('id', checkoutIds)
+    .neq('recovery_status', 'Convertido')
+  if (error) throw new Error(`Falha ao marcar carrinho como convertido: ${error.message}`)
+  await cancelPendingAbandonedCheckoutJobs(checkoutIds, reason)
+}
+
+// Um pedido Shopify carrega checkout_token/checkout_id do checkout que o
+// originou: esse carrinho não está mais abandonado. Marca como Convertido e
+// cancela os lembretes ainda pendentes.
+export async function markAbandonedCheckoutsConvertedByOrder(
+  integrationId: string,
+  orderPayload: unknown
+): Promise<string[]> {
+  const order = asRecord(orderPayload)
+  const checkoutToken = nullableString(order.checkout_token)
+  const checkoutId = nullableString(order.checkout_id)
+  if (!checkoutToken && !checkoutId) return []
+
+  const ids = new Set<string>()
+  for (const [column, value] of [['checkout_token', checkoutToken], ['shopify_checkout_id', checkoutId]] as const) {
+    if (!value) continue
+    const { data, error } = await supabaseAdmin
+      .from('shopify_abandoned_checkouts')
+      .select('id')
+      .eq('shopify_integration_id', integrationId)
+      .eq(column, value)
+    if (error) throw new Error(`Falha ao consultar checkout do pedido: ${error.message}`)
+    for (const row of data ?? []) ids.add(String(row.id))
+  }
+  await markCheckoutsConverted([...ids], 'Carrinho convertido em pedido')
+  return [...ids]
+}
+
 export async function upsertShopifyAbandonedCheckout(
   integrationRow: ShopifyIntegrationCredentialRow,
-  payload: unknown
+  payload: unknown,
+  options: { scheduleTriggers?: boolean } = {}
 ) {
   const integration = {
     id: integrationRow.id,
@@ -529,7 +642,7 @@ export async function upsertShopifyAbandonedCheckout(
   const { data: existing, error: existingError } = mapped.shopify_checkout_id
     ? await supabaseAdmin
       .from('shopify_abandoned_checkouts')
-      .select('id, assigned_instance_name')
+      .select('id, assigned_instance_name, recovery_status')
       .eq('shopify_integration_id', integration.id)
       .eq('shopify_checkout_id', mapped.shopify_checkout_id)
       .maybeSingle()
@@ -539,10 +652,14 @@ export async function upsertShopifyAbandonedCheckout(
   const existingAssigned = typeof existing?.assigned_instance_name === 'string' && existing.assigned_instance_name
     ? existing.assigned_instance_name
     : mapped.assigned_instance_name
+  const now = new Date().toISOString()
+  // completed_at preenchido = a Shopify já converteu este checkout em pedido.
+  const completedNow = Boolean(mapped.shopify_completed_at) && existing?.recovery_status !== 'Convertido'
   const patch = {
     ...mapped,
     assigned_instance_name: existingAssigned,
-    updated_at: new Date().toISOString(),
+    ...(completedNow ? { recovery_status: 'Convertido', recovered_at: now } : {}),
+    updated_at: now,
   }
 
   const result = existing?.id
@@ -555,8 +672,8 @@ export async function upsertShopifyAbandonedCheckout(
     : await supabaseAdmin
       .from('shopify_abandoned_checkouts')
       .insert({
-        ...patch,
         recovery_status: 'Pendente',
+        ...patch,
         is_simulation: false,
       })
       .select()
@@ -565,7 +682,108 @@ export async function upsertShopifyAbandonedCheckout(
   if (result.error || !result.data) {
     throw new Error(result.error?.message ?? 'Falha ao gravar checkout Shopify')
   }
+
+  const saved = result.data as AbandonedCheckoutRow
+  if (completedNow && existing?.id) {
+    await cancelPendingAbandonedCheckoutJobs([saved.id], 'Checkout concluído na Shopify')
+  } else if (options.scheduleTriggers !== false) {
+    await scheduleAbandonedCheckoutTriggers(saved)
+  }
   return result.data
+}
+
+// Um pedido desse telefone nesta integração feito depois do checkout conta
+// como conversão mesmo sem checkout_token (ex: cliente abandonou um checkout
+// e comprou por outro). Rede de segurança do momento do envio — o
+// cruzamento por token no webhook de pedidos é o caminho principal.
+async function findOrderConvertingCheckout(checkout: AbandonedCheckoutRow): Promise<boolean> {
+  if (checkout.checkout_token && checkout.shopify_integration_id) {
+    const { data, error } = await supabaseAdmin
+      .from('fulfillment_orders')
+      .select('id')
+      .eq('shopify_integration_id', checkout.shopify_integration_id)
+      .eq('raw_shopify_payload->>checkout_token', checkout.checkout_token)
+      .limit(1)
+      .maybeSingle()
+    if (error) throw new Error(`Falha ao consultar pedido do checkout: ${error.message}`)
+    if (data) return true
+  }
+
+  const checkoutCreatedAt = nullableDateString(asRecord(checkout.raw_shopify_payload).created_at) ?? checkout.created_at
+  const { data, error } = await supabaseAdmin
+    .from('fulfillment_orders')
+    .select('id')
+    .eq('contact_phone', String(checkout.contact_phone ?? ''))
+    .gte('order_placed_at', checkoutCreatedAt)
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(`Falha ao consultar pedido do cliente: ${error.message}`)
+  return Boolean(data)
+}
+
+// Executa o fluxo do gatilho "Carrinho abandonado". Tudo é conferido de novo
+// aqui, na hora do envio, porque entre o agendamento e agora o cliente pode
+// ter comprado, o operador pode ter marcado "Não enviar" etc. Motivos de
+// "não enviar" retornam skipped (o job conclui sem retry); falhas reais
+// lançam para o worker tentar de novo.
+export async function runAbandonedCheckoutTrigger(checkoutId: string, flowId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('shopify_abandoned_checkouts')
+    .select('*')
+    .eq('id', checkoutId)
+    .maybeSingle()
+  if (error) throw new Error(`Falha ao consultar checkout: ${error.message}`)
+  if (!data) return { skipped: 'Checkout não encontrado' }
+  const checkout = data as AbandonedCheckoutRow
+
+  if (checkout.is_simulation) return { skipped: 'Checkout de simulação' }
+  if (checkout.recovery_status === 'Convertido' || checkout.recovery_status === 'Não enviar') {
+    return { skipped: `Checkout com status ${checkout.recovery_status}` }
+  }
+  const instanceName = String(checkout.assigned_instance_name ?? '')
+  const phone = String(checkout.contact_phone ?? '')
+  if (!instanceName || !phone) return { skipped: 'Checkout sem conta WhatsApp ou telefone' }
+  if (checkout.shopify_completed_at || await findOrderConvertingCheckout(checkout)) {
+    await markCheckoutsConverted([checkout.id], 'Carrinho convertido em pedido')
+    return { skipped: 'Carrinho já convertido em pedido' }
+  }
+
+  try {
+    const isSandbox = instanceName === SANDBOX_INSTANCE_NAME
+    const { conversationId, remoteJid, realSendInstanceName } = await resolveConversationForOrder(
+      instanceName,
+      phone,
+      String(checkout.customer_name || '')
+    )
+    if (!isSandbox) await reserveConfirmationSendSlot()
+    await executeFlow(flowId, {
+      instanceName,
+      remoteJid,
+      conversationId,
+      incomingMessage: '',
+      checkoutId: checkout.id,
+      isSandbox,
+      realSendInstanceName: isSandbox ? realSendInstanceName : undefined,
+    })
+
+    const now = new Date().toISOString()
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from('shopify_abandoned_checkouts')
+      .update({ recovery_status: 'Enviado', whatsapp_sent_at: now, last_error: null, updated_at: now })
+      .eq('id', checkout.id)
+      .in('recovery_status', ['Pendente', 'Enviado'])
+      .select()
+      .maybeSingle()
+    if (updateError) throw new Error(updateError.message)
+    return { checkout: updated ?? checkout, conversationId }
+  } catch (runError) {
+    const messageText = runError instanceof Error ? runError.message : 'Falha ao executar fluxo de carrinho abandonado'
+    await supabaseAdmin
+      .from('shopify_abandoned_checkouts')
+      .update({ last_error: messageText, updated_at: new Date().toISOString() })
+      .eq('id', checkout.id)
+    throw runError
+  }
 }
 
 const DEFAULT_RECOVERY_TEMPLATE =
@@ -1071,7 +1289,11 @@ export async function syncShopifyData(options: {
     try {
       const checkoutsResponse = await client.getAbandonedCheckouts({ limit: options.limit ?? 50 })
       for (const checkout of checkoutsResponse.checkouts ?? []) {
-        await upsertShopifyAbandonedCheckout(integration, checkout)
+        // Sync é backfill manual: só agenda gatilhos quando o operador pediu
+        // explicitamente os disparos (mesma regra dos pedidos).
+        await upsertShopifyAbandonedCheckout(integration, checkout, {
+          scheduleTriggers: options.sendConfirmation === true,
+        })
         importedCheckouts += 1
       }
     } catch (error) {

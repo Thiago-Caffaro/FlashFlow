@@ -478,6 +478,7 @@ export async function POST(req: NextRequest) {
               conversationId: flowRunIsSandboxFallback ? flowRun.conversation_id : conversation.id,
               incomingMessage: normalizedContent,
               orderId: typeof variables.orderId === 'string' ? variables.orderId : undefined,
+              checkoutId: typeof variables.checkoutId === 'string' ? variables.checkoutId : undefined,
               flowRunId: typeof flowRun.id === 'string' ? flowRun.id : undefined,
               isSandbox: flowRunIsSandboxFallback ? true : undefined,
               realSendInstanceName: flowRunIsSandboxFallback ? instanceName : undefined,

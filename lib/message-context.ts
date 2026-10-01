@@ -1,7 +1,7 @@
 import 'server-only'
-import type { Conversation, FulfillmentOrder, ShopifyProduct } from '@/types'
+import type { Conversation, FulfillmentOrder, ShopifyAbandonedCheckout, ShopifyProduct } from '@/types'
 import type { MessageTemplateContext } from './message-template'
-import { messageUsesOrderVariables, messageUsesProductVariables } from './message-template'
+import { messageUsesCheckoutVariables, messageUsesOrderVariables, messageUsesProductVariables } from './message-template'
 import { normalizePhone } from './phone'
 import { supabaseAdmin } from './supabase-admin'
 
@@ -76,6 +76,42 @@ async function loadOrder(
   return matchingOrder as FulfillmentOrder | null
 }
 
+// Mesmo desenho do loadOrder: o checkout exato quando o fluxo nasceu do
+// gatilho de carrinho; senão (ex: fluxo retomado por um caminho que perdeu o
+// id), o checkout mais recente desse telefone nesta conta.
+async function loadCheckout(
+  instanceName: string,
+  conversation: Conversation,
+  checkoutId?: string
+): Promise<ShopifyAbandonedCheckout | null> {
+  if (checkoutId) {
+    const { data, error } = await supabaseAdmin
+      .from('shopify_abandoned_checkouts')
+      .select('*')
+      .eq('id', checkoutId)
+      .maybeSingle()
+    if (error) throw new Error(`Falha ao consultar carrinho: ${error.message}`)
+    if (!data) return null
+    if (data.assigned_instance_name !== instanceName) {
+      throw new Error('Carrinho nao pertence a esta conta WhatsApp')
+    }
+    return data as ShopifyAbandonedCheckout
+  }
+
+  const phone = normalizePhone(conversation.contact_phone || conversation.wa_id)
+  if (!phone) return null
+  const { data, error } = await supabaseAdmin
+    .from('shopify_abandoned_checkouts')
+    .select('*')
+    .eq('contact_phone', phone)
+    .eq('assigned_instance_name', instanceName)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(`Falha ao consultar carrinho pelo telefone: ${error.message}`)
+  return data as ShopifyAbandonedCheckout | null
+}
+
 export async function resolveFlowOrder(input: {
   instanceName: string
   conversationId: string
@@ -128,6 +164,7 @@ export async function resolveMessageTemplateContext(input: {
   conversationId: string
   remoteJid: string
   orderId?: string
+  checkoutId?: string
   templates: Array<string | null | undefined>
 }): Promise<MessageTemplateContext> {
   const conversation = await loadConversation(input.conversationId)
@@ -141,12 +178,23 @@ export async function resolveMessageTemplateContext(input: {
     : null
   if (needsOrder && !order) throw new OrderContextPendingError()
 
+  // Diferente do pedido, o checkout é gravado antes do job existir — se ele
+  // não está no banco, esperar não resolve.
+  const needsCheckout = messageUsesCheckoutVariables(...input.templates)
+  const checkout = needsCheckout
+    ? await loadCheckout(input.instanceName, conversation, input.checkoutId)
+    : null
+  if (needsCheckout && !checkout) {
+    throw new Error('Nenhum carrinho abandonado encontrado para esta conversa')
+  }
+
   return {
     contact: {
       name: conversation.contact_name,
       number: conversation.contact_phone || input.remoteJid,
     },
     order,
+    checkout,
     productsByVariantId: order
       ? await loadProducts(order, messageUsesProductVariables(...input.templates))
       : new Map(),
