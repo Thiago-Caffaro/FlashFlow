@@ -3,7 +3,7 @@ import { hostname } from 'node:os'
 import { OrderContextPendingError } from './message-context'
 import type { FlowJob } from './flow-jobs'
 import { executeFlow } from './flow-engine'
-import { runOrderFlow, runShopifyOrderTrigger } from './shopify-confirmation-service'
+import { runAbandonedCheckoutTrigger, runOrderFlow, runShopifyOrderTrigger } from './shopify-confirmation-service'
 import { supabaseAdmin } from './supabase-admin'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
 
@@ -77,6 +77,7 @@ async function processJob(job: FlowJob) {
       conversationId: job.conversation_id,
       incomingMessage: '',
       orderId: job.order_id ?? undefined,
+      checkoutId: typeof job.payload.checkoutId === 'string' ? job.payload.checkoutId : undefined,
       jobId: job.id,
       isSandbox: job.payload.isSandbox === true,
       realSendInstanceName: typeof job.payload.realSendInstanceName === 'string'
@@ -89,6 +90,13 @@ async function processJob(job: FlowJob) {
   if (job.job_type === 'delivery_status_flow') {
     if (!job.order_id) throw new Error('Job de entrega sem order_id')
     await runOrderFlow(job.order_id, job.flow_id)
+    return
+  }
+
+  if (job.job_type === 'abandoned_checkout_flow') {
+    if (!job.checkout_id) throw new Error('Job de carrinho sem checkout_id')
+    if (!(await getShopifyTriggersEnabled())) return
+    await runAbandonedCheckoutTrigger(job.checkout_id, job.flow_id)
     return
   }
 

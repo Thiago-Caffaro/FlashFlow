@@ -116,7 +116,7 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
    `flow_runs` pausado → sandbox com envio real → `ai_sessions` ativa → `executeTriggers`
 2. `executeTriggers` (`lib/message-triggers.ts:6-87`) compara texto normalizado contra `triggers.valor` (lista por vírgula, suporta `*`), `tipo` = `exact`/`contains`; primeiro match dispara e `break` — **não é gatilho por link/produto, é regra de texto por instância**
 3. `executeFlow` (`lib/flow-engine.ts:1323`) roda **síncrono dentro do próprio webhook**, fire-and-forget (`void (async () => {...})()`), com detecção de loop (`visited.size < 50`) — `lib/flow-engine.ts:1390`
-4. Fila (`flow_jobs` + `lib/flow-job-worker.ts`) só entra para: pedido Shopify ainda não sincronizado (`OrderContextPendingError` → `flow_message_resume`) e disparos originados de eventos Shopify (`shopify_order_flow`, `delivery_status_flow`)
+4. Fila (`flow_jobs` + `lib/flow-job-worker.ts`) só entra para: pedido Shopify ainda não sincronizado (`OrderContextPendingError` → `flow_message_resume`) e disparos originados de eventos Shopify (`shopify_order_flow`, `delivery_status_flow`, `abandoned_checkout_flow`)
 5. Worker é **poll in-process a cada 1s** (não cron), via RPC `claim_flow_jobs` com `FOR UPDATE SKIP LOCKED` — `lib/flow-job-worker.ts:119-141`, `migrations/009_message_variables_and_flow_jobs.sql:55-107`
 6. Estado de fluxo pausado (esperando botão) vive em `flow_runs` (`UNIQUE(instance_name, remote_jid)`); deletado ao concluir — `lib/flow-engine.ts:1556-1574,1850-1852`
 7. Bloco de IA (`aiAssistant`) suporta Gemini/OpenAI/OpenRouter, credenciais em `ai_provider_keys` cifradas AES-256-GCM — `lib/flow-engine.ts:1748-1844`, `lib/ai-crypto.ts:1-19`
@@ -132,9 +132,11 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 
 ### 5. Recuperação de carrinho abandonado (Shopify)
 
-1. Webhook `abandoned-checkouts` grava `shopify_abandoned_checkouts` com `recovery_status='Pendente'` — **nenhum envio automático aqui** — `lib/shopify-confirmation-service.ts:506-565`
-2. Disparo é **manual**: operador clica "recuperar" → `POST /api/fulfillment/shopify/abandoned-checkouts/{id}/recover` → `sendAbandonedCheckoutRecovery` — `lib/shopify-confirmation-service.ts:921`
-3. Dentro da janela de 24h: texto livre interpolado do template configurado. Fora da janela (Cloud API): usa o template aprovado da Meta (`recovery_template_id`, migration 020) — decisão de negócio explícita: recuperação é sempre iniciada pela empresa, texto livre fora da janela seria rejeitado pela Meta — `lib/shopify-confirmation-service.ts:915-988`
+> Atualizado em 2026-09-30 (v1.13.0): gatilho automático adicionado. Detalhes em `docs/FLOWS.md` → "Carrinho abandonado".
+
+1. Webhooks `checkouts/create|update` (auto-registrados em `lib/shopify-webhook-setup.ts`) → `upsertShopifyAbandonedCheckout` grava o checkout e agenda um `flow_job` `abandoned_checkout_flow` por gatilho `source='shopify_abandoned_checkout'` da conta, para (última atividade na Shopify + `delay_ms`, padrão 60 min). Carrinho sem telefone é ignorado; respeita `shopify_triggers_enabled`.
+2. Conversão: pedido com `checkout_token`/`checkout_id` (`markAbandonedCheckoutsConvertedByOrder`) ou checkout com `completed_at` → `Convertido` + cancela jobs. O worker (`runAbandonedCheckoutTrigger`) reconfere na hora do envio (token e telefone) antes de executar o fluxo com `checkoutId` no contexto (variáveis `{{carrinho.*}}`).
+3. Disparo **manual** continua existindo lado a lado: operador clica "recuperar" → `POST /api/fulfillment/shopify/abandoned-checkouts/{id}/recover` → `sendAbandonedCheckoutRecovery`. Dentro da janela de 24h: texto livre do template da integração. Fora da janela (Cloud API): template aprovado da Meta (`recovery_template_id`, migration 020).
 
 ## Regras de negócio
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { TriggerCreate } from '@/types'
-import { isTriggerSource, validateDeliveryTriggerPayload } from '@/lib/trigger-input'
+import { isTriggerSource, requiresFlowAction, validateDeliveryTriggerPayload } from '@/lib/trigger-input'
 
 const supabaseAdmin = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -47,8 +47,8 @@ export async function POST(req: NextRequest) {
     if (!isTriggerSource(source)) {
       return NextResponse.json({ ok: false, error: 'Origem de gatilho inválida' }, { status: 400 })
     }
-    if (source === 'delivery_status' && action !== 'flow') {
-      return NextResponse.json({ ok: false, error: 'Gatilhos de entrega precisam executar um fluxo' }, { status: 400 })
+    if (requiresFlowAction(source) && action !== 'flow') {
+      return NextResponse.json({ ok: false, error: 'Gatilhos de entrega e de carrinho abandonado precisam executar um fluxo' }, { status: 400 })
     }
     const payloadError = validateDeliveryTriggerPayload(body.action_payload)
     if (payloadError) return NextResponse.json({ ok: false, error: payloadError }, { status: 400 })

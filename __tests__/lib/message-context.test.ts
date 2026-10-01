@@ -125,6 +125,72 @@ describe('resolveMessageTemplateContext', () => {
     expect(context.order).toMatchObject({ id: 'order-1', instance_name: 'wa-1' })
   })
 
+  it('loads the exact abandoned checkout of the flow and rejects one from another account', async () => {
+    const checkout = { id: 'checkout-1', assigned_instance_name: 'wa-1', abandoned_checkout_url: 'https://x/cart' }
+    setQueues({
+      conversations: [builder({ data: conversation, error: null }), builder({ data: conversation, error: null })],
+      shopify_abandoned_checkouts: [
+        builder({ data: checkout, error: null }),
+        builder({ data: { ...checkout, assigned_instance_name: 'wa-other' }, error: null }),
+      ],
+      message_variables: [builder({ data: [], error: null })],
+    })
+
+    const context = await resolveMessageTemplateContext({
+      instanceName: 'wa-1',
+      conversationId: 'conv-1',
+      remoteJid: conversation.wa_id,
+      checkoutId: 'checkout-1',
+      templates: ['{{carrinho.link}}'],
+    })
+    expect(context.checkout).toMatchObject({ id: 'checkout-1' })
+    expect(context.order).toBeNull()
+
+    await expect(resolveMessageTemplateContext({
+      instanceName: 'wa-1',
+      conversationId: 'conv-1',
+      remoteJid: conversation.wa_id,
+      checkoutId: 'checkout-1',
+      templates: ['{{carrinho.link}}'],
+    })).rejects.toThrow('Carrinho nao pertence a esta conta WhatsApp')
+  })
+
+  it('falls back to the newest checkout for the conversation phone when the flow lost the checkout id', async () => {
+    const byPhone = builder({ data: { id: 'checkout-2', assigned_instance_name: 'wa-1' }, error: null })
+    setQueues({
+      conversations: [builder({ data: conversation, error: null })],
+      shopify_abandoned_checkouts: [byPhone],
+      message_variables: [builder({ data: [], error: null })],
+    })
+
+    const context = await resolveMessageTemplateContext({
+      instanceName: 'wa-1',
+      conversationId: 'conv-1',
+      remoteJid: conversation.wa_id,
+      templates: ['{{carrinho.total}}'],
+    })
+
+    expect(context.checkout).toMatchObject({ id: 'checkout-2' })
+    expect(byPhone.eq).toHaveBeenCalledWith('contact_phone', '34600000000')
+    expect(byPhone.eq).toHaveBeenCalledWith('assigned_instance_name', 'wa-1')
+  })
+
+  it('fails (without retry) when a checkout variable is used and no checkout exists', async () => {
+    setQueues({
+      conversations: [builder({ data: conversation, error: null })],
+      shopify_abandoned_checkouts: [builder({ data: null, error: null })],
+    })
+
+    const attempt = resolveMessageTemplateContext({
+      instanceName: 'wa-1',
+      conversationId: 'conv-1',
+      remoteJid: conversation.wa_id,
+      templates: ['{{carrinho.link}}'],
+    })
+    await expect(attempt).rejects.toThrow('Nenhum carrinho abandonado encontrado')
+    await expect(attempt).rejects.not.toBeInstanceOf(OrderContextPendingError)
+  })
+
   it('keeps the node pending when no local order is available', async () => {
     setQueues({
       conversations: [builder({ data: conversation, error: null })],

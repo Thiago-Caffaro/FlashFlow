@@ -68,8 +68,34 @@ mesma ordem na Cloud API):
 ```
 
 `triggers.source` pode ser `'message'` (texto do lead), `'shopify_order'`
-(pedido criado) ou `'delivery_status'` (mudança de status de entrega) —
-os dois últimos não vêm de mensagem, vêm de eventos internos enfileirados.
+(pedido criado), `'delivery_status'` (mudança de status de entrega) ou
+`'shopify_abandoned_checkout'` (carrinho abandonado) — os três últimos não
+vêm de mensagem, vêm de eventos internos enfileirados.
+
+### Carrinho abandonado (`shopify_abandoned_checkout`)
+
+- Webhooks `checkouts/create` e `checkouts/update` (registrados
+  automaticamente junto dos de pedido, `lib/shopify-webhook-setup.ts`)
+  gravam o checkout e agendam um `abandoned_checkout_flow` por gatilho, com
+  `next_attempt_at = updated_at do checkout na Shopify + triggers.delay_ms`
+  (padrão 60 min). Cada `checkouts/update` empurra o job pendente para
+  frente — o delay conta a partir da última atividade do cliente.
+- Dedupe `abandoned-checkout:{checkout}:{trigger}`: vários gatilhos com
+  delays diferentes formam uma sequência de lembretes.
+- Não agenda: carrinho sem telefone, simulação, status diferente de
+  `Pendente`, gatilhos Shopify pausados (`shopify_triggers_enabled`), ou
+  checkout cuja hora ideal de envio passou há mais de 6h. O sync manual só
+  agenda quando pedido com disparos.
+- Conversão: pedido com `checkout_token`/`checkout_id`, ou checkout com
+  `completed_at`, marca `Convertido` e cancela jobs pendentes. Na hora de
+  rodar, o worker ainda confere pedido pelo token e pedido do mesmo telefone
+  feito depois do checkout — se houver, marca `Convertido` e não envia.
+- O fluxo recebe `checkoutId` no contexto: variáveis `{{carrinho.link}}`,
+  `{{carrinho.total}}`, `{{carrinho.produtos}}`, `{{carrinho.itens}}` etc.
+  Em conta Cloud API a primeira mensagem precisa de template (ou template
+  de fallback) — o carrinho é sempre contato iniciado pela empresa.
+- O botão manual "recuperar" em `/fulfillment` continua existindo lado a
+  lado (texto fixo da integração, não é fluxo).
 
 ## Execução
 
@@ -82,7 +108,7 @@ in-process, não cron) só entra quando:
 - o node depende de um pedido Shopify ainda não sincronizado localmente
   (`OrderContextPendingError` → reagenda como `flow_message_resume`);
 - o disparo vem de um evento Shopify assíncrono (`shopify_order_flow`,
-  `delivery_status_flow`).
+  `delivery_status_flow`, `abandoned_checkout_flow`).
 
 ## Estados de uma conversa (real)
 

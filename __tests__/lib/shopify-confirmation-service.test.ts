@@ -46,8 +46,17 @@ jest.mock('@/lib/whatsapp-dispatch', () => ({
   dispatchSendTemplate: (...args: unknown[]) => mockDispatchSendTemplate(...args),
 }))
 
+const mockEnqueueAbandonedCheckoutFlowJob = jest.fn()
+const mockCancelPendingAbandonedCheckoutJobs = jest.fn()
 jest.mock('@/lib/flow-jobs', () => ({
   enqueueShopifyOrderFlowJob: mockEnqueueShopifyOrderFlowJob,
+  enqueueAbandonedCheckoutFlowJob: (...args: unknown[]) => mockEnqueueAbandonedCheckoutFlowJob(...args),
+  cancelPendingAbandonedCheckoutJobs: (...args: unknown[]) => mockCancelPendingAbandonedCheckoutJobs(...args),
+}))
+
+const mockGetShopifyTriggersEnabled = jest.fn()
+jest.mock('@/lib/shopify-trigger-settings', () => ({
+  getShopifyTriggersEnabled: (...args: unknown[]) => mockGetShopifyTriggersEnabled(...args),
 }))
 
 jest.mock('@/lib/shopify-order-settings', () => ({
@@ -84,6 +93,9 @@ type QueryBuilder = {
   upserts: unknown[]
   select: jest.Mock<QueryBuilder, [string?]>
   eq: jest.Mock<QueryBuilder, [string, unknown]>
+  neq: jest.Mock<QueryBuilder, [string, unknown]>
+  gte: jest.Mock<QueryBuilder, [string, unknown]>
+  in: jest.Mock<QueryBuilder, [string, unknown[]]>
   is: jest.Mock<QueryBuilder, [string, unknown]>
   order: jest.Mock<QueryBuilder, [string, unknown?]>
   limit: jest.Mock<QueryBuilder, [number]>
@@ -109,6 +121,9 @@ function queryBuilder(result: QueryResult = { data: null, error: null }) {
     upserts,
     select: jest.fn((_columns?: string) => builder),
     eq: jest.fn((_column: string, _value: unknown) => builder),
+    neq: jest.fn((_column: string, _value: unknown) => builder),
+    gte: jest.fn((_column: string, _value: unknown) => builder),
+    in: jest.fn((_column: string, _values: unknown[]) => builder),
     is: jest.fn((_column: string, _value: unknown) => builder),
     order: jest.fn((_column: string, _options?: unknown) => builder),
     limit: jest.fn((_count: number) => builder),
@@ -194,6 +209,7 @@ const {
   runShopifyOrderTrigger,
   reserveConfirmationSendSlot,
   sendAbandonedCheckoutRecovery,
+  runAbandonedCheckoutTrigger,
   _resetConfirmationSendPacingForTests,
 } = require('@/lib/shopify-confirmation-service')
 
@@ -204,6 +220,9 @@ describe('shopify-confirmation-service', () => {
     mockEnqueueShopifyOrderFlowJob.mockResolvedValue({ id: 'job-1' })
     mockSubmitFulfillmentOrder.mockResolvedValue({ id: 'order-1', status: 'created', send_status: 'Enviado' })
     mockGetDefaultShopifyOrderInstance.mockResolvedValue(null)
+    mockGetShopifyTriggersEnabled.mockResolvedValue(true)
+    mockEnqueueAbandonedCheckoutFlowJob.mockResolvedValue({ id: 'job-cart' })
+    mockCancelPendingAbandonedCheckoutJobs.mockResolvedValue(undefined)
   })
 
   it('assigns WhatsApp accounts by country and confirmation priority', async () => {
@@ -945,6 +964,264 @@ describe('shopify-confirmation-service', () => {
 
       await expect(sendAbandonedCheckoutRecovery('checkout-1')).rejects.toThrow('simulação não envia WhatsApp real')
       expect(mockGetAccountProvider).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('gatilho de carrinho abandonado', () => {
+    const NOW = Date.parse('2026-09-30T12:00:00.000Z')
+    const MINUTE = 60 * 1000
+
+    function savedCheckout(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'checkout-1',
+        shopify_integration_id: 'shopify-1',
+        checkout_token: 'cart-token',
+        assigned_instance_name: 'wa-1',
+        contact_phone: '351900000001',
+        customer_name: 'Cliente Carrinho',
+        recovery_status: 'Pendente',
+        is_simulation: false,
+        shopify_completed_at: null,
+        raw_shopify_payload: {
+          created_at: new Date(NOW - 20 * MINUTE).toISOString(),
+          updated_at: new Date(NOW - 10 * MINUTE).toISOString(),
+        },
+        created_at: new Date(NOW - 20 * MINUTE).toISOString(),
+        ...overrides,
+      }
+    }
+
+    function checkoutPayload(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 987,
+        token: 'cart-token',
+        phone: '+351900000001',
+        total_price: '29.00',
+        currency: 'EUR',
+        shipping_address: { name: 'Cliente Carrinho', country_code: 'PORTUGAL' },
+        ...overrides,
+      }
+    }
+
+    afterEach(() => jest.useRealTimers())
+
+    it('agenda um job por gatilho, contando o delay a partir da última atividade no checkout', async () => {
+      jest.useFakeTimers({ now: NOW })
+      const triggers = queryBuilder({
+        data: [
+          { id: 'trigger-1h', delay_ms: 0, action_payload: { flow_id: 'flow-1' } },
+          { id: 'trigger-24h', delay_ms: 24 * 60 * MINUTE, action_payload: { flow_id: 'flow-2' } },
+          { id: 'trigger-sem-fluxo', delay_ms: MINUTE, action_payload: {} },
+        ],
+        error: null,
+      })
+      setTableQueues({
+        accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+        shopify_abandoned_checkouts: [
+          queryBuilder({ data: null, error: null }),
+          queryBuilder({ data: savedCheckout(), error: null }),
+        ],
+        triggers: [triggers],
+      })
+
+      await upsertShopifyAbandonedCheckout(integrationRow(), checkoutPayload())
+
+      expect(triggers.eq).toHaveBeenCalledWith('source', 'shopify_abandoned_checkout')
+      expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledTimes(2)
+      // delay_ms 0 cai no padrão de 60 min, contado a partir do updated_at da Shopify
+      expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledWith({
+        checkoutId: 'checkout-1',
+        triggerId: 'trigger-1h',
+        instanceName: 'wa-1',
+        flowId: 'flow-1',
+        runAt: new Date(NOW + 50 * MINUTE),
+      })
+      expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledWith(expect.objectContaining({
+        triggerId: 'trigger-24h',
+        runAt: new Date(NOW - 10 * MINUTE + 24 * 60 * MINUTE),
+      }))
+    })
+
+    it('ignora carrinho sem telefone', async () => {
+      setTableQueues({
+        accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+        shopify_abandoned_checkouts: [
+          queryBuilder({ data: null, error: null }),
+          queryBuilder({ data: savedCheckout({ contact_phone: null }), error: null }),
+        ],
+      })
+
+      await upsertShopifyAbandonedCheckout(integrationRow(), checkoutPayload({ phone: null, email: 'so@email.com' }))
+
+      expect(mockEnqueueAbandonedCheckoutFlowJob).not.toHaveBeenCalled()
+    })
+
+    it('não agenda nada quando os gatilhos Shopify estão pausados', async () => {
+      mockGetShopifyTriggersEnabled.mockResolvedValue(false)
+      setTableQueues({
+        accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+        shopify_abandoned_checkouts: [
+          queryBuilder({ data: null, error: null }),
+          queryBuilder({ data: savedCheckout(), error: null }),
+        ],
+      })
+
+      await upsertShopifyAbandonedCheckout(integrationRow(), checkoutPayload())
+
+      expect(mockEnqueueAbandonedCheckoutFlowJob).not.toHaveBeenCalled()
+    })
+
+    it('não agenda checkout cuja hora de envio já passou há muito (webhook atrasado)', async () => {
+      jest.useFakeTimers({ now: NOW })
+      const stale = savedCheckout({
+        raw_shopify_payload: { updated_at: new Date(NOW - 3 * 24 * 60 * MINUTE).toISOString() },
+      })
+      setTableQueues({
+        accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+        shopify_abandoned_checkouts: [
+          queryBuilder({ data: null, error: null }),
+          queryBuilder({ data: stale, error: null }),
+        ],
+        triggers: [queryBuilder({ data: [{ id: 'trigger-1h', delay_ms: 0, action_payload: { flow_id: 'flow-1' } }], error: null })],
+      })
+
+      await upsertShopifyAbandonedCheckout(integrationRow(), checkoutPayload())
+
+      expect(mockEnqueueAbandonedCheckoutFlowJob).not.toHaveBeenCalled()
+    })
+
+    it('marca Convertido e cancela lembretes quando a Shopify conclui o checkout', async () => {
+      const updated = queryBuilder({
+        data: savedCheckout({ recovery_status: 'Convertido', shopify_completed_at: '2026-09-30T11:55:00.000Z' }),
+        error: null,
+      })
+      setTableQueues({
+        accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+        shopify_abandoned_checkouts: [
+          queryBuilder({ data: { id: 'checkout-1', assigned_instance_name: 'wa-1', recovery_status: 'Pendente' }, error: null }),
+          updated,
+        ],
+      })
+
+      await upsertShopifyAbandonedCheckout(integrationRow(), checkoutPayload({ completed_at: '2026-09-30T11:55:00.000Z' }))
+
+      expect(updated.updates[0]).toMatchObject({
+        recovery_status: 'Convertido',
+        recovered_at: expect.any(String),
+        shopify_completed_at: '2026-09-30T11:55:00.000Z',
+      })
+      expect(mockCancelPendingAbandonedCheckoutJobs).toHaveBeenCalledWith(['checkout-1'], expect.any(String))
+      expect(mockEnqueueAbandonedCheckoutFlowJob).not.toHaveBeenCalled()
+    })
+
+    it('marca o carrinho de origem como Convertido quando o pedido Shopify chega', async () => {
+      const byToken = queryBuilder({ data: [{ id: 'checkout-1' }], error: null })
+      const converted = queryBuilder({ data: null, error: null })
+      setTableQueues({
+        accounts: [queryBuilder({ data: { instance_name: 'wa-country' }, error: null })],
+        fulfillment_orders: [
+          queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country' }, error: null }),
+          queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country' }, error: null }),
+        ],
+        shopify_abandoned_checkouts: [byToken, converted],
+      })
+
+      await upsertShopifyOrder(integrationRow(), shopifyOrder({ checkout_token: 'cart-token' }), { sendConfirmation: false })
+
+      expect(byToken.eq).toHaveBeenCalledWith('checkout_token', 'cart-token')
+      expect(converted.updates[0]).toMatchObject({ recovery_status: 'Convertido', recovered_at: expect.any(String) })
+      expect(converted.in).toHaveBeenCalledWith('id', ['checkout-1'])
+      expect(mockCancelPendingAbandonedCheckoutJobs).toHaveBeenCalledWith(['checkout-1'], 'Carrinho convertido em pedido')
+    })
+
+    describe('runAbandonedCheckoutTrigger', () => {
+      it('não envia para carrinho marcado como Não enviar', async () => {
+        setTableQueues({
+          shopify_abandoned_checkouts: [queryBuilder({ data: savedCheckout({ recovery_status: 'Não enviar' }), error: null })],
+        })
+
+        const result = await runAbandonedCheckoutTrigger('checkout-1', 'flow-1')
+
+        expect(result).toMatchObject({ skipped: expect.stringContaining('Não enviar') })
+        expect(mockExecuteFlow).not.toHaveBeenCalled()
+      })
+
+      it('não envia e marca Convertido quando já existe pedido com o mesmo checkout_token', async () => {
+        const orderByToken = queryBuilder({ data: { id: 'order-9' }, error: null })
+        const converted = queryBuilder({ data: null, error: null })
+        setTableQueues({
+          shopify_abandoned_checkouts: [queryBuilder({ data: savedCheckout(), error: null }), converted],
+          fulfillment_orders: [orderByToken],
+        })
+
+        const result = await runAbandonedCheckoutTrigger('checkout-1', 'flow-1')
+
+        expect(orderByToken.eq).toHaveBeenCalledWith('raw_shopify_payload->>checkout_token', 'cart-token')
+        expect(result).toMatchObject({ skipped: 'Carrinho já convertido em pedido' })
+        expect(converted.updates[0]).toMatchObject({ recovery_status: 'Convertido' })
+        expect(mockExecuteFlow).not.toHaveBeenCalled()
+      })
+
+      it('não envia quando o cliente comprou depois do checkout por outro caminho (mesmo telefone)', async () => {
+        const byPhone = queryBuilder({ data: { id: 'order-10' }, error: null })
+        setTableQueues({
+          shopify_abandoned_checkouts: [
+            queryBuilder({ data: savedCheckout(), error: null }),
+            queryBuilder({ data: null, error: null }),
+          ],
+          fulfillment_orders: [queryBuilder({ data: null, error: null }), byPhone],
+        })
+
+        const result = await runAbandonedCheckoutTrigger('checkout-1', 'flow-1')
+
+        expect(byPhone.eq).toHaveBeenCalledWith('contact_phone', '351900000001')
+        expect(byPhone.gte).toHaveBeenCalledWith('order_placed_at', new Date(NOW - 20 * MINUTE).toISOString())
+        expect(result).toMatchObject({ skipped: 'Carrinho já convertido em pedido' })
+        expect(mockExecuteFlow).not.toHaveBeenCalled()
+      })
+
+      it('executa o fluxo com o checkoutId e marca o carrinho como Enviado', async () => {
+        mockRpc.mockResolvedValue({ data: '2000-01-01T00:00:00.000Z', error: null })
+        mockExecuteFlow.mockResolvedValue(undefined)
+        const sent = queryBuilder({ data: savedCheckout({ recovery_status: 'Enviado' }), error: null })
+        setTableQueues({
+          shopify_abandoned_checkouts: [queryBuilder({ data: savedCheckout(), error: null }), sent],
+          fulfillment_orders: [queryBuilder({ data: null, error: null }), queryBuilder({ data: null, error: null })],
+          conversations: [queryBuilder({
+            data: { id: 'conv-1', wa_id: '351900000001@s.whatsapp.net', sandbox_source_instance: null, sandbox_real_send_enabled: false },
+            error: null,
+          })],
+        })
+
+        const result = await runAbandonedCheckoutTrigger('checkout-1', 'flow-1')
+
+        expect(mockExecuteFlow).toHaveBeenCalledWith('flow-1', expect.objectContaining({
+          instanceName: 'wa-1',
+          conversationId: 'conv-1',
+          remoteJid: '351900000001@s.whatsapp.net',
+          checkoutId: 'checkout-1',
+          isSandbox: false,
+        }))
+        expect(sent.updates[0]).toMatchObject({ recovery_status: 'Enviado', whatsapp_sent_at: expect.any(String), last_error: null })
+        expect(result).toMatchObject({ conversationId: 'conv-1' })
+      })
+
+      it('grava last_error e relança para o worker tentar de novo quando o fluxo falha', async () => {
+        mockRpc.mockResolvedValue({ data: '2000-01-01T00:00:00.000Z', error: null })
+        mockExecuteFlow.mockRejectedValue(new Error('Evolution indisponivel'))
+        const failed = queryBuilder({ data: null, error: null })
+        setTableQueues({
+          shopify_abandoned_checkouts: [queryBuilder({ data: savedCheckout(), error: null }), failed],
+          fulfillment_orders: [queryBuilder({ data: null, error: null }), queryBuilder({ data: null, error: null })],
+          conversations: [queryBuilder({
+            data: { id: 'conv-1', wa_id: '351900000001@s.whatsapp.net', sandbox_source_instance: null, sandbox_real_send_enabled: false },
+            error: null,
+          })],
+        })
+
+        await expect(runAbandonedCheckoutTrigger('checkout-1', 'flow-1')).rejects.toThrow('Evolution indisponivel')
+        expect(failed.updates[0]).toMatchObject({ last_error: 'Evolution indisponivel' })
+      })
     })
   })
 })
