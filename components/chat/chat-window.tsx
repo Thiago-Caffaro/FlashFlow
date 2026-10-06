@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { MoreVertical, Search } from 'lucide-react'
 import { Conversation, Message } from '@/types'
+import { mergeFetchedMessages, RECENT_MESSAGES_POLL_LIMIT } from '@/lib/chat-message-merge'
 import MessageBubble from './message-bubble'
 import MessageInput from './message-input'
 
@@ -64,13 +65,17 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
 
   const conversationId = conversation?.id ?? null
 
-  const fetchMessages = useCallback(async (showLoading = false) => {
+  // recentOnly: polling — só as últimas mensagens, mescladas ao histórico já
+  // carregado. O histórico completo só é baixado ao abrir a conversa e após
+  // o sync com o WhatsApp.
+  const fetchMessages = useCallback(async (showLoading = false, recentOnly = false) => {
     if (!conversationId || !conversation?.instance_name) return
     const thisConvId = conversationId
     if (showLoading) setLoading(true)
     try {
+      const recentParam = recentOnly ? `&recent=${RECENT_MESSAGES_POLL_LIMIT}` : ''
       const res = await fetch(
-        `/api/messages?conversationId=${encodeURIComponent(conversationId)}&instance=${encodeURIComponent(conversation.instance_name)}`,
+        `/api/messages?conversationId=${encodeURIComponent(conversationId)}&instance=${encodeURIComponent(conversation.instance_name)}${recentParam}`,
         { cache: 'no-store' }
       )
       const json = await res.json()
@@ -78,23 +83,9 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       if (thisConvId !== currentConvIdRef.current) return
       if (json.ok) {
         const msgs: Message[] = json.messages
-        setMessages((prev) => {
-          if (msgs.length === 0 && prev.length > 0) return prev
-          // Uma vez que a mensagem real (confirmada pelo banco) aparece com o
-          // mesmo conteúdo/direção de uma otimista "sending" ainda pendente,
-          // a otimista precisa sumir — senão o ícone de "enviando" nunca
-          // troca pro de confirmado, mesmo com o envio já concluído.
-          const stillPending = prev.filter((m) => (
-            m.id.startsWith('temp-')
-            && m.status === 'sending'
-            && !msgs.some((real) => real.content === m.content && real.direction === m.direction)
-          ))
-          return [...msgs, ...stillPending].sort((a, b) =>
-            a.created_at.localeCompare(b.created_at)
-          )
-        })
+        setMessages((prev) => mergeFetchedMessages(prev, msgs, recentOnly))
 
-        if (msgs.length < 30 && !syncedConversations.has(conversationId) && conversation?.instance_name) {
+        if (!recentOnly && msgs.length < 30 && !syncedConversations.has(conversationId) && conversation?.instance_name) {
           syncedConversations.add(conversationId)
           fetch(`/api/messages/sync/${conversationId}?instance=${encodeURIComponent(conversation.instance_name)}`, { method: 'POST' })
             .then(() => fetchMessages())
@@ -124,7 +115,9 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   // anônima (ver P5 da varredura de segurança). Atualização por polling.
   useEffect(() => {
     if (!conversationId) return
-    const interval = setInterval(() => fetchMessages(), 4000)
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') void fetchMessages(false, true)
+    }, 4000)
     return () => clearInterval(interval)
   }, [conversationId, fetchMessages])
 
@@ -169,7 +162,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
         }),
       })
       onMessageSent()
-      setTimeout(() => fetchMessages(), 1500)
+      setTimeout(() => fetchMessages(false, true), 1500)
     } catch (err) {
       console.error('Erro ao enviar:', err)
       setMessages(prev => prev.filter(m => m.id !== tempId))

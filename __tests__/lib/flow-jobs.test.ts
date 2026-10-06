@@ -5,6 +5,11 @@ jest.mock('@/lib/supabase-admin', () => ({
   supabaseAdmin: { from: mockFrom },
 }))
 
+const mockWakeFlowJobWorker = jest.fn()
+jest.mock('@/lib/flow-job-signal', () => ({
+  wakeFlowJobWorker: () => mockWakeFlowJobWorker(),
+}))
+
 function builder(result: { data: unknown; error: unknown }) {
   const upserts: unknown[] = []
   type InsertChain = {
@@ -68,6 +73,15 @@ describe('flow job enqueueing', () => {
       }),
       { onConflict: 'dedupe_key', ignoreDuplicates: true }
     )
+    expect(mockWakeFlowJobWorker).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not wake the worker for a duplicate webhook delivery', async () => {
+    mockFrom.mockReturnValue(builder({ data: null, error: null }).chain)
+
+    await enqueueShopifyOrderFlowJob({ orderId: 'order-1', instanceName: 'wa-1', flowId: 'flow-1' })
+
+    expect(mockWakeFlowJobWorker).not.toHaveBeenCalled()
   })
 
   it('schedules an abandoned checkout job per checkout+trigger at the requested time', async () => {

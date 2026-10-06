@@ -1,6 +1,7 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { supabaseAdmin } from './supabase-admin'
+import { wakeFlowJobWorker } from './flow-job-signal'
 
 export type FlowJobType = 'shopify_order_flow' | 'flow_message_resume' | 'delivery_status_flow' | 'abandoned_checkout_flow'
 export type FlowJobStatus = 'pending' | 'processing' | 'completed' | 'failed'
@@ -40,6 +41,7 @@ async function insertJob(
     .select()
     .maybeSingle()
   if (error) throw new Error(`Falha ao enfileirar fluxo: ${error.message}`)
+  if (data) wakeFlowJobWorker()
   return data as FlowJob | null
 }
 

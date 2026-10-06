@@ -95,7 +95,9 @@ export default function FulfillmentPage() {
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') void refreshOrders()
     }
-    const interval = window.setInterval(refreshWhenVisible, 5000)
+    // 15s: pedidos novos chegam por webhook, não precisam aparecer no mesmo
+    // segundo — e cada recarga é egress do Supabase.
+    const interval = window.setInterval(refreshWhenVisible, 15_000)
     document.addEventListener('visibilitychange', refreshWhenVisible)
     return () => {
       window.clearInterval(interval)

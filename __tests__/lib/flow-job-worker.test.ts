@@ -53,7 +53,16 @@ function updateBuilder(result: Result = { data: null, error: null }) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { runFlowJobWorkerOnce } = require('@/lib/flow-job-worker')
+const { runFlowJobWorkerOnce, nextPollDelayMs } = require('@/lib/flow-job-worker')
+
+describe('flow job worker idle backoff', () => {
+  it('doubles the poll interval while idle, up to 15s, and resets after work', () => {
+    expect(nextPollDelayMs(1_000, false)).toBe(2_000)
+    expect(nextPollDelayMs(8_000, false)).toBe(15_000)
+    expect(nextPollDelayMs(15_000, false)).toBe(15_000)
+    expect(nextPollDelayMs(15_000, true)).toBe(1_000)
+  })
+})
 
 function job(overrides: Record<string, unknown> = {}) {
   return {

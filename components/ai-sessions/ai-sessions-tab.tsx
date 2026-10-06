@@ -47,7 +47,9 @@ export default function AiSessionsTab({ instanceName }: AiSessionsTabProps) {
   // Sem Realtime via anon key — a tabela "ai_sessions" não tem mais leitura
   // anônima (ver P5 da varredura de segurança). Atualização por polling.
   useEffect(() => {
-    const interval = setInterval(() => loadSessions(), 15000)
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') loadSessions()
+    }, 15000)
     return () => clearInterval(interval)
   }, [loadSessions])
 

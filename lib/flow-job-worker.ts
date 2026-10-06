@@ -6,8 +6,22 @@ import { executeFlow } from './flow-engine'
 import { runAbandonedCheckoutTrigger, runOrderFlow, runShopifyOrderTrigger } from './shopify-confirmation-service'
 import { supabaseAdmin } from './supabase-admin'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
+import { registerFlowJobWorkerWake } from './flow-job-signal'
 
-const POLL_INTERVAL_MS = 1_000
+// Fila vazia: o intervalo dobra a cada poll ocioso (1s → 2s → … → 15s).
+// Cada poll é uma requisição ao Supabase (e uma linha de log cobrada);
+// a 1s fixo eram ~86 mil por dia mesmo sem trabalho. Jobs enfileirados por
+// este processo acordam o worker na hora (flow-job-signal), então a
+// latência só cresce para jobs vindos de fora (ex: RPC de entrega) ou
+// agendados para o futuro — no máximo MAX_IDLE_POLL_INTERVAL_MS.
+export const MIN_POLL_INTERVAL_MS = 1_000
+export const MAX_IDLE_POLL_INTERVAL_MS = 15_000
+
+export function nextPollDelayMs(previousDelayMs: number, processedJobs: boolean): number {
+  if (processedJobs) return MIN_POLL_INTERVAL_MS
+  return Math.min(MAX_IDLE_POLL_INTERVAL_MS, Math.max(MIN_POLL_INTERVAL_MS, previousDelayMs * 2))
+}
+
 const globalWorker = globalThis as typeof globalThis & {
   __flashflowJobWorkerStarted?: boolean
 }
@@ -129,21 +143,46 @@ export function startFlowJobWorker(): void {
   globalWorker.__flashflowJobWorkerStarted = true
 
   let working = false
+  let wakeRequested = false
+  let delayMs = MIN_POLL_INTERVAL_MS
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  const schedule = (ms: number) => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => void tick(), ms)
+    timer.unref()
+  }
+
   const tick = async () => {
-    if (working) return
+    if (working) {
+      wakeRequested = true
+      return
+    }
     working = true
+    let processed = false
     try {
       while (await runFlowJobWorkerOnce()) {
         // Jobs are intentionally drained one at a time.
+        processed = true
       }
     } catch (error) {
       console.error('[flow-worker] poll failed:', errorMessage(error))
     } finally {
       working = false
     }
+    // Um job enfileirado durante o dreno pode ter chegado depois do último
+    // claim vazio — roda de novo já, em vez de esperar o intervalo ocioso.
+    const runAgainNow = wakeRequested
+    wakeRequested = false
+    delayMs = nextPollDelayMs(delayMs, processed || runAgainNow)
+    schedule(runAgainNow ? 0 : delayMs)
   }
 
+  registerFlowJobWorkerWake(() => {
+    delayMs = MIN_POLL_INTERVAL_MS
+    if (working) wakeRequested = true
+    else schedule(0)
+  })
+
   void tick()
-  const interval = setInterval(() => void tick(), POLL_INTERVAL_MS)
-  interval.unref()
 }
