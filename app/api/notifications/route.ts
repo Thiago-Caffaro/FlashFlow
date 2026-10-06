@@ -57,6 +57,20 @@ export async function GET(req: NextRequest) {
 
   try {
     await syncEscalationNotifications(instanceName)
+
+    // ?countOnly=1: o badge do menu só precisa do número — sem baixar as
+    // até 200 notificações a cada poll (egress do Supabase).
+    if (req.nextUrl.searchParams.get('countOnly') === '1') {
+      const { count, error } = await supabaseAdmin
+        .from('notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('instance_name', instanceName)
+        .is('dismissed_at', null)
+        .is('read_at', null)
+      if (error) throw new Error(error.message)
+      return NextResponse.json({ ok: true, unreadCount: count ?? 0 })
+    }
+
     const { data, error } = await supabaseAdmin
       .from('notifications')
       .select('*')

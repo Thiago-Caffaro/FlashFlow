@@ -78,7 +78,7 @@ function ChatApp() {
 
     const fetchNotificationCount = async () => {
       try {
-        const response = await fetch(`/api/notifications?instance=${encodeURIComponent(instanceName)}`, { cache: 'no-store' })
+        const response = await fetch(`/api/notifications?instance=${encodeURIComponent(instanceName)}&countOnly=1`, { cache: 'no-store' })
         const json = await response.json()
         if (!response.ok || !json.ok) return
         const newCount = Number(json.unreadCount ?? 0)
@@ -96,7 +96,14 @@ function ChatApp() {
     notificationsInitialized.current = false
     prevNotificationRef.current = 0
     void fetchNotificationCount()
-    const poll = setInterval(fetchNotificationCount, 5000)
+    // Continua rodando com a aba em segundo plano (é o que toca o som de
+    // notificação nova), mas a cada 30s em vez de 10s.
+    let hiddenTicks = 0
+    const poll = setInterval(() => {
+      if (document.visibilityState !== 'visible' && ++hiddenTicks % 3 !== 0) return
+      hiddenTicks = 0
+      void fetchNotificationCount()
+    }, 10_000)
 
     return () => {
       clearInterval(poll)

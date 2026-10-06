@@ -117,7 +117,7 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 2. `executeTriggers` (`lib/message-triggers.ts:6-87`) compara texto normalizado contra `triggers.valor` (lista por vírgula, suporta `*`), `tipo` = `exact`/`contains`; primeiro match dispara e `break` — **não é gatilho por link/produto, é regra de texto por instância**
 3. `executeFlow` (`lib/flow-engine.ts:1323`) roda **síncrono dentro do próprio webhook**, fire-and-forget (`void (async () => {...})()`), com detecção de loop (`visited.size < 50`) — `lib/flow-engine.ts:1390`
 4. Fila (`flow_jobs` + `lib/flow-job-worker.ts`) só entra para: pedido Shopify ainda não sincronizado (`OrderContextPendingError` → `flow_message_resume`) e disparos originados de eventos Shopify (`shopify_order_flow`, `delivery_status_flow`, `abandoned_checkout_flow`)
-5. Worker é **poll in-process a cada 1s** (não cron), via RPC `claim_flow_jobs` com `FOR UPDATE SKIP LOCKED` — `lib/flow-job-worker.ts:119-141`, `migrations/009_message_variables_and_flow_jobs.sql:55-107`
+5. Worker é **poll in-process adaptativo** (1s com trabalho, dobrando até 15s ocioso; acordado na hora por jobs enfileirados no próprio processo via `lib/flow-job-signal.ts` — não cron), via RPC `claim_flow_jobs` com `FOR UPDATE SKIP LOCKED` — `lib/flow-job-worker.ts:119-141`, `migrations/009_message_variables_and_flow_jobs.sql:55-107`
 6. Estado de fluxo pausado (esperando botão) vive em `flow_runs` (`UNIQUE(instance_name, remote_jid)`); deletado ao concluir — `lib/flow-engine.ts:1556-1574,1850-1852`
 7. Bloco de IA (`aiAssistant`) suporta Gemini/OpenAI/OpenRouter, credenciais em `ai_provider_keys` cifradas AES-256-GCM — `lib/flow-engine.ts:1748-1844`, `lib/ai-crypto.ts:1-19`
 

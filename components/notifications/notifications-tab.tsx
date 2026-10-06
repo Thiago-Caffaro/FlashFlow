@@ -44,7 +44,11 @@ export default function NotificationsTab({ instanceName, onUnreadCountChange }: 
 
   useEffect(() => {
     void loadNotifications(true)
-    const poll = window.setInterval(() => void loadNotifications(), 5000)
+    // O badge (app/page.tsx) já avisa de notificação nova em segundo plano;
+    // a lista completa só precisa atualizar com a aba visível.
+    const poll = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void loadNotifications()
+    }, 15_000)
     return () => window.clearInterval(poll)
   }, [loadNotifications])
 

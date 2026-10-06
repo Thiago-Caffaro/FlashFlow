@@ -14,6 +14,7 @@ import {
 } from './fulfillment-delivery-status'
 import { getFulfillmentClient } from './fulfillment-service'
 import { supabaseAdmin } from './supabase-admin'
+import { wakeFlowJobWorker } from './flow-job-signal'
 import type { DeliveryStatus, FulfillmentOrder } from '@/types'
 
 const MAX_LEAD_PAGES = 500
@@ -136,6 +137,9 @@ async function applyMappedStatus(input: {
   })
   if (error) throw new Error(`Falha ao aplicar status de entrega: ${error.message}`)
   const result = Array.isArray(data) ? data[0] as { changed?: boolean } | undefined : undefined
+  // A RPC enfileira o fluxo de entrega direto no banco — acorda o worker
+  // para ele não esperar o intervalo ocioso.
+  if (result?.changed === true) wakeFlowJobWorker()
   return result?.changed === true
 }
 

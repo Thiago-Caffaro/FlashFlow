@@ -232,14 +232,18 @@ export default function ChatsTab({ instanceName }: ChatsTabProps) {
   // da varredura de segurança. Atualização por polling a cada 15s.)
 
   useEffect(() => {
-    const poll = setInterval(() => fetchConversations(), 15000)
+    const poll = setInterval(() => {
+      if (document.visibilityState === 'visible') fetchConversations()
+    }, 15000)
     return () => clearInterval(poll)
   }, [fetchConversations])
 
   // ── Polling: sessions ───────────────────────────────────────────────────────
 
   useEffect(() => {
-    const poll = setInterval(() => loadSessions(), 15000)
+    const poll = setInterval(() => {
+      if (document.visibilityState === 'visible') loadSessions()
+    }, 15000)
     return () => clearInterval(poll)
   }, [loadSessions])
 

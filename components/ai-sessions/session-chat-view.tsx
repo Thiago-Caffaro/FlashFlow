@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bot, XCircle, User } from 'lucide-react'
 import { AISessionWithContext, Message } from '@/types'
+import { mergeFetchedMessages, RECENT_MESSAGES_POLL_LIMIT } from '@/lib/chat-message-merge'
 import MessageBubble from '@/components/chat/message-bubble'
 import MessageInput from '@/components/chat/message-input'
 
@@ -48,13 +49,19 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const displayName = conversation.contact_name || conversation.contact_phone
 
-  const loadMessages = useCallback(async () => {
+  // recentOnly: polling — só as últimas mensagens, mescladas ao histórico já carregado.
+  const loadMessages = useCallback(async (recentOnly = false) => {
+    const recentParam = recentOnly ? `&recent=${RECENT_MESSAGES_POLL_LIMIT}` : ''
     const res = await fetch(
-      `/api/messages?conversationId=${encodeURIComponent(conversation.id)}&instance=${encodeURIComponent(conversation.instance_name)}`,
+      `/api/messages?conversationId=${encodeURIComponent(conversation.id)}&instance=${encodeURIComponent(conversation.instance_name)}${recentParam}`,
       { cache: 'no-store' }
     )
     const json = await res.json()
-    setMessages(json.ok ? json.messages : [])
+    if (recentOnly) {
+      if (json.ok) setMessages((prev) => mergeFetchedMessages(prev, json.messages, true))
+    } else {
+      setMessages(json.ok ? json.messages : [])
+    }
     setLoading(false)
   }, [conversation.id, conversation.instance_name])
 
@@ -66,7 +73,9 @@ export default function SessionChatView({ sessionWithCtx, instanceName, onTermin
   // Sem Realtime via anon key — a tabela "messages" não tem mais leitura
   // anônima (ver P5 da varredura de segurança). Atualização por polling.
   useEffect(() => {
-    const interval = setInterval(() => loadMessages(), 10000)
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') void loadMessages(true)
+    }, 10000)
     return () => clearInterval(interval)
   }, [loadMessages])
 

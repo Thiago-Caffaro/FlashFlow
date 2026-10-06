@@ -102,7 +102,7 @@ vêm de mensagem, vêm de eventos internos enfileirados.
 `executeFlow` roda **síncrono dentro da própria invocação do webhook**
 (fire-and-forget, não bloqueia a resposta HTTP), com detecção de loop
 (máximo 50 nodes visitados por execução). Não há uma "fila" para
-execução normal — a fila (`flow_jobs` + worker com poll de 1s
+execução normal — a fila (`flow_jobs` + worker com poll adaptativo de 1s a 15s
 in-process, não cron) só entra quando:
 
 - o node depende de um pedido Shopify ainda não sincronizado localmente

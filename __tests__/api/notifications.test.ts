@@ -65,6 +65,27 @@ describe('notifications API', () => {
     expect(tables.notificationActive).toHaveBeenCalledWith('dismissed_at', null)
   })
 
+  it('returns only the unread count (no notification rows) for the menu badge', async () => {
+    const isUnread = jest.fn().mockResolvedValue({ count: 3, error: null })
+    const isActive = jest.fn(() => ({ is: isUnread }))
+    const instanceEq = jest.fn(() => ({ is: isActive }))
+    const notificationSelect = jest.fn(() => ({ eq: instanceEq }))
+    const sessionEqHuman = jest.fn().mockResolvedValue({ data: [], error: null })
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'ai_sessions') return { select: jest.fn(() => ({ eq: jest.fn(() => ({ eq: sessionEqHuman })) })) }
+      if (table === 'notifications') return { select: notificationSelect }
+      throw new Error(`Unexpected table ${table}`)
+    })
+
+    const response = await GET(request('/api/notifications?instance=wa-a&countOnly=1'))
+    const json = await response.json()
+
+    expect(json).toEqual({ ok: true, unreadCount: 3 })
+    expect(notificationSelect).toHaveBeenCalledWith('id', { count: 'exact', head: true })
+    expect(instanceEq).toHaveBeenCalledWith('instance_name', 'wa-a')
+    expect(isUnread).toHaveBeenCalledWith('read_at', null)
+  })
+
   it('marks a single notification as read within its instance', async () => {
     const finalEq = jest.fn().mockResolvedValue({ error: null })
     const isUnread = jest.fn(() => ({ eq: finalEq }))

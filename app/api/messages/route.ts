@@ -7,6 +7,8 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+const MAX_RECENT_MESSAGES = 100
+
 export async function GET(req: NextRequest) {
   const conversationId = req.nextUrl.searchParams.get('conversationId')
   const instanceName = req.nextUrl.searchParams.get('instance')
@@ -27,17 +29,28 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'conversation not found' }, { status: 404 })
   }
 
-  const { data, error } = await supabase
+  // ?recent=N: só as N mensagens mais novas (em ordem cronológica). É o que
+  // o polling do chat usa — o histórico inteiro só é baixado ao abrir a
+  // conversa, em vez de a cada poucos segundos.
+  const recentParam = Number(req.nextUrl.searchParams.get('recent'))
+  const recent = Number.isInteger(recentParam) && recentParam > 0
+    ? Math.min(recentParam, MAX_RECENT_MESSAGES)
+    : null
+
+  const query = supabase
     .from('messages')
     .select('*')
     .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true })
+  const { data, error } = recent
+    ? await query.order('created_at', { ascending: false }).limit(recent)
+    : await query.order('created_at', { ascending: true })
 
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json({ ok: true, messages: data ?? [] }, {
+  const messages = recent ? [...(data ?? [])].reverse() : data ?? []
+  return NextResponse.json({ ok: true, messages }, {
     headers: { 'Cache-Control': 'no-store' },
   })
 }

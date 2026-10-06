@@ -43,7 +43,7 @@
 │                                                                  │
 │  lib/flow-engine.ts — motor de execução de fluxos (síncrono     │
 │  no próprio webhook, fire-and-forget; fila flow_jobs só para    │
-│  casos que dependem de sync externo — poll 1s in-process)       │
+│  casos que dependem de sync externo — poll adaptativo 1s→15s)   │
 │                                                                  │
 │  lib/fulfillment-service.ts — submissão de pedidos ao            │
 │  FenixCOD; lib/fulfillment-delivery-worker.ts — poll 30s de     │

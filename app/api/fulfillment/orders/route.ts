@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createFulfillmentOrder } from '@/lib/fulfillment-service'
 import { isAdminRequest } from '@/lib/server-auth'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { FULFILLMENT_ORDER_LIST_SELECT, toFulfillmentOrderListItem } from '@/lib/fulfillment-order-list'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,7 +12,7 @@ export async function GET(req: NextRequest) {
   const country = req.nextUrl.searchParams.get('country')
   let query = supabaseAdmin
     .from('fulfillment_orders')
-    .select('*')
+    .select(FULFILLMENT_ORDER_LIST_SELECT)
     .is('shopify_deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(200)
@@ -19,7 +20,8 @@ export async function GET(req: NextRequest) {
   if (country) query = query.eq('country', country.toUpperCase())
   const { data, error } = await query
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, orders: data ?? [] })
+  const rows = (data ?? []) as unknown as Parameters<typeof toFulfillmentOrderListItem>[0][]
+  return NextResponse.json({ ok: true, orders: rows.map(toFulfillmentOrderListItem) })
 }
 
 export async function POST(req: NextRequest) {
