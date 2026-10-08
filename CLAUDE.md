@@ -132,6 +132,7 @@ SHOPIFY_ADMIN_API_VERSION=
 AI_ENCRYPTION_KEY=    # cifra chaves de provedor de IA em repouso (AES-256-GCM)
 
 # Infra
+LOG_LEVEL=            # error | warn | info (padrão) | debug — detalhe de webhooks e fluxos só em debug
 APP_BASE_URL=
 WEBHOOK_BASE_URL=
 

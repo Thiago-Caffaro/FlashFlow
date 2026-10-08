@@ -1,6 +1,7 @@
 import 'server-only'
 import { SANDBOX_INSTANCE_NAME, SANDBOX_REMOTE_JID } from './sandbox'
 import { supabaseAdmin } from './supabase-admin'
+import { recordOutboundMessage } from './outbound-message'
 import { dispatchSendText } from './whatsapp-dispatch'
 
 export interface SendWhatsAppTextInput {
@@ -41,7 +42,7 @@ async function persistSandboxOutboundMessage(text: string, phone: string) {
   }
   if (!conversation) return
 
-  await supabaseAdmin.from('messages').insert({
+  await recordOutboundMessage({
     conversation_id: conversation.id,
     wa_message_id: null,
     content: text,

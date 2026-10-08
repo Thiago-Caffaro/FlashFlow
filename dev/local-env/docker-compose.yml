@@ -1,0 +1,57 @@
+# Ambiente local que replica a produção do FlashFlow:
+#  - Supabase local (subido pela Supabase CLI, com o schema real de produção)
+#  - FlashFlow construído com o MESMO Dockerfile de produção (build standalone)
+#  - Evolution API simulada com injeção de falhas (mock-evolution/server.mjs)
+#
+# Uso: ./up.sh   (gera .env.local-env a partir do `supabase status` e sobe tudo)
+# Detalhes: README.md nesta pasta.
+
+services:
+  flashflow:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY}
+    container_name: flashflow-local
+    mem_limit: 512m
+    cpus: 1.0
+    ports:
+      - "3100:3000"
+    env_file: .env.local-env
+    environment:
+      # Dentro da rede do Docker o Supabase é alcançado pelo Kong
+      SUPABASE_URL: http://supabase_kong_flashflow-local:8000
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      EVOLUTION_API_URL: http://mock-evolution:8080
+      WEBHOOK_BASE_URL: http://flashflow-local:3000
+      APP_BASE_URL: http://localhost:3100
+      COOKIE_SECURE: "false"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      - mock-evolution
+    networks:
+      - supabase
+
+  mock-evolution:
+    image: node:20-alpine
+    container_name: mock-evolution
+    mem_limit: 64m
+    cpus: 0.25
+    working_dir: /app
+    command: ["node", "server.mjs"]
+    volumes:
+      - ./mock-evolution:/app:ro
+    ports:
+      - "8090:8080"
+    env_file: .env.local-env
+    environment:
+      FLASHFLOW_WEBHOOK_URL: http://flashflow-local:3000/api/webhook/evolution
+    networks:
+      - supabase
+
+networks:
+  supabase:
+    name: supabase_network_flashflow-local
+    external: true

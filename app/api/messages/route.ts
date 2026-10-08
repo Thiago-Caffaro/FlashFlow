@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendWhatsAppText } from '@/lib/whatsapp-text'
+import { finalizePendingOutbound } from '@/lib/outbound-message'
+import { createLogger } from '@/lib/logger'
+
+const log = createLogger('messages-send')
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -104,7 +108,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'Falha ao registrar mensagem' }, { status: 500 })
     }
 
-    console.log(`[messages/send] instance="${instanceName}" conv="${conversationId}" msg="${pending.id}"`)
 
     let sent
     try {
@@ -119,7 +122,12 @@ export async function POST(req: NextRequest) {
         await supabase.from('messages').update({ status: 'failed' }).eq('id', pending.id)
       }
 
-      console.error(`[messages/send] falha msg="${pending.id}" timeout=${isTimeout}:`, err instanceof Error ? err.message : err)
+      log.error(isTimeout ? 'envio sem resposta da Evolution — resultado desconhecido, mantido como enviando' : 'falha ao enviar mensagem', {
+        instance: instanceName,
+        conversationId,
+        pendingId: pending.id,
+        err,
+      })
       return NextResponse.json(
         {
           ok: false,
@@ -132,34 +140,26 @@ export async function POST(req: NextRequest) {
     }
 
     const waMessageId = sent.messageId
-    console.log(`[messages/send] Evolution msgId="${waMessageId}" ok=true msg="${pending.id}"`)
+    log.info('mensagem enviada', { instance: instanceName, conversationId, msgId: waMessageId })
 
-    const { data: updated, error: updateError } = await supabase
-      .from('messages')
-      .update({ wa_message_id: waMessageId, status: 'sent' })
-      .eq('id', pending.id)
-      .select()
-      .single()
+    // A Evolution já aceitou a mensagem — erro ao persistir não falha a
+    // resposta. Se o eco do webhook chegou antes e criou a própria linha,
+    // a pendente duplicada é descartada (ver lib/outbound-message.ts).
+    const finalized = await finalizePendingOutbound(pending.id, waMessageId)
+    const message = finalized ?? { ...pending, wa_message_id: waMessageId, status: 'sent' }
 
-    if (updateError) {
-      // A Evolution já aceitou a mensagem — não falhar a resposta por causa
-      // de um erro ao persistir o resultado, só registrar para investigação.
-      console.error(`[messages/send] enviado mas falhou ao persistir msg="${pending.id}":`, updateError.message)
-    }
-
-    const message = updated ?? { ...pending, wa_message_id: waMessageId, status: 'sent' }
-
-    await supabase
+    const { error: previewError } = await supabase
       .from('conversations')
       .update({
         last_message: content,
         last_message_at: new Date().toISOString(),
       })
       .eq('id', conversationId)
+    if (previewError) log.warn('mensagem enviada, mas a prévia da conversa não foi atualizada', { conversationId, err: previewError })
 
     return NextResponse.json({ ok: true, message })
   } catch (err) {
-    console.error('Send error:', err)
+    log.error('erro inesperado no envio', { err })
     return NextResponse.json({ ok: false, error: 'Falha ao enviar mensagem' }, { status: 500 })
   }
 }

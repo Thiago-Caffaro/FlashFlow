@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { uploadFileToStorage } from '@/lib/storage'
 import { extensionForSniffedType, sniffImageType } from '@/lib/image-validation'
 import { dispatchSendImage } from '@/lib/whatsapp-dispatch'
+import { finalizePendingOutbound } from '@/lib/outbound-message'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -87,18 +88,9 @@ export async function POST(req: NextRequest) {
 
     const waMessageId = sendResult.waMessageId
 
-    const { data: updated, error: updateError } = await supabase
-      .from('messages')
-      .update({ wa_message_id: waMessageId, status: 'sent' })
-      .eq('id', pending.id)
-      .select()
-      .single()
-
-    if (updateError) {
-      console.error(`[messages/image] enviado mas falhou ao persistir msg="${pending.id}":`, updateError.message)
-    }
-
-    const message = updated ?? { ...pending, wa_message_id: waMessageId, status: 'sent' }
+    // Eco do webhook pode ter chegado antes — ver lib/outbound-message.ts.
+    const finalized = await finalizePendingOutbound(pending.id, waMessageId)
+    const message = finalized ?? { ...pending, wa_message_id: waMessageId, status: 'sent' }
 
     await supabase
       .from('conversations')

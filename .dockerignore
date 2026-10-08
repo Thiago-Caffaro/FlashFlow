@@ -11,3 +11,4 @@ logs
 *.tar.gz
 *.pdf
 *.postman_collection.json
+dev

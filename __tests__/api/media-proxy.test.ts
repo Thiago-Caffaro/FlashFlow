@@ -83,7 +83,8 @@ describe('GET /api/media/proxy', () => {
     mockMessageAndConversation({ direction: 'inbound', waId: '5521900000000@s.whatsapp.net', instanceName: 'inst-real' })
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ base64: 'aGVsbG8=' }),
+      status: 200,
+      text: async () => JSON.stringify({ base64: 'aGVsbG8=' }),
     })
 
     await GET(req({
@@ -104,7 +105,7 @@ describe('GET /api/media/proxy', () => {
 
   it('retorna a imagem com header X-Content-Type-Options: nosniff', async () => {
     mockMessageAndConversation()
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ base64: 'aGVsbG8=' }) })
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => JSON.stringify({ base64: 'aGVsbG8=' }) })
 
     const res = await GET(req({ id: 'msg-1', type: 'stickerMessage' }))
     expect(res.status).toBe(200)

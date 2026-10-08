@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { fetchImageSafely } from '@/lib/ssrf-guard'
+import { fetchEvolution } from '@/lib/evolution-api'
+import { createLogger } from '@/lib/logger'
+
+const log = createLogger('profile-picture')
 
 export const dynamic = 'force-dynamic'
 
@@ -15,24 +19,37 @@ const WA_UA = 'WhatsApp/2.24.6.77 A'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
+// "Sem foto" (200 com profilePictureUrl null) é o caso normal de contato com
+// foto restrita na privacidade — debug. Falha da Evolution (status de erro,
+// timeout) é outra coisa e vai para warn: antes as duas viravam o mesmo 404
+// silencioso e "os ícones não aparecem" não tinha diagnóstico.
 async function fetchPicUrlFromEvolution(phone: string, instanceName: string): Promise<string | null> {
   try {
-    const abort = new AbortController()
-    const timer = setTimeout(() => abort.abort(), 6000)
-    const res = await fetch(
-      `${process.env.EVOLUTION_API_URL}/chat/fetchProfilePictureUrl/${instanceName}`,
+    const response = await fetchEvolution(
+      `/chat/fetchProfilePictureUrl/${encodeURIComponent(instanceName)}`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: process.env.EVOLUTION_API_KEY! },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ number: phone }),
-        signal: abort.signal,
-      }
+      },
+      6000
     )
-    clearTimeout(timer)
-    if (!res.ok) return null
-    const json = await res.json()
-    return (json?.profilePictureUrl as string) || null
-  } catch {
+    if (!response.ok) {
+      log.warn('Evolution falhou ao buscar foto de perfil', {
+        instance: instanceName,
+        status: response.status,
+        body: response.text.slice(0, 200),
+      }, { throttleKey: `${instanceName}:${response.status}` })
+      return null
+    }
+    const body = response.body && typeof response.body === 'object' ? response.body as Record<string, unknown> : {}
+    const url = typeof body.profilePictureUrl === 'string' && body.profilePictureUrl ? body.profilePictureUrl : null
+    if (!url) log.debug('contato sem foto de perfil pública', { instance: instanceName })
+    return url
+  } catch (error) {
+    log.warn('falha ao buscar foto de perfil na Evolution', { instance: instanceName, err: error }, {
+      throttleKey: `${instanceName}:${error instanceof Error ? error.name : 'error'}`,
+    })
     return null
   }
 }

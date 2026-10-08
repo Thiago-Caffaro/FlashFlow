@@ -7,6 +7,19 @@ export function redactPhone(value: string): string {
   return `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}`
 }
 
+/**
+ * Mascara um JID do WhatsApp em logs mantendo o sufixo (que diz o tipo:
+ * @s.whatsapp.net, @lid, @g.us) — o tipo é justamente o que importa ao
+ * diagnosticar conversas duplicadas, o número não.
+ */
+export function maskJid(value: string | null | undefined): string {
+  if (!value) return '-'
+  const at = value.indexOf('@')
+  const local = at >= 0 ? value.slice(0, at) : value
+  const suffix = at >= 0 ? value.slice(at) : ''
+  return `${redactPhone(local)}${suffix}`
+}
+
 /** Trunca texto livre (conteúdo de mensagem, prompts) para uso em logs. */
 export function redactContent(value: string, maxLength = 40): string {
   const trimmed = value.trim()

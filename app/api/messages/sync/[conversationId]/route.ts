@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { EvolutionHistoryError, importEvolutionHistory } from '@/lib/evolution-history'
+import { createLogger } from '@/lib/logger'
+import { maskJid } from '@/lib/redact'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,75 +11,31 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+const log = createLogger('messages-sync')
+
 // Caches instance name → UUID for the server process lifetime.
 // Avoids a repeated "Instance" table lookup on every sync call.
 const instanceIdCache = new Map<string, string>()
-
-const STATUS_MAP: Record<string, string> = {
-  READ: 'read',
-  PLAYED: 'read',
-  DELIVERY_ACK: 'delivered',
-  SERVER_ACK: 'sent',
-  PENDING: 'sent',
-}
-
-interface EvoMessageRow {
-  key: { id: string; fromMe: boolean; remoteJid: string; participant?: string }
-  message: Record<string, unknown> | null
-  messageType: string
-  messageTimestamp: number
-  status: string | null
-  pushName?: string | null
-}
-
-function extractContent(row: EvoMessageRow): { content: string; type: string } {
-  const msg = row.message ?? {}
-
-  switch (row.messageType) {
-    case 'conversation':
-    case 'extendedTextMessage': {
-      const text =
-        (msg.conversation as string) ||
-        ((msg.extendedTextMessage as { text?: string } | undefined)?.text ?? '')
-      return { content: text || '[texto]', type: 'text' }
-    }
-    case 'imageMessage': {
-      const caption =
-        (msg.imageMessage as { caption?: string } | undefined)?.caption ?? ''
-      return { content: caption || '[imagem]', type: 'image' }
-    }
-    case 'audioMessage':
-    case 'pttMessage':
-      return { content: '[áudio]', type: 'audio' }
-    case 'videoMessage': {
-      const caption = (msg.videoMessage as { caption?: string } | undefined)?.caption ?? ''
-      return { content: caption || '[vídeo]', type: 'video' }
-    }
-    case 'documentMessage': {
-      const doc = msg.documentMessage as { title?: string; fileName?: string } | undefined
-      return { content: doc?.title ?? doc?.fileName ?? '[documento]', type: 'media' }
-    }
-    case 'stickerMessage':
-      return { content: '[figurinha]', type: 'sticker' }
-    default:
-      return { content: '[mídia]', type: 'media' }
-  }
-}
 
 async function getInstanceId(instanceName: string): Promise<string | null> {
   if (instanceIdCache.has(instanceName)) return instanceIdCache.get(instanceName)!
 
   // Requires: GRANT SELECT ON TABLE public."Instance" TO service_role;
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('Instance')
     .select('id')
     .eq('name', instanceName)
     .maybeSingle()
 
+  if (error) {
+    log.warn('falha ao consultar a tabela Instance da Evolution', { instance: instanceName, err: error }, { throttleKey: `instance:${error.code}` })
+    return null
+  }
   if (data?.id) {
     instanceIdCache.set(instanceName, data.id as string)
     return data.id as string
   }
+  log.info('instância não encontrada na tabela Instance da Evolution — nada a sincronizar', { instance: instanceName }, { throttleKey: `instance-missing:${instanceName}` })
   return null
 }
 
@@ -84,10 +43,6 @@ async function getInstanceId(instanceName: string): Promise<string | null> {
 // Reads the last 30 messages directly from Evolution API's Message table in Supabase,
 // giving access to the full stored history (not just messages received while the server
 // was running).
-//
-// Requires:
-//   GRANT SELECT ON TABLE public."Message"  TO service_role;
-//   GRANT SELECT ON TABLE public."Instance" TO service_role;
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ conversationId: string }> }
@@ -98,86 +53,45 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'instance obrigatório' }, { status: 400 })
   }
 
-  const { data: conv } = await supabase
+  const { data: conv, error: convError } = await supabase
     .from('conversations')
     .select('wa_id, instance_name')
     .eq('id', conversationId)
     .maybeSingle()
 
+  if (convError) log.warn('falha ao carregar conversa para sincronizar', { conversationId, err: convError })
   if (!conv || conv.instance_name !== instanceParam) {
     return NextResponse.json({ ok: false, added: 0 })
   }
 
   const { wa_id: remoteJid, instance_name: instanceName } = conv
-  const isGroup = remoteJid.endsWith('@g.us')
 
   // Map instance name to the UUID used in the Message table
   const instanceId = await getInstanceId(instanceName)
   if (!instanceId) return NextResponse.json({ ok: true, added: 0 })
 
   try {
-    const { data: evoMessages, error } = await supabase
-      .from('Message')
-      .select('key, message, messageType, messageTimestamp, status, pushName')
-      .eq('instanceId', instanceId)
-      .filter('key->>remoteJid', 'eq', remoteJid)
-      .order('messageTimestamp', { ascending: false })
-      .limit(30)
-
-    console.log(`[messages/sync] conversationId=${conversationId} instanceId=${instanceId} remoteJid=${remoteJid} evoMessages=${evoMessages?.length ?? 0}${error ? ` error=${error.message}` : ''}`)
-
-    if (error || !evoMessages?.length) return NextResponse.json({ ok: true, added: 0 })
-
-    // Deduplicate against messages already stored for this conversation
-    const waIds = evoMessages
-      .map((m) => (m.key as { id?: string })?.id)
-      .filter(Boolean) as string[]
-
-    const { data: existing } = await supabase
-      .from('messages')
-      .select('wa_message_id')
-      .eq('conversation_id', conversationId)
-      .in('wa_message_id', waIds)
-
-    const existingIds = new Set((existing ?? []).map((m) => m.wa_message_id))
-
-    const toInsert = evoMessages
-      .filter((m) => {
-        const id = (m.key as { id?: string })?.id
-        return id && !existingIds.has(id)
-      })
-      .map((m) => {
-        const key = m.key as { id: string; fromMe: boolean; participant?: string }
-        const { content, type } = extractContent(m as EvoMessageRow)
-        const status = STATUS_MAP[m.status ?? ''] ?? (key.fromMe ? 'sent' : 'delivered')
-        const ts =
-          m.messageTimestamp && m.messageTimestamp > 0
-            ? new Date(m.messageTimestamp * 1000).toISOString()
-            : new Date().toISOString()
-
-        return {
-          conversation_id: conversationId,
-          wa_message_id: key.id,
-          content,
-          type,
-          direction: (key.fromMe ? 'outbound' : 'inbound') as 'outbound' | 'inbound',
-          status,
-          created_at: ts,
-          sender_jid:  isGroup && key.participant ? key.participant : null,
-          sender_name: isGroup ? (m.pushName ?? null) : null,
-        }
-      })
-      // Query returned newest-first; restore chronological order before inserting
-      .sort((a, b) => a.created_at.localeCompare(b.created_at))
-
-    if (toInsert.length > 0) {
-      await supabase.from('messages').insert(toInsert)
+    const result = await importEvolutionHistory({ conversationId, instanceId, remoteJid })
+    if (result.found === 0) {
+      log.debug('nenhuma mensagem no histórico da Evolution', { conversationId, instance: instanceName, jid: maskJid(remoteJid) })
+      return NextResponse.json({ ok: true, added: 0 })
     }
-
-    console.log(`[messages/sync] conversationId=${conversationId} added=${toInsert.length} (skipped=${evoMessages.length - toInsert.length} already existed)`)
-    return NextResponse.json({ ok: true, added: toInsert.length })
+    log.info('histórico sincronizado', {
+      conversationId,
+      instance: instanceName,
+      found: result.found,
+      added: result.added,
+      ...(result.alreadyElsewhere > 0 ? { alreadyInOtherConversation: result.alreadyElsewhere } : {}),
+      ...(result.ignored > 0 ? { ignored: result.ignored } : {}),
+      ...(result.unknownFormat > 0 ? { unknownFormat: result.unknownFormat } : {}),
+    })
+    return NextResponse.json({ ok: true, added: result.added })
   } catch (err) {
-    console.error('Messages sync error:', err)
+    if (err instanceof EvolutionHistoryError) {
+      log.error('falha ao sincronizar histórico', { conversationId, instance: instanceName, err })
+      return NextResponse.json({ ok: false, added: 0 }, { status: 500 })
+    }
+    log.error('erro inesperado ao sincronizar mensagens', { conversationId, err })
     return NextResponse.json({ ok: true, added: 0 })
   }
 }
