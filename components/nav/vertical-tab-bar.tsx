@@ -2,11 +2,11 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Bell, MessageSquare, Zap, GitBranch, Brain, BookOpen, Images, Sun, Moon, Settings2, PackageSearch } from 'lucide-react'
+import { Bell, MessageSquare, Zap, GitBranch, Brain, BookOpen, Images, Sun, Moon, Settings2, PackageSearch, Plug } from 'lucide-react'
 import { useTheme } from '@/contexts/theme-context'
 import { FEATURES } from '@/lib/features'
 
-export type View = 'chats' | 'notificacoes' | 'gatilhos' | 'fluxos' | 'memoria' | 'galeria' | 'ia' | 'conf-gerais'
+export type View = 'chats' | 'notificacoes' | 'gatilhos' | 'fluxos' | 'memoria' | 'galeria' | 'ia' | 'integracoes' | 'conf-gerais'
 
 interface Props {
   activeTab: View
@@ -22,6 +22,7 @@ const TABS: { id: View; label: string; Icon: React.ElementType }[] = [
   { id: 'memoria',    label: 'Memória',     Icon: BookOpen },
   ...(FEATURES.gallery ? [{ id: 'galeria' as View, label: 'Galeria', Icon: Images }] : []),
   { id: 'ia',         label: 'Config. IA',  Icon: Brain },
+  { id: 'integracoes', label: 'Integrações', Icon: Plug },
   { id: 'conf-gerais' as View, label: 'Conf. Gerais', Icon: Settings2 },
 ]
 

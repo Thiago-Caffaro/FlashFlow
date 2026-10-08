@@ -65,6 +65,32 @@ describe('notifications API', () => {
     expect(tables.notificationActive).toHaveBeenCalledWith('dismissed_at', null)
   })
 
+  it('attaches the Slack state (sent / claimed by) to each notification of the full list', async () => {
+    const notificationLimit = jest.fn().mockResolvedValue({
+      data: [{ id: 'n1', read_at: null }, { id: 'n2', read_at: null }],
+      error: null,
+    })
+    const slackIn = jest.fn().mockResolvedValue({
+      data: [{ notification_id: 'n1', message_ts: '1.1', claimed_by_name: 'Ana', claimed_at: '2026-10-06T12:00:00Z', error: null }],
+      error: null,
+    })
+    const sessionEqHuman = jest.fn().mockResolvedValue({ data: [], error: null })
+    fromMock.mockImplementation((table: string) => {
+      if (table === 'ai_sessions') return { select: jest.fn(() => ({ eq: jest.fn(() => ({ eq: sessionEqHuman })) })) }
+      if (table === 'notifications') {
+        return { select: jest.fn(() => ({ eq: jest.fn(() => ({ is: jest.fn(() => ({ order: jest.fn(() => ({ limit: notificationLimit })) })) })) })) }
+      }
+      if (table === 'slack_messages') return { select: jest.fn(() => ({ in: slackIn })) }
+      throw new Error(`Unexpected table ${table}`)
+    })
+
+    const json = await (await GET(request('/api/notifications?instance=wa-a'))).json()
+
+    expect(slackIn).toHaveBeenCalledWith('notification_id', ['n1', 'n2'])
+    expect(json.notifications[0].slack).toEqual({ posted: true, claimedByName: 'Ana', claimedAt: '2026-10-06T12:00:00Z', error: null })
+    expect(json.notifications[1].slack).toBeNull()
+  })
+
   it('returns only the unread count (no notification rows) for the menu badge', async () => {
     const isUnread = jest.fn().mockResolvedValue({ count: 3, error: null })
     const isActive = jest.fn(() => ({ is: isUnread }))

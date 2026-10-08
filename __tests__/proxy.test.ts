@@ -53,6 +53,16 @@ describe('proxy — webhooks servidor-a-servidor (sem cookie)', () => {
     const res = proxy(requestFor('/api/webhook/whatsapp-cloud'))
     expect(isPassthrough(res)).toBe(true)
   })
+
+  it('libera POST /api/webhook/slack/interactivity sem cookie (autenticado pela assinatura do Slack)', () => {
+    const res = proxy(requestFor('/api/webhook/slack/interactivity'))
+    expect(isPassthrough(res)).toBe(true)
+  })
+
+  it('mantém as rotas administrativas do Slack atrás do cookie', () => {
+    const res = proxy(requestFor('/api/integrations/slack'))
+    expect(isPassthrough(res)).toBe(false)
+  })
 })
 
 describe('proxy — não libera caminhos parecidos por prefixo', () => {

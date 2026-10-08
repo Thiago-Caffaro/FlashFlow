@@ -47,7 +47,7 @@ testadas há muito tempo. Veja a seção **Divergências** no final.
 ```
 app/
   api/            Toda lógica de banco/integração vive aqui (regra do CLAUDE.md, ainda seguida)
-    webhook/      Rotas públicas server-a-servidor (Evolution, WhatsApp Cloud, Shopify)
+    webhook/      Rotas públicas server-a-servidor (Evolution, WhatsApp Cloud, Shopify, Slack)
     flows/        CRUD de fluxos
     accounts/     Gestão de contas/instâncias WhatsApp (QR, pairing, reconexão)
     shopify/      OAuth + callback + produtos
@@ -74,7 +74,7 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 
 - **Um módulo `lib/` por domínio/integração**, nomeado pelo prefixo do domínio: `shopify-*.ts` (11 arquivos), `fulfillment-*.ts` (9 arquivos), `whatsapp-cloud-*.ts` (6 arquivos), `flow-*.ts` (7 arquivos). Não há uma pasta `services/` genérica — o nome do arquivo já é a "camada".
 - **`instance_name` é a chave de particionamento/tenant em quase toda tabela** (`conversations`, `triggers`, `flows`, `flow_media`, `agent_memory_blocks`, `message_variables`, `notifications`, `fulfillment_orders`) — o projeto não é multi-tenant por *cliente final*, é multi-instância por *número de WhatsApp* sob um único admin. Toda rota que recebe um `id` de recurso deve validar posse via `lib/instance-guard.ts` (`belongsToInstance`), nunca confiar em `instance_name` vindo do client — reforçado por uma bateria própria de testes `__tests__/api/*-isolation.test.ts`.
-- **`proxy.ts` é o único gate de autenticação** para `/api/:path*`, por allowlist de pathname exato (nunca prefixo) para rotas públicas: login/verify/logout e os 4 webhooks server-a-servidor (Evolution, WhatsApp Cloud, Shopify orders, Shopify abandoned-checkouts). Cada webhook tem sua própria autenticação interna (HMAC/secret), independente do cookie `ff_auth`.
+- **`proxy.ts` é o único gate de autenticação** para `/api/:path*`, por allowlist de pathname exato (nunca prefixo) para rotas públicas: login/verify/logout e os 5 webhooks server-a-servidor (Evolution, WhatsApp Cloud, Shopify orders, Shopify abandoned-checkouts, interatividade do Slack — este autenticado pela assinatura `v0` do Slack). Cada webhook tem sua própria autenticação interna (HMAC/secret), independente do cookie `ff_auth`.
 - **Rate limiting e dedup são in-memory (`Map`), não Redis/Postgres** — `lib/rate-limit.ts` e `lib/login-rate-limit.ts` documentam explicitamente que isso só é seguro enquanto o deploy for de réplica única.
 - **Segredos sensíveis (chaves de IA, credenciais Shopify/WhatsApp Cloud) são criptografados em repouso** com AES-256-GCM (`lib/ai-crypto.ts`), nunca salvos em texto plano no Supabase.
 - **Fetches de saída para URLs de terceiros (imagens) passam por SSRF guard** (`lib/ssrf-guard.ts`): bloqueia IPs privados/loopback/link-local, exige HTTPS, faz pin de DNS contra a resposta, e valida o conteúdo por sniff de bytes, não pelo header `Content-Type` declarado.
@@ -137,6 +137,15 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 1. Webhooks `checkouts/create|update` (auto-registrados em `lib/shopify-webhook-setup.ts`) → `upsertShopifyAbandonedCheckout` grava o checkout e agenda um `flow_job` `abandoned_checkout_flow` por gatilho `source='shopify_abandoned_checkout'` da conta, para (última atividade na Shopify + `delay_ms`, padrão 60 min). Carrinho sem telefone é ignorado; respeita `shopify_triggers_enabled`.
 2. Conversão: pedido com `checkout_token`/`checkout_id` (`markAbandonedCheckoutsConvertedByOrder`) ou checkout com `completed_at` → `Convertido` + cancela jobs. O worker (`runAbandonedCheckoutTrigger`) reconfere na hora do envio (token e telefone) antes de executar o fluxo com `checkoutId` no contexto (variáveis `{{carrinho.*}}`).
 3. Disparo **manual** continua existindo lado a lado: operador clica "recuperar" → `POST /api/fulfillment/shopify/abandoned-checkouts/{id}/recover` → `sendAbandonedCheckoutRecovery`. Dentro da janela de 24h: texto livre do template da integração. Fora da janela (Cloud API): template aprovado da Meta (`recovery_template_id`, migration 020).
+
+### 6. Atendimento humano via Slack
+
+> Adicionado em 2026-10-06 (v1.14.0). Guia completo e setup em `docs/SLACK.md`.
+
+1. Conexão única (bot token `xoxb-` + Signing Secret) cifrada em `app_settings`, validada com `auth.test` — aba **Integrações**, `app/api/integrations/slack/route.ts`
+2. Node `slackNotify` cria notificação interna `escalation` e posta no canal (do node ou padrão da conta) via `chat.postMessage`; com "Transferir para humano" marca `ai_sessions.requires_human` e encerra o fluxo — `lib/flow-engine.ts`, `lib/slack-notifications.ts`
+3. Encaminhamento opcional (desligado por padrão, por conta, tabela `slack_notification_settings`) de escalonamento da IA, node "Notificar" e "fora da janela de 24h" — `forwardNotificationToSlack`, nunca lança
+4. Botão "Assumir atendimento" → `POST /api/webhook/slack/interactivity` (assinatura `v0`, janela de 5 min) → claim atômico em `slack_messages` → notificação lida + `requires_human` + `chat.update` com quem assumiu
 
 ## Regras de negócio
 

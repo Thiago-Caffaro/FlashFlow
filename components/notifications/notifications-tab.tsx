@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Bell, BellRing, Check, CheckCheck, Loader2, Trash2, UserRoundCheck } from 'lucide-react'
+import { Bell, BellRing, Check, CheckCheck, Hash, Loader2, Trash2, UserRoundCheck } from 'lucide-react'
 import { AppNotification } from '@/types'
 
 interface Props {
@@ -159,6 +159,20 @@ export default function NotificationsTab({ instanceName, onUnreadCountChange }: 
                       <time className="shrink-0 text-[11px] text-[#8696a0]">{formatDate(notification.created_at)}</time>
                     </div>
                     <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-[#54656f] dark:text-[#aebac1]">{notification.message}</p>
+                    {notification.slack && (
+                      <p className={`mt-1.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                        notification.slack.error
+                          ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400'
+                          : 'bg-[#611f69]/10 text-[#611f69] dark:bg-[#611f69]/25 dark:text-[#e9d5ff]'
+                      }`}>
+                        <Hash size={11} />
+                        {notification.slack.error
+                          ? 'Falha ao avisar no Slack'
+                          : notification.slack.claimedByName
+                            ? `Assumido no Slack por ${notification.slack.claimedByName}`
+                            : 'Enviado ao Slack · aguardando alguém assumir'}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     {!notification.read_at && (

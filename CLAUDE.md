@@ -41,10 +41,11 @@ compartilhadas entre agentes (não só Claude), veja também
 ```
 app/
   api/            Toda lógica de banco/integração vive aqui — nunca no componente
-    webhook/      Rotas públicas server-a-servidor (Evolution, WhatsApp Cloud, Shopify) — únicas fora do gate de auth em proxy.ts
+    webhook/      Rotas públicas server-a-servidor (Evolution, WhatsApp Cloud, Shopify, interatividade do Slack) — únicas fora do gate de auth em proxy.ts
     flows/        CRUD de fluxos
     accounts/     Contas/instâncias WhatsApp (QR, pairing, reconexão)
     shopify/, fulfillment/   Integrações de e-commerce e envio
+    integrations/ Slack (conexão, canais, encaminhamentos por conta) — guia em docs/SLACK.md
     ai-keys/, ai-sessions/, memory-blocks/   Config e estado de IA
   fulfillment/, order-preview/, catalog-preview/, diagnostics/   Rotas de UI fora do chat principal
 components/
@@ -140,7 +141,7 @@ NEXT_PUBLIC_FEATURE_AI_SESSIONS=
 NEXT_PUBLIC_FEATURE_SWITCH_CASE=
 ```
 
-Credenciais por conta/integração (Shopify shop secret, credenciais
+Credenciais por conta/integração (Shopify shop secret, bot token e signing secret do Slack, credenciais
 FenixCOD, chaves de provedor de IA) **não** são env vars — são
 configuradas pelo painel web e guardadas cifradas no Supabase
 (`app_settings`, `ai_provider_keys`). Ver `lib/app-settings.ts` e

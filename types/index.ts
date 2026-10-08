@@ -68,6 +68,7 @@ export type FlowNodeType =
   | 'start'
   | 'sendMessage'
   | 'notify'
+  | 'slackNotify'
   | 'condition'
   | 'switchCase'
   | 'aiAssistant'
@@ -131,6 +132,14 @@ export interface FlowNodeData {
   combineImageAndMessage?: boolean
   // notification
   notificationMessage?: string
+  // slackNotify — canal vazio usa o canal padrão da conta (aba Integrações)
+  slackChannelId?: string
+  slackChannelName?: string
+  slackTitle?: string
+  slackMessage?: string
+  slackMention?: SlackMention
+  // true: encerra o fluxo e para a IA da conversa (transferência para humano)
+  slackHandoff?: boolean
   // condition
   conditionType?: 'contains' | 'exact'
   conditionValue?: string
@@ -330,6 +339,37 @@ export interface MessageVariable {
 
 export type NotificationType = 'flow' | 'escalation'
 
+// ─── Slack ────────────────────────────────────────────────────────────────────
+
+export type SlackMention = 'none' | 'here' | 'channel'
+export type SlackMessageSource = 'flow_node' | 'ai_escalation' | 'flow_notify' | 'outside_window' | 'test'
+
+export interface SlackNotificationSettings {
+  instance_name: string
+  channel_id: string | null
+  channel_name: string | null
+  mention: SlackMention
+  forward_ai_escalation: boolean
+  forward_flow_notify: boolean
+  forward_outside_window: boolean
+}
+
+export interface SlackChannel {
+  id: string
+  name: string
+  is_private: boolean
+  is_member: boolean
+}
+
+export interface SlackConnectionStatus {
+  connected: boolean
+  teamName: string | null
+  botName: string | null
+  hasSigningSecret: boolean
+  interactivityUrl: string | null
+  error: string | null
+}
+
 export interface AppNotification {
   id: string
   instance_name: string
@@ -344,6 +384,15 @@ export interface AppNotification {
   read_at: string | null
   dismissed_at: string | null
   created_at: string
+  // Preenchido pela API quando a notificação foi (ou tentou ser) enviada ao Slack
+  slack?: AppNotificationSlackState | null
+}
+
+export interface AppNotificationSlackState {
+  posted: boolean
+  claimedByName: string | null
+  claimedAt: string | null
+  error: string | null
 }
 
 export interface ShopifyAbandonedCheckout {

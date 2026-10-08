@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isAdminRequest } from '@/lib/server-auth'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import type { AppNotificationSlackState } from '@/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,6 +49,32 @@ async function syncEscalationNotifications(instanceName: string) {
   if (error) throw new Error(error.message)
 }
 
+// Estado no Slack de cada notificação (enviada, assumida por quem, falha).
+// Informativo: se a consulta falhar, a lista sai sem esse dado, nunca vazia.
+async function attachSlackState<T extends { id: string }>(notifications: T[]): Promise<Array<T & { slack: AppNotificationSlackState | null }>> {
+  const withoutSlack = notifications.map((notification) => ({ ...notification, slack: null }))
+  if (notifications.length === 0) return withoutSlack
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('slack_messages')
+      .select('notification_id, message_ts, claimed_by_name, claimed_at, error')
+      .in('notification_id', notifications.map((notification) => notification.id))
+    if (error || !data) return withoutSlack
+    const byNotification = new Map<string, AppNotificationSlackState>()
+    for (const row of data) {
+      byNotification.set(String(row.notification_id), {
+        posted: Boolean(row.message_ts),
+        claimedByName: row.claimed_by_name ?? null,
+        claimedAt: row.claimed_at ?? null,
+        error: row.error ?? null,
+      })
+    }
+    return notifications.map((notification) => ({ ...notification, slack: byNotification.get(notification.id) ?? null }))
+  } catch {
+    return withoutSlack
+  }
+}
+
 export async function GET(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   const instanceName = req.nextUrl.searchParams.get('instance')?.trim()
@@ -80,7 +107,7 @@ export async function GET(req: NextRequest) {
       .limit(200)
 
     if (error) throw new Error(error.message)
-    const notifications = data ?? []
+    const notifications = await attachSlackState(data ?? [])
     const unreadCount = notifications.filter((notification) => !notification.read_at).length
     return NextResponse.json({ ok: true, notifications, unreadCount })
   } catch (error) {
