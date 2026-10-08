@@ -1,0 +1,7 @@
+# Dump do schema de produção (gerado localmente, não versionado)
+prod-schema.sql
+# Estado gerado pelo Supabase CLI local
+supabase/.branches
+supabase/.temp
+.env.local-env
+supabase/schema.sql

@@ -16,6 +16,7 @@ import { loadWhatsAppTemplateById } from './whatsapp-templates'
 import { dispatchSendTemplate } from './whatsapp-dispatch'
 import { buildMessageTemplateValues, getMessagePlaceholders, renderMessageTemplate } from './message-template'
 import { supabaseAdmin } from './supabase-admin'
+import { recordOutboundMessage } from './outbound-message'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import { normalizePhone } from './phone'
 import { syncShopifyProductsForIntegration } from './shopify-products-service'
@@ -1218,7 +1219,7 @@ export async function sendAbandonedCheckoutRecovery(checkoutId: string) {
       throw new OutsideMessagingWindowError(conversationId)
     }
 
-    await supabaseAdmin.from('messages').insert({
+    await recordOutboundMessage({
       conversation_id: conversationId,
       wa_message_id: waMessageId,
       content: persistedContent,

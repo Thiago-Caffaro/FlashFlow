@@ -329,9 +329,13 @@ describe('POST /api/webhook/whatsapp-cloud', () => {
     expect(insertArg.content).toBe('https://supabase.example/media/foto.jpg')
     expect(insertArg.type).toBe('image')
 
-    const convCall = supabaseMock.from.mock.results.find((r) => r.value?.upsert)
-    const upsertArg = (convCall!.value.upsert as jest.Mock).mock.calls[0][0]
-    expect(upsertArg.last_message).toBe('[imagem]')
+    // A prévia só é gravada depois da mensagem (update), nunca no upsert.
+    const convUpsert = supabaseMock.from.mock.results.find((r) => r.value?.upsert)
+    expect((convUpsert!.value.upsert as jest.Mock).mock.calls[0][0]).not.toHaveProperty('last_message')
+    const previewArg = supabaseMock.from.mock.results
+      .flatMap((r) => ((r.value?.update as jest.Mock | undefined)?.mock?.calls ?? []).map((call) => call[0]))
+      .find((arg) => arg && 'last_message' in arg)
+    expect(previewArg.last_message).toBe('[imagem]')
   })
 
   it('falls back to the caption, then to a placeholder, when media resolution fails', async () => {
@@ -476,9 +480,15 @@ describe('POST /api/webhook/whatsapp-cloud', () => {
       }],
     }
 
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
     const res = await POST(buildRequest(payload))
 
     expect(res.status).toBe(200)
+    // O motivo da Meta precisa ficar no log — antes o status só virava "failed".
+    const reason = warnSpy.mock.calls.map((call) => String(call[0])).find((line) => line.includes('Meta não entregou a mensagem'))
+    expect(reason).toContain('code=130497')
+    expect(reason).toContain('restricted from messaging users in this country')
+    warnSpy.mockRestore()
     expect(updateMock).toHaveBeenCalledWith({ status: 'failed' })
     expect(updateEqMock).toHaveBeenCalledWith(
       'wa_message_id',
@@ -621,5 +631,30 @@ describe('POST /api/webhook/whatsapp-cloud — account_update', () => {
     expect(logged).toContain('SYSTEM')
     expect(supabaseMock.from).not.toHaveBeenCalled()
     warnSpy.mockRestore()
+  })
+})
+
+describe('POST /api/webhook/whatsapp-cloud — conteúdo que não é mensagem', () => {
+  it('reação não vira mensagem "[mídia]" nem troca a prévia da conversa', async () => {
+    const inserted: unknown[] = []
+    supabaseMock.from.mockImplementation((table: string) => {
+      if (table === 'whatsapp_cloud_credentials') {
+        return { select: jest.fn().mockReturnValue({ eq: jest.fn().mockReturnValue({ maybeSingle: jest.fn().mockResolvedValue({ data: { instance_name: 'wa-1', phone_number_id: '123456' }, error: null }) }) }) }
+      }
+      if (table === 'messages') {
+        return {
+          select: jest.fn().mockReturnValue({ eq: jest.fn().mockReturnValue({ maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }) }) }),
+          insert: jest.fn((row: unknown) => { inserted.push(row); return Promise.resolve({ error: null }) }),
+        }
+      }
+      throw new Error(`tabela inesperada: ${table}`)
+    })
+
+    const res = await POST(buildRequest(buildCloudPayload({
+      messages: [{ from: '5511988887777', id: 'wamid.REACT1', type: 'reaction', reaction: { message_id: 'wamid.X', emoji: '👍' } }],
+    })))
+
+    expect(res.status).toBe(200)
+    expect(inserted).toHaveLength(0)
   })
 })

@@ -20,6 +20,8 @@ import { OrderContextPendingError, resolveFlowOrder, resolveMessageTemplateConte
 import { enqueueFlowMessageResumeJob } from './flow-jobs'
 import { updateFulfillmentOrderState } from './fulfillment-order-state'
 import { isOrderStateField, isOrderStateValue } from './order-state'
+import { recordOutboundMessage } from './outbound-message'
+import { createLogger, isLogLevelEnabled } from './logger'
 import {
   FORWARDABLE_NOTIFICATION_COLUMNS,
   forwardNotificationToSlack,
@@ -58,14 +60,19 @@ export interface FlowContext {
 
 // ─── Logger ───────────────────────────────────────────────────────────────────
 
+// Detalhe passo a passo (cada node, cada chamada de IA com o corpo da
+// resposta, prévias de mensagens de clientes) só com LOG_LEVEL=debug — em
+// produção isso era dezenas de linhas por mensagem, com conteúdo de conversa.
+// Erros sempre aparecem; o resumo de cada execução sai em info (engineLog).
+const engineLog = createLogger('flow-engine')
+
 function log(tag: string, ...args: unknown[]) {
-  const ts = new Date().toISOString()
-  console.log(`[FlowEngine][${ts}] ${tag}`, ...args)
+  if (!isLogLevelEnabled('debug')) return
+  console.log(`[flow-engine] ${tag}`, ...args)
 }
 
 function logError(tag: string, ...args: unknown[]) {
-  const ts = new Date().toISOString()
-  console.error(`[FlowEngine][${ts}] ❌ ${tag}`, ...args)
+  console.error(`[flow-engine] ${tag}`, ...args)
 }
 
 // ─── WhatsApp send ────────────────────────────────────────────────────────────
@@ -94,7 +101,7 @@ export async function sendWhatsApp(ctx: FlowContext, text: string) {
     waMessageId = result.waMessageId
   }
 
-  await supabase.from('messages').insert({
+  await recordOutboundMessage({
     conversation_id: ctx.conversationId,
     wa_message_id: waMessageId,
     content: text,
@@ -147,7 +154,7 @@ export async function sendWhatsAppReplyOptions(
     return 'text'
   }
 
-  await supabase.from('messages').insert({
+  await recordOutboundMessage({
     conversation_id: ctx.conversationId,
     wa_message_id: result.waMessageId,
     content: options.thumbnailUrl
@@ -178,7 +185,7 @@ export async function sendWhatsAppImage(
     waMessageId = result.waMessageId
   }
 
-  await supabase.from('messages').insert({
+  await recordOutboundMessage({
     conversation_id: ctx.conversationId,
     wa_message_id: waMessageId,
     content: normalizedCaption ? `${imageUrl}\n${normalizedCaption}` : imageUrl,
@@ -252,7 +259,7 @@ export async function sendWhatsAppTemplate(
     waMessageId = result.waMessageId
   }
 
-  await supabase.from('messages').insert({
+  await recordOutboundMessage({
     conversation_id: ctx.conversationId,
     wa_message_id: waMessageId,
     content: renderedBody,
@@ -1379,6 +1386,7 @@ export async function checkActiveSandboxFlowRunForRealInstance(instanceName: str
 
 export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId?: string | null) {
   log(`executeFlow start`, { flowId, from: ctx.remoteJid, message: ctx.incomingMessage.slice(0, 80) })
+  const startedAt = Date.now()
 
   const { data: flow, error } = await supabase
     .from('flows')
@@ -2043,5 +2051,12 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
   if (activeFlowRunId) {
     await supabase.from('flow_runs').delete().eq('id', activeFlowRunId)
   }
-  log(`executeFlow done`, { flowId, stepsExecuted: visited.size })
+  engineLog.info('fluxo executado', {
+    flowId,
+    instance: ctx.instanceName,
+    conversationId: ctx.conversationId,
+    steps: visited.size,
+    resumed: Boolean(resumeNodeId),
+    ms: Date.now() - startedAt,
+  })
 }

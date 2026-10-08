@@ -19,7 +19,11 @@ import {
   verifyCloudWebhookSignature,
 } from '@/lib/whatsapp-cloud-webhook-auth'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { createLogger } from '@/lib/logger'
+import { UNIQUE_VIOLATION } from '@/lib/outbound-message'
 import type { FlowReplyButton } from '@/types'
+
+const log = createLogger('webhook-whatsapp-cloud')
 
 // Status que a Meta manda para mensagens SAÍDAS por nós (não confundir com o
 // status de mensagens recebidas, que não existe — toda mensagem inbound já
@@ -41,11 +45,20 @@ const MEDIA_PLACEHOLDERS: Record<string, string> = {
   sticker: '[figurinha]',
 }
 
+// Tipos da Meta que não são conteúdo de chat: reação a outra mensagem,
+// avisos de sistema (troca de número etc.) e "unsupported" (tipo que a
+// própria Meta não entrega pela API). Antes viravam "[mídia]" e trocavam a
+// prévia da conversa.
+const NON_CONTENT_TYPES = new Set(['reaction', 'system', 'unsupported', 'ephemeral', 'request_welcome'])
+
+type CloudContent = { content: string; type: string } | { ignore: string }
+
 async function extractContent(
   message: Record<string, unknown>,
   credentials: WhatsAppCloudCredentialsRow
-): Promise<{ content: string; type: string }> {
+): Promise<CloudContent> {
   const msgType = typeof message.type === 'string' ? message.type : 'unknown'
+  if (NON_CONTENT_TYPES.has(msgType)) return { ignore: msgType }
   const interactiveReply = extractCloudInteractiveReplyText(message)
   if (interactiveReply) {
     return { content: interactiveReply, type: 'text' }
@@ -61,16 +74,49 @@ async function extractContent(
     const mediaUrl = mediaId ? await resolveAndStoreCloudMedia(mediaId, credentials) : null
     return { content: mediaUrl ?? (caption || '[imagem]'), type: 'image' }
   }
+  if (msgType === 'document') {
+    const documentNode = message.document as Record<string, unknown> | undefined
+    const name = typeof documentNode?.filename === 'string' && documentNode.filename.trim() ? documentNode.filename : 'Documento'
+    return { content: `📄 ${name}`, type: 'media' }
+  }
+  if (msgType === 'location') {
+    const location = message.location as Record<string, unknown> | undefined
+    const label = typeof location?.name === 'string' ? location.name : typeof location?.address === 'string' ? location.address : ''
+    return { content: `📍 Localização${label ? `: ${label}` : ''}`, type: 'media' }
+  }
+  if (msgType === 'contacts') return { content: '👤 Contato compartilhado', type: 'media' }
   const placeholder = MEDIA_PLACEHOLDERS[msgType]
-  return placeholder ? { content: placeholder, type: msgType } : { content: '[mídia]', type: 'media' }
+  if (placeholder) return { content: placeholder, type: msgType }
+  log.warn('tipo de mensagem desconhecido — salvo como [mídia]', { instance: credentials.instance_name, msgType }, { throttleKey: `unknown:${msgType}` })
+  return { content: '[mídia]', type: 'media' }
 }
 
-async function applyStatusUpdate(status: Record<string, unknown>): Promise<void> {
+// A Meta manda o motivo de uma entrega que falhou em errors[] (ex: 131047
+// fora da janela de 24h, 131026 número sem WhatsApp, 131049 limite de
+// marketing). Antes o status só virava "failed", sem nenhum porquê.
+function describeCloudStatusError(status: Record<string, unknown>): Record<string, unknown> {
+  const errors = Array.isArray(status.errors) ? status.errors as Array<Record<string, unknown>> : []
+  const first = errors[0] ?? {}
+  const errorData = first.error_data && typeof first.error_data === 'object' ? first.error_data as Record<string, unknown> : {}
+  return {
+    code: first.code,
+    title: first.title,
+    details: errorData.details ?? first.message,
+  }
+}
+
+async function applyStatusUpdate(instanceName: string, status: Record<string, unknown>): Promise<void> {
   const waMessageId = typeof status.id === 'string' ? status.id : ''
   const rawStatus = typeof status.status === 'string' ? status.status : ''
   const mapped = CLOUD_STATUS_MAP[rawStatus]
   if (!waMessageId || !mapped) return
-  await supabaseAdmin.from('messages').update({ status: mapped }).eq('wa_message_id', waMessageId)
+  if (mapped === 'failed') {
+    log.warn('Meta não entregou a mensagem', { instance: instanceName, msgId: waMessageId, ...describeCloudStatusError(status) })
+  }
+  const { error } = await supabaseAdmin.from('messages').update({ status: mapped }).eq('wa_message_id', waMessageId)
+  if (error) {
+    log.warn('falha ao atualizar status de entrega', { instance: instanceName, msgId: waMessageId, status: mapped, err: error }, { throttleKey: `status-update:${error.code}` })
+  }
 }
 
 async function processInboundMessage(
@@ -83,12 +129,14 @@ async function processInboundMessage(
   const fromDigits = typeof message.from === 'string' ? message.from : ''
   if (!waMessageId || !fromDigits) return
 
-  // Dedup — a Meta pode reentregar o mesmo evento.
-  const { data: existingMsg } = await supabaseAdmin
+  // Dedup — a Meta pode reentregar o mesmo evento. O índice único em
+  // wa_message_id é a garantia de verdade; esta consulta poupa o download.
+  const { data: existingMsg, error: dedupError } = await supabaseAdmin
     .from('messages')
     .select('id')
     .eq('wa_message_id', waMessageId)
     .maybeSingle()
+  if (dedupError) log.warn('falha na checagem de duplicidade — seguindo; o índice único protege', { instance: instanceName, msgId: waMessageId, err: dedupError })
   if (existingMsg) return
 
   // Prefere contacts[].wa_id (valor canônico) a message.from — a Meta
@@ -99,8 +147,15 @@ async function processInboundMessage(
   const profile = contactEntry?.profile as Record<string, unknown> | undefined
   const contactName = typeof profile?.name === 'string' ? profile.name : null
 
-  const { content, type } = await extractContent(message, credentials)
+  const extracted = await extractContent(message, credentials)
+  if ('ignore' in extracted) {
+    log.debug('mensagem sem conteúdo de chat ignorada', { instance: instanceName, msgId: waMessageId, msgType: extracted.ignore })
+    return
+  }
+  const { content, type } = extracted
 
+  // 1) Conversa sem mexer na prévia — a prévia só muda depois que a
+  //    mensagem existe (antes, falha no insert deixava prévia sem mensagem).
   const { data: conversation, error: convError } = await supabaseAdmin
     .from('conversations')
     .upsert(
@@ -109,8 +164,6 @@ async function processInboundMessage(
         instance_name: instanceName,
         contact_phone: remoteJid,
         ...(contactName ? { contact_name: contactName } : {}),
-        last_message: type === 'image' ? '[imagem]' : content,
-        last_message_at: new Date().toISOString(),
       },
       { onConflict: 'wa_id, instance_name' }
     )
@@ -118,15 +171,11 @@ async function processInboundMessage(
     .single()
 
   if (convError || !conversation) {
-    console.error('[webhook-whatsapp-cloud] erro ao upsert conversa:', convError?.message)
-    return
+    // Lança para o POST devolver 500: a Meta reentrega o evento.
+    throw new Error(`falha ao gravar conversa: ${convError?.message ?? 'sem retorno'}`)
   }
 
-  await supabaseAdmin
-    .from('conversations')
-    .update({ unread_count: (conversation.unread_count ?? 0) + 1 })
-    .eq('id', conversation.id)
-
+  // 2) Mensagem.
   const { error: msgError } = await supabaseAdmin.from('messages').insert({
     conversation_id: conversation.id,
     wa_message_id: waMessageId,
@@ -137,10 +186,25 @@ async function processInboundMessage(
     sender_type: null,
   })
   if (msgError) {
-    console.error('[webhook-whatsapp-cloud] erro ao inserir mensagem:', msgError.message)
-    return
+    if (msgError.code === UNIQUE_VIOLATION) {
+      log.debug('mensagem já gravada por entrega concorrente', { instance: instanceName, msgId: waMessageId })
+      return
+    }
+    throw new Error(`falha ao gravar mensagem ${waMessageId}: ${msgError.code ?? ''} ${msgError.message}`)
   }
-  console.log(`[webhook-whatsapp-cloud] mensagem salva conv="${conversation.id}" content="${content.slice(0, 60)}"`)
+
+  // 3) Prévia + não lidas, só agora que a mensagem existe.
+  const { error: previewError } = await supabaseAdmin
+    .from('conversations')
+    .update({
+      last_message: type === 'image' ? '[imagem]' : content,
+      last_message_at: new Date().toISOString(),
+      unread_count: (conversation.unread_count ?? 0) + 1,
+    })
+    .eq('id', conversation.id)
+  if (previewError) log.warn('mensagem gravada, mas a prévia da conversa não foi atualizada', { instance: instanceName, conversationId: conversation.id, err: previewError })
+
+  log.info('mensagem gravada', { instance: instanceName, conversationId: conversation.id, msgId: waMessageId, direction: 'in', type })
 
   if (type !== 'text') return
 
@@ -189,7 +253,8 @@ async function processInboundMessage(
         }
       }
     } catch (err) {
-      console.error('[webhook-whatsapp-cloud] session/trigger error:', err)
+      // Roda depois da resposta HTTP — sem log, falha na automação seria invisível.
+      log.error('falha na automação após mensagem recebida', { instance: instanceName, conversationId: conversation.id, msgId: waMessageId, err })
     }
   })()
 }
@@ -201,7 +266,7 @@ async function processMessagesChange(value: Record<string, unknown>): Promise<vo
 
   const credentials = await loadCloudCredentialsByPhoneNumberId(phoneNumberId)
   if (!credentials) {
-    console.error(`[webhook-whatsapp-cloud] phone_number_id="${phoneNumberId}" sem conta correspondente`)
+    log.error('evento de um número sem conta cadastrada — mensagens descartadas', { phoneNumberId }, { throttleKey: `no-account:${phoneNumberId}` })
     return
   }
   const instanceName = credentials.instance_name
@@ -211,7 +276,7 @@ async function processMessagesChange(value: Record<string, unknown>): Promise<vo
   const statuses = Array.isArray(value.statuses) ? value.statuses as Array<Record<string, unknown>> : []
 
   for (const status of statuses) {
-    await applyStatusUpdate(status)
+    await applyStatusUpdate(instanceName, status)
   }
   for (const message of messages) {
     await processInboundMessage(instanceName, message, contacts, credentials)
@@ -257,14 +322,12 @@ async function processTemplateStatusChange(change: WebhookChange): Promise<void>
       event,
       reason: typeof change.value.reason === 'string' ? change.value.reason : null,
     })
-    console.log(
-      `[webhook-whatsapp-cloud] template status event="${event}" name="${String(change.value.message_template_name ?? '')}" resultado=${result}`
-    )
+    log.info('status de template atualizado', { event, name: String(change.value.message_template_name ?? ''), result })
     // Template criado no Gerenciador do WhatsApp depois da última
     // sincronização: ainda não existe aqui, então busca da Meta.
     if (result === 'unknown') await syncTemplatesForWaba(change.entryId)
   } catch (error) {
-    console.error('[webhook-whatsapp-cloud] falha ao processar status de template:', error)
+    log.error('falha ao processar status de template', { err: error })
   }
 }
 
@@ -275,9 +338,12 @@ function logAccountUpdate(change: WebhookChange): void {
   const info = change.value.disconnection_info && typeof change.value.disconnection_info === 'object'
     ? change.value.disconnection_info as Record<string, unknown>
     : null
-  console.warn(
-    `[webhook-whatsapp-cloud] account_update event="${String(change.value.event ?? '')}" waba="${change.entryId}" reason="${String(info?.reason ?? '')}" initiated_by="${String(info?.initiated_by ?? '')}"`
-  )
+  log.warn('account_update da Meta', {
+    event: String(change.value.event ?? ''),
+    waba: change.entryId,
+    reason: String(info?.reason ?? ''),
+    initiatedBy: String(info?.initiated_by ?? ''),
+  })
 }
 
 // GET — handshake de verificação exigido pela Meta ao registrar o webhook no
@@ -298,16 +364,15 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
 
-  // Log incondicional antes de qualquer verificação — sem isso, uma rejeição
-  // de assinatura (401) não deixa rastro nenhum, indistinguível de "a
-  // requisição nunca chegou" na hora de diagnosticar problemas de entrega.
+  // Todo POST em debug (inclui os 3 status — enviado/entregue/lido — de
+  // cada mensagem que sai). A rejeição carrega o mesmo contexto em warn,
+  // para "a requisição chegou mas foi recusada" nunca ficar sem rastro.
   const hasSignatureHeader = Boolean(req.headers.get(WHATSAPP_CLOUD_SIGNATURE_HEADER))
-  console.log(
-    `[webhook-whatsapp-cloud] POST recebido bodyLen=${rawBody.length} hasSignatureHeader=${hasSignatureHeader} secretConfigured=${Boolean(process.env.WHATSAPP_CLOUD_APP_SECRET)}`
-  )
+  const secretConfigured = Boolean(process.env.WHATSAPP_CLOUD_APP_SECRET)
+  log.debug('POST recebido', { bodyLen: rawBody.length, hasSignatureHeader, secretConfigured })
 
   if (!verifyCloudWebhookSignature(rawBody, req.headers.get(WHATSAPP_CLOUD_SIGNATURE_HEADER))) {
-    console.error('[webhook-whatsapp-cloud] assinatura inválida ou ausente — rejeitando com 401')
+    log.warn('assinatura inválida ou ausente — rejeitado com 401', { bodyLen: rawBody.length, hasSignatureHeader, secretConfigured }, { throttleKey: 'bad-signature' })
     return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -330,7 +395,8 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true })
   } catch (err) {
-    console.error('[webhook-whatsapp-cloud] erro:', err)
+    // 500 faz a Meta reentregar o lote; o que já foi gravado é deduplicado.
+    log.error('falha ao processar evento — devolvido 500 para a Meta reentregar', { err })
     return NextResponse.json({ ok: false }, { status: 500 })
   }
 }

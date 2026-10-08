@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { importEvolutionHistory } from '@/lib/evolution-history'
+import { createLogger } from '@/lib/logger'
+
+const log = createLogger('sync-initial')
 
 export const dynamic = 'force-dynamic'
 
@@ -129,110 +133,6 @@ async function getInstanceId(instanceName: string): Promise<string | null> {
   return (data as { id?: string } | null)?.id ?? null
 }
 
-// ─── messages sync for one conversation ───────────────────────────────────────
-
-const STATUS_MAP: Record<string, string> = {
-  READ: 'read', PLAYED: 'read',
-  DELIVERY_ACK: 'delivered',
-  SERVER_ACK: 'sent', PENDING: 'sent',
-}
-
-interface EvoMsg {
-  key: { id: string; fromMe: boolean; remoteJid: string }
-  message: Record<string, unknown> | null
-  messageType: string
-  messageTimestamp: number
-  status: string | null
-}
-
-function extractContent(row: EvoMsg): { content: string; type: string } {
-  const msg = row.message ?? {}
-  switch (row.messageType) {
-    case 'conversation':
-    case 'extendedTextMessage': {
-      const text =
-        (msg.conversation as string) ||
-        ((msg.extendedTextMessage as { text?: string } | undefined)?.text ?? '')
-      return { content: text || '[texto]', type: 'text' }
-    }
-    case 'imageMessage': {
-      const caption = (msg.imageMessage as { caption?: string } | undefined)?.caption ?? ''
-      return { content: caption || '[imagem]', type: 'image' }
-    }
-    case 'videoMessage': {
-      const caption = (msg.videoMessage as { caption?: string } | undefined)?.caption ?? ''
-      return { content: caption || '[vídeo]', type: 'video' }
-    }
-    case 'audioMessage':
-    case 'pttMessage':
-      return { content: '[áudio]', type: 'audio' }
-    case 'stickerMessage':
-      return { content: '[figurinha]', type: 'sticker' }
-    case 'documentMessage': {
-      const doc = msg.documentMessage as { title?: string; fileName?: string } | undefined
-      return { content: doc?.title ?? doc?.fileName ?? '[documento]', type: 'media' }
-    }
-    default:
-      return { content: '[mídia]', type: 'media' }
-  }
-}
-
-async function syncConversationMessages(
-  conversationId: string,
-  instanceId: string,
-  remoteJid: string
-): Promise<void> {
-  const { data: evoMessages, error } = await supabase
-    .from('Message')
-    .select('key, message, messageType, messageTimestamp, status')
-    .eq('instanceId', instanceId)
-    .filter('key->>remoteJid', 'eq', remoteJid)
-    .order('messageTimestamp', { ascending: false })
-    .limit(30)
-
-  if (error || !evoMessages?.length) return
-
-  const waIds = evoMessages
-    .map((m) => (m.key as { id?: string })?.id)
-    .filter(Boolean) as string[]
-
-  const { data: existing } = await supabase
-    .from('messages')
-    .select('wa_message_id')
-    .eq('conversation_id', conversationId)
-    .in('wa_message_id', waIds)
-
-  const existingIds = new Set((existing ?? []).map((m) => m.wa_message_id))
-
-  const toInsert = evoMessages
-    .filter((m) => {
-      const id = (m.key as { id?: string })?.id
-      return id && !existingIds.has(id)
-    })
-    .map((m) => {
-      const key = m.key as { id: string; fromMe: boolean }
-      const { content, type } = extractContent(m as EvoMsg)
-      const status = STATUS_MAP[m.status ?? ''] ?? (key.fromMe ? 'sent' : 'delivered')
-      const ts =
-        m.messageTimestamp > 0
-          ? new Date(m.messageTimestamp * 1000).toISOString()
-          : new Date().toISOString()
-      return {
-        conversation_id: conversationId,
-        wa_message_id: key.id,
-        content, type,
-        direction: key.fromMe ? 'outbound' : 'inbound',
-        status,
-        created_at: ts,
-      }
-    })
-    .sort((a, b) => a.created_at.localeCompare(b.created_at))
-
-  if (toInsert.length > 0) {
-    await supabase.from('messages').insert(toInsert)
-  }
-}
-
 // ─── background sync runner ───────────────────────────────────────────────────
 
 async function runSync(instanceName: string) {
@@ -310,6 +210,7 @@ async function runSync(instanceName: string) {
 
     const convMap = new Map((convRows ?? []).map((r) => [r.id, r.wa_id as string]))
 
+    const historyTotals = { added: 0, alreadyElsewhere: 0, unknownFormat: 0, failed: 0 }
     for (let i = 0; i < conversationIds.length; i++) {
       if (progress.get(instanceName)?.cancelled) break
 
@@ -317,13 +218,23 @@ async function runSync(instanceName: string) {
       const waId = convMap.get(convId)
 
       if (instanceId && waId) {
-        await syncConversationMessages(convId, instanceId, waId)
+        // Uma conversa com falha não interrompe as outras — mas é contada e
+        // logada, em vez de sumir como antes (insert sem checagem de erro).
+        try {
+          const result = await importEvolutionHistory({ conversationId: convId, instanceId, remoteJid: waId })
+          historyTotals.added += result.added
+          historyTotals.alreadyElsewhere += result.alreadyElsewhere
+          historyTotals.unknownFormat += result.unknownFormat
+        } catch (error) {
+          historyTotals.failed += 1
+          log.warn('falha ao importar histórico de uma conversa', { instance: instanceName, conversationId: convId, err: error }, { throttleKey: `initial:${instanceName}` })
+        }
       }
 
       progress.set(instanceName, { stage: 'messages', total, done: i + 1, createdConversationIds: conversationIds })
     }
 
-    console.log(`[SYNC initial] concluído: ${total} conversa(s) sincronizadas`)
+    log.info('sincronização inicial concluída', { instance: instanceName, conversations: total, ...historyTotals })
     progress.set(instanceName, { stage: 'done', total, done: total })
   } catch (err) {
     console.error(`[SYNC initial] erro:`, err)

@@ -99,12 +99,13 @@ function mockSupabaseSuccess(conversation = { id: 'conv-123' }) {
       }
     }
     if (table === 'messages') {
+      // Encadeamento genérico: checagem de duplicidade e busca de mensagem
+      // pendente (eco de envio) usam filtros diferentes; nenhuma acha nada.
+      const query: Record<string, jest.Mock> = {}
+      for (const method of ['eq', 'is', 'gte', 'order', 'limit']) query[method] = jest.fn(() => query)
+      query.maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null })
       return {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
-          }),
-        }),
+        select: jest.fn(() => query),
         insert: jest.fn().mockResolvedValue({ error: null }),
       }
     }
@@ -162,10 +163,12 @@ function mockSupabaseFailure() {
 
 /** Simula Evolution API retornando base64 para download de mídia */
 function mockMediaDownloadSuccess(base64 = 'abc123', mimetype = 'image/jpeg') {
+  // fetchEvolution lê o corpo via response.text(), como numa resposta HTTP real
   fetchMock.mockResolvedValue({
     ok: true,
+    status: 200,
     json: jest.fn().mockResolvedValue({ base64, mimetype }),
-    text: jest.fn().mockResolvedValue(''),
+    text: jest.fn().mockResolvedValue(JSON.stringify({ base64, mimetype })),
   })
 }
 
@@ -173,6 +176,7 @@ function mockMediaDownloadSuccess(base64 = 'abc123', mimetype = 'image/jpeg') {
 function mockMediaDownloadFailure() {
   fetchMock.mockResolvedValue({
     ok: false,
+    status: 400,
     json: jest.fn().mockResolvedValue({}),
     text: jest.fn().mockResolvedValue('error'),
   })
@@ -182,6 +186,17 @@ function mockMediaDownloadFailure() {
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { POST } = require('@/app/api/webhook/evolution/route')
+
+/** Mock do método chamado na tabela (independe da ordem das consultas). */
+function tableCall(table: string, method: string): jest.Mock {
+  const calls = supabaseMock.from.mock.calls as string[][]
+  for (let i = 0; i < calls.length; i += 1) {
+    if (calls[i][0] !== table) continue
+    const mock = supabaseMock.from.mock.results[i].value?.[method] as jest.Mock | undefined
+    if (mock && mock.mock.calls.length > 0) return mock
+  }
+  throw new Error('nenhuma chamada ' + table + '.' + method)
+}
 
 // ─── Testes ───────────────────────────────────────────────────────────────────
 
@@ -430,7 +445,7 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // messages.dedup(0) → conversations.upsert(1) + conversations.update(2) → messages.insert(3)
-    const upsertCall = supabaseMock.from.mock.results[1].value.upsert
+    const upsertCall = tableCall('conversations', 'upsert')
     const upsertArg = upsertCall.mock.calls[0][0]
 
     expect(upsertArg.contact_phone).toBe('5521912345678')
@@ -483,7 +498,7 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // pushName=null → messages.dedup(0) + Contact(1) + Chat(2) → conversations(3,upsert) + conversations(4,update) → messages(5)
-    const insertCall = supabaseMock.from.mock.results[5].value.insert
+    const insertCall = tableCall('messages', 'insert')
     expect(insertCall.mock.calls[0][0].content).toBe('texto direto')
     expect(insertCall.mock.calls[0][0].type).toBe('text')
   })
@@ -502,7 +517,7 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // pushName=null → messages.dedup(0) + Contact(1) + Chat(2) → conversations(3,upsert) + conversations(4,update) → messages(5)
-    const insertCall = supabaseMock.from.mock.results[5].value.insert
+    const insertCall = tableCall('messages', 'insert')
     expect(insertCall.mock.calls[0][0].content).toBe('texto estendido')
     expect(insertCall.mock.calls[0][0].type).toBe('text')
   })
@@ -529,11 +544,12 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // pushName=null → messages.dedup(0) + Contact(1) + Chat(2) → conversations(3,upsert) + conversations(4,update) → messages(5)
-    const insertCall = supabaseMock.from.mock.results[5].value.insert
+    const insertCall = tableCall('messages', 'insert')
     const insertArg = insertCall.mock.calls[0][0]
 
     expect(insertArg.type).toBe('image')
-    expect(insertArg.content).toBe('https://storage.example.com/test.jpg')
+    // A legenda é preservada depois da URL ("URL\nlegenda", formato da bolha)
+    expect(insertArg.content).toBe('https://storage.example.com/test.jpg\nfoto')
     expect(fetchMock).not.toHaveBeenCalled() // não chama API se já tem base64
   })
 
@@ -563,11 +579,11 @@ describe('POST /api/webhook/evolution', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('/chat/getBase64FromMediaMessage/')
 
     // pushName=null → messages.dedup(0) + Contact(1) + Chat(2) → conversations(3,upsert) + conversations(4,update) → messages(5)
-    const insertCall = supabaseMock.from.mock.results[5].value.insert
+    const insertCall = tableCall('messages', 'insert')
     const insertArg = insertCall.mock.calls[0][0]
 
     expect(insertArg.type).toBe('image')
-    expect(insertArg.content).toBe('https://storage.example.com/test.jpg')
+    expect(insertArg.content).toBe('https://storage.example.com/test.jpg\nimagem sem base64')
   })
 
   it('usa caption como fallback quando download de mídia falha', async () => {
@@ -591,7 +607,7 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // pushName=null → messages.dedup(0) + Contact(1) + Chat(2) → conversations(3,upsert) + conversations(4,update) → messages(5)
-    const insertCall = supabaseMock.from.mock.results[5].value.insert
+    const insertCall = tableCall('messages', 'insert')
     const insertArg = insertCall.mock.calls[0][0]
 
     expect(insertArg.type).toBe('image')
@@ -614,7 +630,7 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // pushName=null → messages.dedup(0) + Contact(1) + Chat(2) → conversations(3,upsert) + conversations(4,update) → messages(5)
-    const insertCall = supabaseMock.from.mock.results[5].value.insert
+    const insertCall = tableCall('messages', 'insert')
     expect(insertCall.mock.calls[0][0].content).toBe('[imagem]')
     expect(insertCall.mock.calls[0][0].type).toBe('image')
   })
@@ -634,7 +650,7 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // pushName=null → messages.dedup(0) + Contact(1) + Chat(2) → conversations(3,upsert) + conversations(4,update) → messages(5)
-    const insertCall = supabaseMock.from.mock.results[5].value.insert
+    const insertCall = tableCall('messages', 'insert')
     expect(insertCall.mock.calls[0][0].content).toBe('[áudio]')
     expect(insertCall.mock.calls[0][0].type).toBe('audio')
   })
@@ -654,7 +670,7 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // pushName preenchido → messages.dedup(0) → conversations(1,upsert) + conversations(2,update) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    const insertCall = tableCall('messages', 'insert')
     expect(insertCall.mock.calls[0][0].content).toBe('[figurinha]')
     expect(insertCall.mock.calls[0][0].type).toBe('sticker')
   })
@@ -674,7 +690,7 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // pushName preenchido → messages.dedup(0) → conversations(1,upsert) + conversations(2,update) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    const insertCall = tableCall('messages', 'insert')
     expect(insertCall.mock.calls[0][0].content).toBe('meu vídeo')
     expect(insertCall.mock.calls[0][0].type).toBe('video')
   })
@@ -711,7 +727,7 @@ describe('POST /api/webhook/evolution', () => {
     await POST(req)
 
     // pushName preenchido → messages.dedup(0) → conversations(1,upsert) + conversations(2,update) → messages(3)
-    const insertCall = supabaseMock.from.mock.results[3].value.insert
+    const insertCall = tableCall('messages', 'insert')
     const insertArg = insertCall.mock.calls[0][0]
 
     expect(insertArg.direction).toBe('inbound')
@@ -797,5 +813,130 @@ describe('POST /api/webhook/evolution', () => {
 
     await POST(req)
     expect(supabaseMock.from).not.toHaveBeenCalled()
+  })
+})
+
+// ─── Ciclo de vida: prévia só depois da mensagem ───────────────────────────────
+//
+// Reproduz o caso de produção "conversa com prévia [imagem] e nenhuma
+// mensagem dentro" (ver dev/local-env/repro/scenarios.mjs).
+
+describe('POST /api/webhook/evolution — consistência prévia × mensagem', () => {
+  type Call = { table: string; method: string; arg: unknown }
+
+  function recordingSupabase(options: {
+    insertError?: { message: string; code: string }
+    conversation?: Record<string, unknown>
+  } = {}) {
+    const calls: Call[] = []
+    supabaseMock.from.mockImplementation((table: string) => {
+      const query: Record<string, jest.Mock> = {}
+      for (const method of ['eq', 'is', 'gte', 'not', 'order', 'limit', 'in', 'select']) query[method] = jest.fn(() => query)
+      query.maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null })
+      query.single = jest.fn().mockResolvedValue({
+        data: options.conversation ?? { id: 'conv-1', unread_count: 0, last_message: 'anterior', created_at: '2020-01-01T00:00:00Z' },
+        error: null,
+      })
+      ;(query as unknown as { then: unknown }).then = (resolve: (value: unknown) => unknown) =>
+        Promise.resolve({ data: null, error: null, count: 0 }).then(resolve)
+      return {
+        select: jest.fn((...args: unknown[]) => { calls.push({ table, method: 'select', arg: args[0] }); return query }),
+        upsert: jest.fn((arg: unknown) => { calls.push({ table, method: 'upsert', arg }); return query }),
+        update: jest.fn((arg: unknown) => { calls.push({ table, method: 'update', arg }); return query }),
+        delete: jest.fn(() => { calls.push({ table, method: 'delete', arg: null }); return query }),
+        insert: jest.fn((arg: unknown) => {
+          calls.push({ table, method: 'insert', arg })
+          return Promise.resolve({ error: options.insertError ?? null })
+        }),
+      }
+    })
+    return calls
+  }
+
+  function previewUpdates(calls: Call[]) {
+    return calls.filter((c) => c.table === 'conversations' && c.method === 'update' && c.arg && typeof c.arg === 'object' && 'last_message' in (c.arg as object))
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    process.env.EVOLUTION_API_URL = 'http://localhost:8080'
+    process.env.EVOLUTION_API_KEY = 'test-key'
+    process.env.EVOLUTION_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET
+    jest.spyOn(console, 'log').mockImplementation(() => {})
+    jest.spyOn(console, 'warn').mockImplementation(() => {})
+    jest.spyOn(console, 'error').mockImplementation(() => {})
+  })
+  afterEach(() => jest.restoreAllMocks())
+
+  const textEvent = (overrides: Record<string, unknown> = {}) => buildRequest({
+    event: 'messages.upsert',
+    data: {
+      key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-life-1' },
+      message: { conversation: 'oi' },
+      pushName: 'Ana',
+      ...overrides,
+    },
+  })
+
+  it('grava a mensagem ANTES de atualizar a prévia, e o upsert da conversa não toca na prévia', async () => {
+    const calls = recordingSupabase()
+    const res = await POST(textEvent())
+
+    expect(res.status).toBe(200)
+    const upsert = calls.find((c) => c.table === 'conversations' && c.method === 'upsert')
+    expect(upsert?.arg).not.toHaveProperty('last_message')
+    const insertIndex = calls.findIndex((c) => c.table === 'messages' && c.method === 'insert')
+    const previewIndex = calls.indexOf(previewUpdates(calls)[0])
+    expect(insertIndex).toBeGreaterThan(-1)
+    expect(previewIndex).toBeGreaterThan(insertIndex)
+    expect(previewUpdates(calls)[0].arg).toMatchObject({ last_message: 'oi', unread_count: 1 })
+  })
+
+  it('falha ao gravar a mensagem → 500 (Evolution reenvia) e a prévia NÃO é atualizada', async () => {
+    const calls = recordingSupabase({ insertError: { message: 'connection reset', code: '08006' } })
+    const res = await POST(textEvent())
+
+    expect(res.status).toBe(500)
+    expect(previewUpdates(calls)).toHaveLength(0)
+  })
+
+  it('entrega concorrente já gravou (23505) → 200 sem mexer na prévia, e remove conversa vazia recém-criada', async () => {
+    const calls = recordingSupabase({
+      insertError: { message: 'duplicate key value', code: '23505' },
+      conversation: { id: 'conv-ghost', unread_count: 0, last_message: null, created_at: new Date().toISOString() },
+    })
+    const res = await POST(textEvent())
+
+    expect(res.status).toBe(200)
+    expect(previewUpdates(calls)).toHaveLength(0)
+    expect(calls.some((c) => c.table === 'conversations' && c.method === 'delete')).toBe(true)
+  })
+
+  it('reação não vira mensagem "[mídia]" nem troca a prévia — nenhum acesso ao banco', async () => {
+    recordingSupabase()
+    const res = await POST(textEvent({ message: { reactionMessage: { text: '👍', key: { id: 'x' } } } }))
+
+    expect(res.status).toBe(200)
+    expect(supabaseMock.from).not.toHaveBeenCalled()
+  })
+
+  it('contato endereçado por @lid usa o número de key.remoteJidAlt (não a heurística pelo nome)', async () => {
+    const calls = recordingSupabase()
+    await POST(textEvent({
+      key: { remoteJid: '987654321@lid', remoteJidAlt: '34622312635@s.whatsapp.net', fromMe: false, id: 'msg-lid-1' },
+    }))
+
+    const upsert = calls.find((c) => c.table === 'conversations' && c.method === 'upsert')
+    expect(upsert?.arg).toMatchObject({ wa_id: '34622312635@s.whatsapp.net', contact_phone: '34622312635' })
+    // a heurística por contact_name não foi consultada
+    expect(calls.filter((c) => c.table === 'conversations' && c.method === 'select')).toHaveLength(0)
+  })
+
+  it('formato desconhecido é salvo como "[mídia]" e avisa no log quais chaves chegaram', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    recordingSupabase()
+    await POST(textEvent({ key: { remoteJid: '5521912345678@s.whatsapp.net', fromMe: false, id: 'msg-unk-1' }, message: { brandNewMessage: { a: 1 } } }))
+
+    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('keys=brandNewMessage'))).toBe(true)
   })
 })

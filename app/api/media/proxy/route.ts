@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { fetchEvolution } from '@/lib/evolution-api'
+import { createLogger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,11 +10,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-const EVOLUTION_URL = process.env.EVOLUTION_API_URL
-const EVOLUTION_KEY = process.env.EVOLUTION_API_KEY
+const log = createLogger('media-proxy')
 
 const CACHE_HIT = 'private, max-age=86400, stale-while-revalidate=604800'
 const CACHE_MISS = 'private, max-age=3600'
+const MEDIA_TIMEOUT_MS = 15_000
 
 const MIME_TYPE: Record<string, string> = {
   stickerMessage: 'image/webp',
@@ -22,6 +24,14 @@ const MIME_TYPE: Record<string, string> = {
   pttMessage: 'audio/ogg; codecs=opus',
 }
 
+function notFound() {
+  return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
+}
+
+// Mídia sob demanda (áudio, vídeo, figurinha e imagens que não foram
+// baixadas no webhook): busca na Evolution a cada visualização. O 404 para o
+// navegador continua igual, mas agora o motivo fica no log — antes "a
+// imagem não carrega" não deixava rastro.
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const id = searchParams.get('id')
@@ -31,6 +41,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse(null, { status: 400, headers: { 'Cache-Control': CACHE_MISS } })
   }
 
+  let instance = ''
   try {
     // remoteJid, instance e fromMe nunca vêm do cliente — são derivados da
     // mensagem localizada no banco (duas consultas sequenciais, sem depender
@@ -45,7 +56,8 @@ export async function GET(req: NextRequest) {
       .maybeSingle()
 
     if (!message) {
-      return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
+      log.debug('mensagem não encontrada para mídia', { msgId: id })
+      return notFound()
     }
 
     const { data: conversation } = await supabase
@@ -54,22 +66,17 @@ export async function GET(req: NextRequest) {
       .eq('id', message.conversation_id)
       .maybeSingle()
 
-    if (!conversation) {
-      return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
-    }
+    if (!conversation) return notFound()
 
     const remoteJid = conversation.wa_id
-    const instance = conversation.instance_name
+    instance = conversation.instance_name
     const fromMe = message.direction === 'outbound'
 
-    const abort = new AbortController()
-    const timer = setTimeout(() => abort.abort(), 15000)
-
-    const res = await fetch(
-      `${EVOLUTION_URL}/chat/getBase64FromMediaMessage/${instance}`,
+    const response = await fetchEvolution(
+      `/chat/getBase64FromMediaMessage/${encodeURIComponent(instance)}`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_KEY! },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: {
             key: { id, fromMe, remoteJid },
@@ -77,20 +84,23 @@ export async function GET(req: NextRequest) {
           },
           convertToMp4: msgType === 'videoMessage',
         }),
-        signal: abort.signal,
-      }
+      },
+      MEDIA_TIMEOUT_MS
     )
-    clearTimeout(timer)
 
-    if (!res.ok) {
-      return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
-    }
-
-    const json = await res.json()
-    const base64: string | undefined = json?.base64
-
-    if (!base64) {
-      return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
+    const body = response.body && typeof response.body === 'object' ? response.body as Record<string, unknown> : {}
+    const base64 = typeof body.base64 === 'string' ? body.base64 : ''
+    if (!response.ok || !base64) {
+      // Mesmo motivo se repete para várias mensagens (instância fora do ar,
+      // mídia expirada no WhatsApp) — uma linha por janela basta.
+      log.warn('Evolution não entregou a mídia', {
+        instance,
+        msgId: id,
+        msgType,
+        status: response.status,
+        body: response.text.slice(0, 200),
+      }, { throttleKey: `${instance}:${response.status}` })
+      return notFound()
     }
 
     // Strip "data:...;base64," prefix if present
@@ -105,7 +115,13 @@ export async function GET(req: NextRequest) {
         'X-Content-Type-Options': 'nosniff',
       },
     })
-  } catch {
-    return new NextResponse(null, { status: 404, headers: { 'Cache-Control': CACHE_MISS } })
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === 'AbortError'
+    log.warn(timedOut ? 'Evolution não respondeu a tempo ao buscar mídia' : 'falha ao buscar mídia', {
+      instance: instance || undefined,
+      msgId: id,
+      err: error,
+    }, { throttleKey: `${instance}:${timedOut ? 'timeout' : 'error'}` })
+    return notFound()
   }
 }

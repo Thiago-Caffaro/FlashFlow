@@ -47,8 +47,16 @@ const INSTANCE_ID = 'test-uuid-abc'
  * The module-level instanceIdCache may short-circuit the Instance lookup on repeat calls —
  * that is expected behaviour and doesn't affect the assertions.
  */
-function mockHappyPath(evoRows: unknown[] = [], existingWaIds: string[] = []) {
+// Busca no histórico da Evolution: key->>remoteJid OU remoteJidAlt OU senderPn
+const messageOrFilter = jest.fn()
+
+function mockHappyPath(evoRows: unknown[] = [], existingWaIds: string[] = [], insertConflicts = 0) {
   let messagesCallCount = 0
+  messageOrFilter.mockReturnValue({
+    order: jest.fn().mockReturnValue({
+      limit: jest.fn().mockResolvedValue({ data: evoRows, error: null }),
+    }),
+  })
 
   supabaseMock.from.mockImplementation((table: string) => {
     if (table === 'conversations') {
@@ -81,11 +89,7 @@ function mockHappyPath(evoRows: unknown[] = [], existingWaIds: string[] = []) {
       return {
         select: jest.fn().mockReturnValue({
           eq: jest.fn().mockReturnValue({
-            filter: jest.fn().mockReturnValue({
-              order: jest.fn().mockReturnValue({
-                limit: jest.fn().mockResolvedValue({ data: evoRows, error: null }),
-              }),
-            }),
+            or: messageOrFilter,
           }),
         }),
       }
@@ -107,7 +111,15 @@ function mockHappyPath(evoRows: unknown[] = [], existingWaIds: string[] = []) {
         }
       }
       // Second call: insert
-      return { insert: jest.fn().mockResolvedValue({ error: null }) }
+      // ON CONFLICT DO NOTHING devolve só as linhas realmente gravadas
+      return {
+        upsert: jest.fn((rows: unknown[]) => ({
+          select: jest.fn().mockResolvedValue({
+            data: rows.slice(0, rows.length - insertConflicts).map((_, i) => ({ id: `m${i}` })),
+            error: null,
+          }),
+        })),
+      }
     }
   })
 }
@@ -119,7 +131,7 @@ function getInsertedRows(): Array<Record<string, unknown>> {
     if (supabaseMock.from.mock.calls[i][0] === 'messages') {
       messagesIdx++
       if (messagesIdx === 2) {
-        return supabaseMock.from.mock.results[i].value.insert.mock.calls[0][0]
+        return supabaseMock.from.mock.results[i].value.upsert.mock.calls[0][0]
       }
     }
   }
