@@ -6,6 +6,7 @@ import TriggersTab from '@/components/sidebar-right/triggers-tab'
 import FlowsTab from '@/components/flows/flows-tab'
 import AiSettingsTab from '@/components/settings/ai-settings-tab'
 import GeneralSettingsTab from '@/components/settings/general-settings-tab'
+import IntegrationsTab from '@/components/integrations/integrations-tab'
 import NotificationsTab from '@/components/notifications/notifications-tab'
 import MemoryTab from '@/components/memory/memory-tab'
 import GalleryTab from '@/components/gallery/gallery-tab'
@@ -25,7 +26,8 @@ const TAB_INDEX: Record<View, number> = {
   memoria:      4,
   galeria:      5,
   ia:           6,
-  'conf-gerais': 7,
+  integracoes:  7,
+  'conf-gerais': 8,
 }
 
 function getStoredView(): View {
@@ -201,8 +203,11 @@ function ChatApp() {
         {/* Panel 6: Config. IA */}
         {panel(6, <AiSettingsTab />)}
 
-        {/* Panel 7: Conf. Gerais */}
-        {panel(7,
+        {/* Panel 7: Integrações */}
+        {panel(7, <IntegrationsTab instanceName={activeAccount?.instanceName ?? null} />)}
+
+        {/* Panel 8: Conf. Gerais */}
+        {panel(8,
           activeAccount?.instanceName
             ? <GeneralSettingsTab instanceName={activeAccount.instanceName} />
             : noAccount

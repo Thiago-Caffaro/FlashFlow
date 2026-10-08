@@ -204,3 +204,28 @@ describe('validateFlowJson', () => {
     }).error).toMatch(/campo de estado invalido/)
   })
 })
+
+describe('node slackNotify', () => {
+  function slackFlow(data: Record<string, unknown>) {
+    return { nodes: [node('start', 'start'), node('slack', 'slackNotify', data)], edges: [edge('e1', 'start', 'slack')] }
+  }
+
+  it('aceita um node Slack válido, com ou sem canal próprio', () => {
+    expect(validateFlowJson(slackFlow({ slackMessage: 'Precisa de atendente' }))).toEqual({ ok: true })
+    expect(validateFlowJson(slackFlow({
+      slackMessage: 'Precisa de atendente', slackChannelId: 'C0123456', slackMention: 'here', slackHandoff: false,
+    }))).toEqual({ ok: true })
+  })
+
+  it('exige mensagem e valida canal, menção e transferência', () => {
+    expect(validateFlowJson(slackFlow({ slackMessage: '  ' })).error).toMatch(/mensagem do Slack/)
+    expect(validateFlowJson(slackFlow({ slackMessage: 'x', slackChannelId: '#geral' })).error).toMatch(/canal do Slack invalido/)
+    expect(validateFlowJson(slackFlow({ slackMessage: 'x', slackMention: 'everyone' })).error).toMatch(/mencao do Slack invalida/)
+    expect(validateFlowJson(slackFlow({ slackMessage: 'x', slackHandoff: 'sim' })).error).toMatch(/transferencia/)
+  })
+
+  it('valida as variáveis do título e da mensagem como nos outros nodes de texto', () => {
+    expect(validateFlowMessagePlaceholders(slackFlow({ slackTitle: '{{contato.nome_completo}}', slackMessage: '{{carrinho.link}}' }), [])).toEqual({ ok: true })
+    expect(validateFlowMessagePlaceholders(slackFlow({ slackMessage: '{{inexistente}}' }), []).ok).toBe(false)
+  })
+})

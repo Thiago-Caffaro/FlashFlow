@@ -27,6 +27,7 @@ import { buildReplyCasesForConnection } from '@/lib/flow-switch-cases'
 import StartNode from './nodes/start-node'
 import SendMessageNode from './nodes/send-message-node'
 import NotificationNode from './nodes/notification-node'
+import SlackNotifyNode from './nodes/slack-notify-node'
 import ConditionNode from './nodes/condition-node'
 import SwitchCaseNode from './nodes/switch-case-node'
 import AiAssistantNode from './nodes/ai-assistant-node'
@@ -40,6 +41,7 @@ const nodeTypes = {
   start: StartNode,
   sendMessage: SendMessageNode,
   notify: NotificationNode,
+  slackNotify: SlackNotifyNode,
   condition: ConditionNode,
   switchCase: SwitchCaseNode,
   aiAssistant: AiAssistantNode,
@@ -52,6 +54,7 @@ const nodeTypes = {
 const BASE_PALETTE: { type: FlowNodeType; label: string; color: string }[] = [
   { type: 'sendMessage', label: 'Enviar Msg',   color: '#00a884' },
   { type: 'notify',      label: 'Notificar',     color: '#e11d48' },
+  { type: 'slackNotify', label: 'Slack',        color: '#611f69' },
   { type: 'condition',   label: 'Condição',     color: '#f59e0b' },
   { type: 'aiAssistant', label: 'Agente',       color: '#8b5cf6' },
   { type: 'captureOrderData', label: 'Capturar Dados', color: '#0f766e' },
@@ -281,6 +284,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
       start:        {},
       sendMessage:  { message: '' },
       notify:       { notificationMessage: '' },
+      slackNotify:  { slackTitle: 'Atendimento humano solicitado', slackMessage: '', slackHandoff: true },
       condition:    { conditionType: 'contains', conditionValue: '' },
       switchCase:   { cases: [] },
       aiAssistant:  { systemPrompt: '', historyLimit: 10, temperature: 0.7, model: 'gemini-2.5-flash', continueConversation: true },
@@ -450,6 +454,7 @@ export default function FlowCanvas({ flow, onBack, onSave }: Props) {
               if (n.type === 'condition') return '#f59e0b'
               if (n.type === 'aiAssistant') return '#8b5cf6'
               if (n.type === 'notify') return '#e11d48'
+              if (n.type === 'slackNotify') return '#611f69'
               if (n.type === 'captureOrderData') return '#0f766e'
               return '#d1d7db'
             }}

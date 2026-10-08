@@ -12,6 +12,7 @@ const KNOWN_NODE_TYPES = new Set<string>([
   'start',
   'sendMessage',
   'notify',
+  'slackNotify',
   'condition',
   'switchCase',
   'aiAssistant',
@@ -22,12 +23,21 @@ const KNOWN_NODE_TYPES = new Set<string>([
   'end',
 ])
 
+// Nodes cujo texto aceita {{variaveis}} (validadas no save e exportadas junto).
+const MESSAGE_NODE_TYPES = new Set<string>(['sendMessage', 'notify', 'slackNotify'])
+
 export interface FlowValidationResult {
   ok: boolean
   error?: string
 }
 
 function messageTemplates(node: FlowNode): string[] {
+  if (node.type === 'slackNotify') {
+    return [
+      typeof node.data.slackTitle === 'string' ? node.data.slackTitle : '',
+      typeof node.data.slackMessage === 'string' ? node.data.slackMessage : '',
+    ]
+  }
   if (node.type === 'notify') {
     return [typeof node.data.notificationMessage === 'string' ? node.data.notificationMessage : '']
   }
@@ -51,7 +61,7 @@ export function getFlowCustomVariableKeys(json: unknown): string[] {
   for (const rawNode of nodes) {
     if (!rawNode || typeof rawNode !== 'object') continue
     const node = rawNode as FlowNode
-    if ((node.type !== 'sendMessage' && node.type !== 'notify') || !node.data) continue
+    if (!MESSAGE_NODE_TYPES.has(node.type) || !node.data) continue
     for (const placeholder of getMessagePlaceholders(...messageTemplates(node))) {
       if (placeholder.startsWith('personalizada.')) {
         keys.add(placeholder.slice('personalizada.'.length))
@@ -73,7 +83,7 @@ export function validateFlowMessagePlaceholders(
   for (const rawNode of nodes) {
     if (!rawNode || typeof rawNode !== 'object') continue
     const node = rawNode as FlowNode
-    if ((node.type !== 'sendMessage' && node.type !== 'notify') || !node.data) continue
+    if (!MESSAGE_NODE_TYPES.has(node.type) || !node.data) continue
     const validation = validateMessagePlaceholders(messageTemplates(node), customKeys)
     if (!validation.ok) {
       return { ok: false, error: `${validation.error} no no "${node.id}"` }
@@ -156,6 +166,29 @@ export function validateFlowJson(json: unknown): FlowValidationResult {
         }
         if (message.length > 2000) {
           return { ok: false, error: `mensagem da notificacao no no "${node.id}" excede 2000 caracteres` }
+        }
+      }
+
+      if (node.type === 'slackNotify') {
+        const data = node.data as FlowNode['data']
+        if (typeof data.slackMessage !== 'string' || !data.slackMessage.trim()) {
+          return { ok: false, error: `mensagem do Slack no no "${node.id}" e obrigatoria` }
+        }
+        if (data.slackMessage.length > 2000) {
+          return { ok: false, error: `mensagem do Slack no no "${node.id}" excede 2000 caracteres` }
+        }
+        if (data.slackTitle !== undefined && (typeof data.slackTitle !== 'string' || data.slackTitle.length > 120)) {
+          return { ok: false, error: `titulo do Slack no no "${node.id}" deve ter ate 120 caracteres` }
+        }
+        if (data.slackChannelId !== undefined && data.slackChannelId !== ''
+          && (typeof data.slackChannelId !== 'string' || !/^[CG][A-Z0-9]{6,30}$/.test(data.slackChannelId))) {
+          return { ok: false, error: `canal do Slack invalido no no "${node.id}"` }
+        }
+        if (data.slackMention !== undefined && !['none', 'here', 'channel'].includes(String(data.slackMention))) {
+          return { ok: false, error: `mencao do Slack invalida no no "${node.id}"` }
+        }
+        if (data.slackHandoff !== undefined && typeof data.slackHandoff !== 'boolean') {
+          return { ok: false, error: `opcao de transferencia do no "${node.id}" deve ser booleana` }
         }
       }
 

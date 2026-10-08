@@ -78,6 +78,8 @@ function nodeTemplates(node: FlowNode): string[] {
     typeof node.data.message === 'string' ? node.data.message : '',
     typeof node.data.footer === 'string' ? node.data.footer : '',
     typeof node.data.notificationMessage === 'string' ? node.data.notificationMessage : '',
+    typeof node.data.slackTitle === 'string' ? node.data.slackTitle : '',
+    typeof node.data.slackMessage === 'string' ? node.data.slackMessage : '',
     ...(Array.isArray(node.data.replyButtons)
       ? node.data.replyButtons.map((button) => button.label)
       : []),

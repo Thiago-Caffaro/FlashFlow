@@ -13,7 +13,8 @@ Definidos em `FlowNodeType` (`types/index.ts:67-78`):
 |---|---|
 | `start` | Ponto de entrada — único node permanente do fluxo, com gatilhos vinculados |
 | `sendMessage` | Envia texto/imagem/botões; pode usar template aprovado (WhatsApp Cloud API) via `templateId` |
-| `notify` | Cria uma notificação interna para o operador |
+| `notify` | Cria uma notificação interna para o operador (opcionalmente encaminhada ao Slack — ver `docs/SLACK.md`) |
+| `slackNotify` | Avisa no Slack que a conversa precisa de humano (botão "Assumir atendimento") + notificação interna; com "Transferir para humano" pausa a IA e encerra o fluxo — `docs/SLACK.md` |
 | `condition` | Bifurca em dois handles: `true`/`false` |
 | `switchCase` | Bifurca em N casos configuráveis (`contains`/`exact`) + um handle `default` implícito |
 | `aiAssistant` | Chama IA (Gemini, OpenAI ou OpenRouter), turno único ou sessão contínua |

@@ -15,6 +15,7 @@ const PUBLIC_API_PATHS = new Set([
   '/api/webhook/shopify/orders',
   '/api/webhook/shopify/abandoned-checkouts',
   '/api/webhook/whatsapp-cloud',
+  '/api/webhook/slack/interactivity',
 ])
 
 export function proxy(req: NextRequest) {

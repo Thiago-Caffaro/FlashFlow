@@ -20,6 +20,12 @@ import { OrderContextPendingError, resolveFlowOrder, resolveMessageTemplateConte
 import { enqueueFlowMessageResumeJob } from './flow-jobs'
 import { updateFulfillmentOrderState } from './fulfillment-order-state'
 import { isOrderStateField, isOrderStateValue } from './order-state'
+import {
+  FORWARDABLE_NOTIFICATION_COLUMNS,
+  forwardNotificationToSlack,
+  postSlackHandoff,
+  type ForwardableNotification,
+} from './slack-notifications'
 
 const supabase = createClient(
   process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -1263,7 +1269,7 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
             || conversation?.contact_phone
             || ctx.remoteJid.replace(/@.+$/, '')
           ).trim()
-          const { error: notificationError } = await supabase.from('notifications').upsert({
+          const { data: createdNotifications, error: notificationError } = await supabase.from('notifications').upsert({
             instance_name: ctx.instanceName,
             type: 'escalation',
             title: 'Chat escalado',
@@ -1273,12 +1279,17 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
             source_key: `escalation:${session.id}`,
             metadata: { remoteJid: ctx.remoteJid, sessionId: session.id },
           }, { onConflict: 'instance_name,source_key', ignoreDuplicates: true })
+            .select(FORWARDABLE_NOTIFICATION_COLUMNS)
           if (notificationError) {
             logError('handleActiveSession: failed to create escalation notification', {
               sessionId: session.id,
               error: notificationError.message,
             })
           }
+          // ignoreDuplicates: só volta linha quando a notificação é nova —
+          // a mesma escalação nunca é encaminhada ao Slack duas vezes.
+          const createdEscalation = Array.isArray(createdNotifications) ? createdNotifications[0] : null
+          if (createdEscalation) void forwardNotificationToSlack(createdEscalation as ForwardableNotification, 'ai_escalation')
         }
       }
 
@@ -1371,7 +1382,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
 
   const { data: flow, error } = await supabase
     .from('flows')
-    .select('json, ativo')
+    .select('json, ativo, name')
     .eq('id', flowId)
     .single()
 
@@ -1606,7 +1617,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
             })
             return
           }
-          await supabase.from('notifications').insert({
+          const { data: outsideWindowNotification } = await supabase.from('notifications').insert({
             instance_name: ctx.instanceName,
             type: 'flow',
             title: 'Fora da janela de 24h',
@@ -1615,7 +1626,10 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
             flow_id: flowId,
             flow_node_id: node.id,
             metadata: { remoteJid: ctx.remoteJid, orderId: ctx.orderId ?? null },
-          })
+          }).select(FORWARDABLE_NOTIFICATION_COLUMNS).maybeSingle()
+          if (outsideWindowNotification) {
+            void forwardNotificationToSlack(outsideWindowNotification as ForwardableNotification, 'outside_window')
+          }
           log('executeFlow sendMessage: outside 24h window, notification created instead of sending', { nodeId: node.id })
           return
         }
@@ -1699,7 +1713,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
         throw error
       }
 
-      const { error: notificationError } = await supabase.from('notifications').insert({
+      const { data: flowNotification, error: notificationError } = await supabase.from('notifications').insert({
         instance_name: ctx.instanceName,
         type: 'flow',
         title: 'Notificacao do fluxo',
@@ -1711,11 +1725,108 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
           remoteJid: ctx.remoteJid,
           orderId: ctx.orderId ?? null,
         },
-      })
+      }).select(FORWARDABLE_NOTIFICATION_COLUMNS).maybeSingle()
       if (notificationError) {
         throw new Error(`Falha ao criar notificacao: ${notificationError.message}`)
       }
+      if (flowNotification) void forwardNotificationToSlack(flowNotification as ForwardableNotification, 'flow_notify')
       log('executeFlow notify: notification created', { nodeId: node.id })
+      currentId = nextNodeId(edges, node.id)
+      continue
+    }
+
+    if (node.type === 'slackNotify') {
+      const titleTemplate = typeof node.data.slackTitle === 'string' && node.data.slackTitle.trim()
+        ? node.data.slackTitle.trim()
+        : 'Atendimento humano solicitado'
+      const messageTemplate = typeof node.data.slackMessage === 'string' ? node.data.slackMessage.trim() : ''
+      if (!messageTemplate) throw new Error(`Node Slack sem mensagem no no ${node.id}`)
+
+      let rendered: { title: string; message: string }
+      try {
+        const templates = [titleTemplate, messageTemplate]
+        const templateContext = getMessagePlaceholders(...templates).length > 0
+          ? await resolveMessageTemplateContext({
+            instanceName: ctx.instanceName,
+            conversationId: ctx.conversationId,
+            remoteJid: ctx.remoteJid,
+            orderId: ctx.orderId,
+            checkoutId: ctx.checkoutId,
+            templates,
+          })
+          : { contact: { name: null, number: ctx.remoteJid }, customVariables: {} }
+        const content = renderMessageContent({ title: titleTemplate, message: messageTemplate }, templateContext)
+        rendered = { title: content.title, message: content.message }
+      } catch (error) {
+        if (error instanceof OrderContextPendingError && !ctx.jobId) {
+          await enqueueFlowMessageResumeJob({
+            instanceName: ctx.instanceName,
+            flowId,
+            nodeId: node.id,
+            conversationId: ctx.conversationId,
+            remoteJid: ctx.remoteJid,
+            orderId: ctx.orderId,
+            checkoutId: ctx.checkoutId,
+            isSandbox: ctx.isSandbox,
+            realSendInstanceName: ctx.realSendInstanceName,
+          })
+          log('executeFlow slackNotify: waiting for local order context', { nodeId: node.id })
+          return
+        }
+        throw error
+      }
+
+      const handoff = node.data.slackHandoff !== false
+      const title = `${ctx.isSandbox ? '[Teste] ' : ''}${rendered.title}`.slice(0, 120)
+      // A notificação interna existe sempre — é o registro no FlashFlow
+      // mesmo se o Slack estiver fora do ar ou desconectado.
+      const { data: handoffNotification, error: handoffNotificationError } = await supabase.from('notifications').insert({
+        instance_name: ctx.instanceName,
+        type: 'escalation',
+        title,
+        message: rendered.message.slice(0, 2000),
+        conversation_id: ctx.conversationId,
+        flow_id: flowId,
+        flow_node_id: node.id,
+        metadata: { remoteJid: ctx.remoteJid, orderId: ctx.orderId ?? null, slack: true, handoff },
+      }).select('id').maybeSingle()
+      if (handoffNotificationError) {
+        throw new Error(`Falha ao criar notificacao: ${handoffNotificationError.message}`)
+      }
+
+      try {
+        await postSlackHandoff({
+          instanceName: ctx.instanceName,
+          source: 'flow_node',
+          title,
+          message: rendered.message,
+          originLabel: typeof flow.name === 'string' && flow.name ? `Fluxo "${flow.name}"` : 'Fluxo',
+          conversationId: ctx.conversationId,
+          notificationId: handoffNotification?.id ? String(handoffNotification.id) : null,
+          channelId: typeof node.data.slackChannelId === 'string' ? node.data.slackChannelId : null,
+          mention: node.data.slackMention ?? null,
+        })
+        log('executeFlow slackNotify: posted to Slack', { nodeId: node.id })
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Falha ao enviar ao Slack'
+        logError('executeFlow slackNotify: Slack post failed', { nodeId: node.id, error: reason })
+        if (handoffNotification?.id) {
+          await supabase.from('notifications').update({
+            message: `${rendered.message}\n\n(Não foi possível avisar no Slack: ${reason})`.slice(0, 2000),
+          }).eq('id', handoffNotification.id)
+        }
+      }
+
+      if (handoff) {
+        // Transferência para humano: a IA desta conversa (se houver) para de
+        // responder e a automação termina aqui, como num node "Fim".
+        await supabase.from('ai_sessions')
+          .update({ requires_human: true, pending_messages: [] })
+          .eq('instance_name', ctx.instanceName)
+          .eq('remote_jid', ctx.remoteJid)
+        log('executeFlow slackNotify: handed off to human, ending flow', { nodeId: node.id })
+        break
+      }
       currentId = nextNodeId(edges, node.id)
       continue
     }

@@ -5,6 +5,7 @@ import { X, Zap, AlertCircle, CheckCircle, BookOpen, Plus, Tag, Info, Trash2, Sh
 import { FlowNode, FlowNodeData, Trigger, AIProvider, AgentMemoryBlock, SwitchCase, type OrderStateField } from '@/types'
 import { ORDER_STATE_FIELDS, orderStateValues } from '@/lib/order-state'
 import NotificationConfig from './notification-config'
+import SlackNotifyConfig from './slack-notify-config'
 
 // ─── Models per provider ──────────────────────────────────────────────────────
 
@@ -585,6 +586,7 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
     end:          'Fim do Fluxo',
     sendMessage:  'Enviar Mensagem',
     notify:       'Notificar',
+    slackNotify:  'Slack — Atendimento humano',
     condition:    'Condição',
     switchCase:   'Switch Case',
     aiAssistant:  'Agente',
@@ -628,6 +630,10 @@ export default function NodeConfigPanel({ node, flowId, instanceName, onChange, 
 
         {type === 'notify' && (
           <NotificationConfig node={node} instanceName={instanceName} onChange={onChange} />
+        )}
+
+        {type === 'slackNotify' && (
+          <SlackNotifyConfig node={node} instanceName={instanceName} onChange={onChange} />
         )}
 
         {type === 'condition' && (
