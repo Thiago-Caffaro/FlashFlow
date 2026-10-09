@@ -40,6 +40,8 @@ export default function SlackForwardingCard({ instanceName, connected }: SlackFo
   const [testing, setTesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
+  // Alternativa à lista: funciona só com chat:write (sem channels:read).
+  const [manualChannelId, setManualChannelId] = useState('')
 
   const loadSettings = useCallback(async () => {
     try {
@@ -158,6 +160,34 @@ export default function SlackForwardingCard({ instanceName, connected }: SlackFo
             <option key={channel.id} value={channel.id}>{channel.is_private ? '🔒 ' : '#'}{channel.name}</option>
           ))}
         </select>
+      </div>
+
+      <div>
+        <label htmlFor="slack-manual-channel" className={labelClass}>Ou cole o ID do canal</label>
+        <div className="flex gap-2">
+          <input
+            id="slack-manual-channel"
+            value={manualChannelId}
+            onChange={(event) => setManualChannelId(event.target.value.trim().toUpperCase())}
+            disabled={disabled}
+            placeholder="C0123ABCDEF"
+            className={inputClass}
+          />
+          <button
+            type="button"
+            disabled={disabled || !/^[CG][A-Z0-9]{6,30}$/.test(manualChannelId)}
+            onClick={() => {
+              void update({ channel_id: manualChannelId, channel_name: manualChannelId })
+              setManualChannelId('')
+            }}
+            className="shrink-0 rounded-xl border border-[#d1d7db] px-4 text-sm font-medium text-[#111b21] hover:bg-[#f0f2f5] disabled:opacity-50 dark:border-[#3d4f5a] dark:text-[#e9edef] dark:hover:bg-[#2a3942]"
+          >
+            Usar
+          </button>
+        </div>
+        <p className="mt-1.5 text-[11px] text-[#8696a0]">
+          No Slack: abra o canal → nome do canal → no rodapé aparece o ID (começa com C). Canal privado: convide o bot com /invite antes.
+        </p>
       </div>
 
       <div>

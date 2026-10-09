@@ -85,7 +85,12 @@ async function callSlack<T extends SlackResponse>(
   }
   if (!json.ok) {
     const code = typeof json.error === 'string' ? json.error : 'unknown_error'
-    throw new SlackApiError(code, describeSlackError(code))
+    // missing_scope vem com o escopo exigido e os que o token tem — é
+    // exatamente o que o operador precisa para corrigir o app no Slack.
+    const scopeDetail = code === 'missing_scope' && typeof json.needed === 'string'
+      ? ` (falta: ${json.needed}; o token tem: ${typeof json.provided === 'string' ? json.provided : 'nenhum'} — depois de adicionar, reinstale o app e, se o token mudar, atualize as credenciais)`
+      : ''
+    throw new SlackApiError(code, `${describeSlackError(code)}${scopeDetail}`)
   }
   return json
 }
