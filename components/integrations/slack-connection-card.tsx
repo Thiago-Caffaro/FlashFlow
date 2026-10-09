@@ -23,7 +23,7 @@ function buildManifest(interactivityUrl: string | null): string {
       description: 'Avisos de atendimento humano do FlashFlow (WhatsApp)',
     },
     features: { bot_user: { display_name: 'FlashFlow', always_online: true } },
-    oauth_config: { scopes: { bot: ['chat:write', 'chat:write.public', 'channels:read', 'groups:read'] } },
+    oauth_config: { scopes: { bot: ['chat:write', 'chat:write.public', 'channels:read'] } },
     settings: {
       interactivity: { is_enabled: true, request_url: interactivityUrl ?? 'https://SEU-DOMINIO/api/webhook/slack/interactivity' },
       org_deploy_enabled: false,

@@ -135,8 +135,8 @@ export async function slackUpdateMessage(
   await callSlack(token, 'chat.update', { body: { ...payload } })
 }
 
-// Canais públicos e privados não arquivados. Privados só aparecem se o bot
-// já foi convidado (groups:read lista apenas os canais de que ele participa).
+// Canais não arquivados. Só canais públicos (escopo channels:read). Canal privado é usado pelo ID
+// colado na aba Integrações, depois de convidar o bot com /invite.
 export async function slackListChannels(token: string, maxChannels = 1000): Promise<SlackChannel[]> {
   const channels: SlackChannel[] = []
   let cursor = ''
@@ -146,7 +146,7 @@ export async function slackListChannels(token: string, maxChannels = 1000): Prom
       response_metadata?: { next_cursor?: string }
     }>(token, 'conversations.list', {
       query: {
-        types: 'public_channel,private_channel',
+        types: 'public_channel',
         exclude_archived: 'true',
         limit: '200',
         ...(cursor ? { cursor } : {}),
