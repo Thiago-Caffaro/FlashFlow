@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
     const channels = await slackListChannels(credentials.botToken)
     return NextResponse.json({ ok: true, channels })
   } catch (error) {
+    console.warn(`[slack] falha ao listar canais: ${error instanceof Error ? error.message : String(error)}`)
     return NextResponse.json({
       ok: false,
       error: error instanceof Error ? error.message : 'Falha ao listar canais do Slack',
