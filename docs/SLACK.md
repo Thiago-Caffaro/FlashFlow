@@ -65,7 +65,7 @@ e aparece na aba Notificações ("Falha ao avisar no Slack").
      "_metadata": { "major_version": 2, "minor_version": 1 },
      "display_information": { "name": "FlashFlow" },
      "features": { "bot_user": { "display_name": "FlashFlow", "always_online": true } },
-     "oauth_config": { "scopes": { "bot": ["chat:write", "chat:write.public", "channels:read", "groups:read"] } },
+     "oauth_config": { "scopes": { "bot": ["chat:write", "chat:write.public", "channels:read"] } },
      "settings": {
        "interactivity": { "is_enabled": true, "request_url": "https://SEU-DOMINIO/api/webhook/slack/interactivity" },
        "org_deploy_enabled": false,
@@ -82,15 +82,15 @@ e aparece na aba Notificações ("Falha ao avisar no Slack").
    é validado com `auth.test` antes de ser salvo).
 5. Por conta WhatsApp: escolher o canal padrão, a menção padrão e ligar os
    encaminhamentos desejados. **Enviar mensagem de teste** confere o canal.
-6. Canais privados: convidar o bot no Slack com `/invite @FlashFlow` (o
-   escopo `groups:read` só lista privados de que o bot participa;
-   `chat:write.public` cobre os públicos sem convite).
+6. Canais privados não aparecem na lista (o app não pede `groups:read`):
+   convide o bot com `/invite @FlashFlow` e cole o ID do canal em
+   **"Ou cole o ID do canal"**. `chat:write.public` cobre os públicos sem convite.
 
 | Escopo | Para quê |
 |---|---|
 | `chat:write` | postar e atualizar as mensagens |
 | `chat:write.public` | postar em canal público sem convidar o bot |
-| `channels:read` / `groups:read` | listar canais públicos / privados no seletor |
+| `channels:read` | listar os canais públicos no seletor |
 
 ## Limitações conhecidas
 

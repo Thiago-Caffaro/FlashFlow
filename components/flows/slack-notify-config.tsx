@@ -123,7 +123,7 @@ export default function SlackNotifyConfig({ node, instanceName, onChange }: Slac
           ))}
         </select>
         {error && <p className="mt-1.5 text-xs text-red-500">{error}</p>}
-        <p className="mt-1.5 text-[11px] text-[#8696a0]">Canais privados só aparecem depois de convidar o bot (/invite) no Slack.</p>
+        <p className="mt-1.5 text-[11px] text-[#8696a0]">Lista só canais públicos. Para um canal privado, convide o bot com /invite e cole o ID dele na aba Integrações.</p>
       </div>
 
       <div>

@@ -63,7 +63,7 @@ describe('slack client', () => {
 
     expect(channels.map((channel: { name: string }) => channel.name)).toEqual(['atendimento', 'vendas'])
     expect(String(fetchMock.mock.calls[1][0])).toContain('cursor=abc')
-    expect(String(fetchMock.mock.calls[0][0])).toContain('types=public_channel%2Cprivate_channel')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('types=public_channel&')
   })
 
   it('only answers response_url on the official Slack host', async () => {
