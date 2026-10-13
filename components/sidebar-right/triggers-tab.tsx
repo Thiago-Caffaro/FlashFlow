@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, KeyboardEvent } from 'react'
 import { Plus, Search, Trash2, MessageSquare, GitBranch, Zap, Download, Upload, X, ShoppingBag, ShoppingCart, Truck } from 'lucide-react'
-import { DELIVERY_STATUSES, Trigger, TriggerCreate, TriggerTipo, TriggerAction, type DeliveryStatus } from '@/types'
+import { DELIVERY_STATUSES, ItemFocusRequest, Trigger, TriggerCreate, TriggerTipo, TriggerAction, type DeliveryStatus } from '@/types'
 import FlowPickerModal from '@/components/flows/flow-picker-modal'
 
 function downloadJson(data: unknown, filename: string) {
@@ -17,6 +17,7 @@ function downloadJson(data: unknown, filename: string) {
 
 interface TriggersTabProps {
   instanceName: string
+  focus?: ItemFocusRequest | null
 }
 
 const DELAY_OPTIONS = [
@@ -441,7 +442,7 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
 
 // ─── Main tab ─────────────────────────────────────────────────────────────────
 
-export default function TriggersTab({ instanceName }: TriggersTabProps) {
+export default function TriggersTab({ instanceName, focus = null }: TriggersTabProps) {
   const [triggers, setTriggers] = useState<Trigger[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -461,6 +462,15 @@ export default function TriggersTab({ instanceName }: TriggersTabProps) {
   }, [instanceName])
 
   useEffect(() => { fetchTriggers() }, [fetchTriggers])
+
+  // Abre o gatilho pedido de fora (mini janelas do Sandbox) uma vez por clique.
+  const handledFocusRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!focus || handledFocusRef.current === focus.nonce) return
+    if (!triggers.some((t) => t.id === focus.id)) return
+    handledFocusRef.current = focus.nonce
+    setSelectedId(focus.id)
+  }, [focus, triggers])
 
   async function handleAdd() {
     const body: TriggerCreate = {

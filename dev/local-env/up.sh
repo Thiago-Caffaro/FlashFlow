@@ -5,7 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 if ! docker ps --format '{{.Names}}' | grep -q '^supabase_db_flashflow-local$'; then
-  supabase start --workdir . -x edge-runtime,logflare,vector,inbucket,mailpit,imgproxy,supavisor,studio,gotrue,realtime,postgres-meta
+  # gotrue fica ligado: sem ele o `supabase status` não devolve ANON_KEY/SERVICE_ROLE_KEY.
+  supabase start --workdir . -x edge-runtime,logflare,vector,inbucket,mailpit,imgproxy,supavisor,studio,realtime,postgres-meta
 fi
 
 # Schema de produção (gere com: supabase db dump --schema public --db-url "<session pooler>" -f supabase/schema.sql)

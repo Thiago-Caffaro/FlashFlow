@@ -10,6 +10,7 @@ import IntegrationsTab from '@/components/integrations/integrations-tab'
 import NotificationsTab from '@/components/notifications/notifications-tab'
 import MemoryTab from '@/components/memory/memory-tab'
 import GalleryTab from '@/components/gallery/gallery-tab'
+import SandboxTab from '@/components/sandbox/sandbox-tab'
 import AccountDropdown from '@/components/chat/account-dropdown'
 import VerticalTabBar, { View } from '@/components/nav/vertical-tab-bar'
 import { AccountProvider, useAccount } from '@/contexts/account-context'
@@ -24,10 +25,11 @@ const TAB_INDEX: Record<View, number> = {
   gatilhos:     2,
   fluxos:       3,
   memoria:      4,
-  galeria:      5,
-  ia:           6,
-  integracoes:  7,
-  'conf-gerais': 8,
+  sandbox:      5,
+  galeria:      6,
+  ia:           7,
+  integracoes:  8,
+  'conf-gerais': 9,
 }
 
 function getStoredView(): View {
@@ -191,8 +193,11 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 5: Galeria (conditional) */}
-        {FEATURES.gallery && panel(5,
+        {/* Panel 5: Sandbox — conta de testes fixa, independe da conta ativa */}
+        {panel(5, <SandboxTab active={activeView === 'sandbox'} />)}
+
+        {/* Panel 6: Galeria (conditional) */}
+        {FEATURES.gallery && panel(6,
           <div className="h-full bg-white dark:bg-[#111b21]">
             {activeAccount?.instanceName
               ? <GalleryTab instanceName={activeAccount.instanceName} />
@@ -200,14 +205,14 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 6: Config. IA */}
-        {panel(6, <AiSettingsTab />)}
+        {/* Panel 7: Config. IA */}
+        {panel(7, <AiSettingsTab />)}
 
-        {/* Panel 7: Integrações */}
-        {panel(7, <IntegrationsTab instanceName={activeAccount?.instanceName ?? null} />)}
+        {/* Panel 8: Integrações */}
+        {panel(8, <IntegrationsTab instanceName={activeAccount?.instanceName ?? null} />)}
 
-        {/* Panel 8: Conf. Gerais */}
-        {panel(8,
+        {/* Panel 9: Conf. Gerais */}
+        {panel(9,
           activeAccount?.instanceName
             ? <GeneralSettingsTab instanceName={activeAccount.instanceName} />
             : noAccount

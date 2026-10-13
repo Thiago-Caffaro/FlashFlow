@@ -51,7 +51,7 @@ app/
     flows/        CRUD de fluxos
     accounts/     Gestão de contas/instâncias WhatsApp (QR, pairing, reconexão)
     shopify/      OAuth + callback + produtos
-    fulfillment/  Pedidos, sandbox, envio/cancelamento ao FenixCOD, sync de entrega
+    fulfillment/  Pedidos, envio/cancelamento ao FenixCOD, sync de entrega (a UI do sandbox fica em components/sandbox/, view própria do app principal; as rotas continuam em api/fulfillment/sandbox/)
     ai-keys/, ai-sessions/, instance-ai-config/, memory-blocks/   Config e estado de IA
   fulfillment/, order-preview/, catalog-preview/, diagnostics/   Rotas de UI fora do chat principal
 components/

@@ -2,11 +2,11 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Bell, MessageSquare, Zap, GitBranch, Brain, BookOpen, Images, Sun, Moon, Settings2, PackageSearch, Plug } from 'lucide-react'
+import { Bell, MessageSquare, Zap, GitBranch, Brain, BookOpen, FlaskConical, Images, Sun, Moon, Settings2, PackageSearch, Plug } from 'lucide-react'
 import { useTheme } from '@/contexts/theme-context'
 import { FEATURES } from '@/lib/features'
 
-export type View = 'chats' | 'notificacoes' | 'gatilhos' | 'fluxos' | 'memoria' | 'galeria' | 'ia' | 'integracoes' | 'conf-gerais'
+export type View = 'chats' | 'notificacoes' | 'gatilhos' | 'fluxos' | 'memoria' | 'sandbox' | 'galeria' | 'ia' | 'integracoes' | 'conf-gerais'
 
 interface Props {
   activeTab: View
@@ -20,6 +20,7 @@ const TABS: { id: View; label: string; Icon: React.ElementType }[] = [
   { id: 'gatilhos',   label: 'Gatilhos',    Icon: Zap },
   { id: 'fluxos',     label: 'Fluxos',      Icon: GitBranch },
   { id: 'memoria',    label: 'Memória',     Icon: BookOpen },
+  { id: 'sandbox',    label: 'Sandbox',     Icon: FlaskConical },
   ...(FEATURES.gallery ? [{ id: 'galeria' as View, label: 'Galeria', Icon: Images }] : []),
   { id: 'ia',         label: 'Config. IA',  Icon: Brain },
   { id: 'integracoes', label: 'Integrações', Icon: Plug },

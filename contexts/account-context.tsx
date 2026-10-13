@@ -37,15 +37,15 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
           const updated = fetched.find((a) => a.instanceName === prev.instanceName)
           if (updated) return updated
         }
-        // Restore from localStorage
+        // Restore from localStorage. The sandbox account is never the active account — it has its own
+        // view (Sandbox tab). Ignoring it here also frees anyone stuck on it
+        // by the old "Configurar gatilho" shortcut, which saved it here.
         if (savedName) {
-          const found = fetched.find((a) => a.instanceName === savedName)
+          const found = fetched.find((a) => a.instanceName === savedName && !a.isSandbox)
           if (found) return found
         }
         // Fallback to first open account, then first account. The sandbox
-        // account always reports state 'open' but must never be auto-picked
-        // as if it were a normal account — it's only reachable explicitly
-        // (e.g. via the sandbox screen's "Configurar gatilho" shortcut).
+        // account always reports state 'open' but must never be auto-picked.
         const selectable = fetched.filter((a) => !a.isSandbox)
         return selectable.find((a) => a.state === 'open') ?? selectable[0] ?? null
       })
