@@ -2,11 +2,10 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, FlaskConical, Loader2, MessageSquareText, Package, PackageSearch, PhoneCall, RefreshCw, Settings2, Zap } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, FlaskConical, Loader2, MessageSquareText, Package, PackageSearch, PhoneCall, RefreshCw, Settings2, Zap } from 'lucide-react'
 import {
   Account,
   FulfillmentOrder,
-  FulfillmentProduct,
   ShopifyAbandonedCheckout,
   ShopifyIntegration,
   ShopifyProduct,
@@ -20,12 +19,11 @@ import OrdersSection from '@/components/fulfillment/orders-section'
 import QueuePanel from '@/components/fulfillment/queue-panel'
 import ShopifyConfig from '@/components/fulfillment/shopify-config'
 import FenixCODConfig, { Integration } from '@/components/fulfillment/fenixcod-config'
-import SandboxPanel from '@/components/fulfillment/sandbox-panel'
 import ShopifyProductsPanel from '@/components/fulfillment/shopify-products-panel'
 import { ShopifyProductFormValues } from '@/components/fulfillment/shopify-product-form'
 import ShopifyOrderAccountSettings from '@/components/fulfillment/shopify-order-account-settings'
 
-type Tab = 'queue' | 'orders' | 'products' | 'settings' | 'sandbox'
+type Tab = 'queue' | 'orders' | 'products' | 'settings'
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
 
 async function getJson(res: Response) {
@@ -36,7 +34,6 @@ export default function FulfillmentPage() {
   const [tab, setTab] = useState<Tab>('queue')
   const [accounts, setAccounts] = useState<Account[]>([])
   const [orders, setOrders] = useState<FulfillmentOrder[]>([])
-  const [products, setProducts] = useState<FulfillmentProduct[]>([])
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [shopifyIntegrations, setShopifyIntegrations] = useState<ShopifyIntegration[]>([])
   const [abandonedCheckouts, setAbandonedCheckouts] = useState<ShopifyAbandonedCheckout[]>([])
@@ -56,10 +53,9 @@ export default function FulfillmentPage() {
   const webhookEnsureStartedRef = useRef(false)
 
   const load = useCallback(async () => {
-    const [accountRes, orderRes, productRes, integrationRes, shopifyIntRes, checkoutRes, shopifyProductRes, triggerSettingRes, defaultAccountRes] = await Promise.all([
+    const [accountRes, orderRes, integrationRes, shopifyIntRes, checkoutRes, shopifyProductRes, triggerSettingRes, defaultAccountRes] = await Promise.all([
       fetch('/api/accounts', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/orders', { cache: 'no-store' }).then(getJson),
-      fetch('/api/fulfillment/products', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/integrations', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/shopify/integrations', { cache: 'no-store' }).then(getJson),
       fetch('/api/fulfillment/shopify/abandoned-checkouts', { cache: 'no-store' }).then(getJson),
@@ -69,7 +65,6 @@ export default function FulfillmentPage() {
     ])
     setAccounts(accountRes.accounts ?? [])
     if (orderRes.ok) setOrders(orderRes.orders ?? [])
-    if (productRes.ok) setProducts(productRes.products ?? [])
     if (integrationRes.ok) setIntegrations(integrationRes.integrations ?? [])
     if (shopifyIntRes.ok) setShopifyIntegrations(shopifyIntRes.integrations ?? [])
     if (checkoutRes.ok) setAbandonedCheckouts(checkoutRes.checkouts ?? [])
@@ -414,7 +409,6 @@ export default function FulfillmentPage() {
               ['orders', 'Pedidos', PackageSearch],
               ['products', 'Produtos', Package],
               ['settings', 'Configurações', Settings2],
-              ['sandbox', 'Sandbox', FlaskConical],
             ] as const).map(([id, label, Icon]) => (
               <button
                 key={id}
@@ -438,6 +432,20 @@ export default function FulfillmentPage() {
                 )}
               </button>
             ))}
+            {/* O Sandbox virou uma aba do menu principal, ao lado dos fluxos
+                e gatilhos que ele testa. */}
+            <button
+              onClick={() => {
+                try { localStorage.setItem('activeView', 'sandbox') } catch { /* abre na última aba */ }
+                window.location.href = '/'
+              }}
+              className="flex shrink-0 items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]"
+              title="O Sandbox agora fica no menu principal, abaixo de Memória"
+            >
+              <FlaskConical size={15} />
+              Sandbox
+              <ArrowUpRight size={13} />
+            </button>
           </nav>
           <label className="relative flex min-h-10 min-w-48 max-w-60 shrink-0 items-center">
             <MessageSquareText size={16} className="pointer-events-none absolute left-3 text-[#667781] dark:text-[#aebac1]" />
@@ -581,14 +589,6 @@ export default function FulfillmentPage() {
           </div>
         )}
 
-        {!loading && tab === 'sandbox' && (
-          <SandboxPanel
-            products={products}
-            accounts={accounts}
-            onRefresh={load}
-            shopifyProducts={shopifyProducts}
-          />
-        )}
       </main>
     </div>
   )

@@ -10,8 +10,9 @@ WhatsApp real nem de sorte.
 A VM do Docker (WSL2) está limitada em `%USERPROFILE%\.wslconfig` a 2 GB de RAM
 e 2 núcleos. Para caber:
 
-- o Supabase sobe só com Postgres, PostgREST, Storage e Kong (sem Studio, Auth,
-  Realtime, pg-meta) — ver `up.sh`;
+- o Supabase sobe só com Postgres, PostgREST, Storage, Auth e Kong (sem Studio,
+  Realtime, pg-meta) — ver `up.sh`. O Auth fica porque sem ele o `supabase status`
+  não devolve as chaves;
 - `flashflow` tem teto de 512 MB / 1 CPU e a Evolution simulada 64 MB;
 - a imagem de referência da `main` (para comparação A/B) só sobe na hora do teste.
 

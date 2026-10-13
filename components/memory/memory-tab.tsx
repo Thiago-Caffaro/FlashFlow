@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Plus, Trash2, Brain, Tag, X, ChevronRight, Search, Sparkles } from 'lucide-react'
-import { AgentMemoryBlock, MemoryBlockType } from '@/types'
+import { AgentMemoryBlock, ItemFocusRequest, MemoryBlockType } from '@/types'
 import AnalyzeConversationsDialog from './analyze-conversations-dialog'
 
 interface Props {
   instanceName: string
+  focus?: ItemFocusRequest | null
 }
 
 const inputClass =
@@ -28,7 +29,7 @@ function TypeBadge({ type }: { type: MemoryBlockType }) {
 
 const EMPTY: Partial<AgentMemoryBlock> = { name: '', content: '', type: 'always', keywords: [] }
 
-export default function MemoryTab({ instanceName }: Props) {
+export default function MemoryTab({ instanceName, focus = null }: Props) {
   const [blocks, setBlocks] = useState<AgentMemoryBlock[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -46,6 +47,18 @@ export default function MemoryTab({ instanceName }: Props) {
   }, [instanceName])
 
   useEffect(() => { fetchBlocks() }, [fetchBlocks])
+
+  // Abre o bloco pedido de fora (mini janelas do Sandbox) uma vez por clique.
+  const handledFocusRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!focus || handledFocusRef.current === focus.nonce) return
+    const block = blocks.find((b) => b.id === focus.id)
+    if (!block) return
+    handledFocusRef.current = focus.nonce
+    setSelectedId(block.id)
+    setForm({ ...block })
+    setKeywordInput('')
+  }, [focus, blocks])
 
   function openNew() {
     setSelectedId('new')

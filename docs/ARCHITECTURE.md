@@ -111,7 +111,7 @@ foi entregue — cronologia real, por commit:
 | Auth administrativa + gestão de contas | 2026-06-26 | `3361b5e` |
 | Integração FenixCOD + Shopify (fila de confirmação) | 2026-06-26 | `eec744e` |
 | Shopify OAuth 2.0 | 2026-06-29 | `9bc156e` |
-| Sandbox de testes (Pedidos & Fulfillment) | ~jul/2026 | `f29d366` |
+| Sandbox de testes (Pedidos & Fulfillment; view própria no app principal desde v1.15.0) | ~jul/2026 | `f29d366` |
 | Timeline e estados de pedido Shopify/FenixCOD | ~ago/2026 | `ded3e84`, `196fe6b` |
 | Suporte dual WhatsApp (Cloud API), 4 fases | 2026-08-12 a 2026-08-27 | `3afe3bc` … `3665692` |
 | Template aprovado p/ recuperação de carrinho (Cloud API) | 2026-08-27 | `972956c` |

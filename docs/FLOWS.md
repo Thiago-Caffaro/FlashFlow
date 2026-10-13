@@ -161,6 +161,15 @@ instância (conta WhatsApp), não uma memória isolada por conversa.
 
 ## Sandbox
 
+A UI é a view **Sandbox** do app principal (`components/sandbox/`, abaixo
+de Memória no menu): conversa de teste fixa à esquerda e, à direita, sub-abas
+Visão geral (mini janelas de gatilhos, fluxos e memória da conta sandbox),
+Gatilhos, Fluxos, Memória, Simular pedido e Produtos fictícios. Gatilhos,
+Fluxos e Memória são as mesmas abas das contas reais, montadas com
+`__sandbox__`; uma edição salva vale já na próxima mensagem de teste. O chat
+só consulta o servidor com a view aberta e a janela visível. Ver
+`docs/DECISIONS.md` [012].
+
 `lib/sandbox.ts` só define as constantes da conta especial
 `__sandbox__`. A barreira real de "nunca manda WhatsApp de verdade"
 está em `resolveRealSendTarget` (`lib/flow-engine.ts`): mensagens de

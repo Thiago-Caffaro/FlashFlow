@@ -52,7 +52,7 @@ components/
   ui/             shadcn — não editar
   chat/, chats/   Interface de atendimento
   flows/, flows/nodes/   Editor visual de fluxo — um arquivo por tipo de node
-  fulfillment/, auth/, sidebar-right/, memory/, gallery/, notifications/, ai-sessions/, nav/
+  fulfillment/, sandbox/, auth/, sidebar-right/, memory/, gallery/, notifications/, ai-sessions/, nav/
 contexts/         Estado client-side global (account, auth, theme)
 lib/              Um módulo por domínio/integração — nome do arquivo já indica a camada (shopify-*.ts, fulfillment-*.ts, whatsapp-cloud-*.ts, flow-*.ts...)
 types/index.ts     Único arquivo de tipos do projeto — fonte de verdade do modelo de dados

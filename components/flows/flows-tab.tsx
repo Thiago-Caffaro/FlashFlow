@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Plus, Search, GitBranch, Power, PowerOff, Pencil, Trash2, ExternalLink, Calendar, Hash, Download, Upload, AlertCircle, CheckCircle2, Loader2, X } from 'lucide-react'
-import { Flow, MessageVariable } from '@/types'
+import { Flow, ItemFocusRequest, MessageVariable } from '@/types'
 import {
   FlowTransferItem,
   FlowTransferVariable,
@@ -24,6 +24,7 @@ function downloadJson(data: unknown, filename: string) {
 
 interface Props {
   instanceName: string
+  focus?: ItemFocusRequest | null
 }
 
 interface FlowUpdateResult {
@@ -182,7 +183,7 @@ function FlowPanel({ flow, onUpdate, onDelete, onEdit, onExport, onClose }: Pane
 
 // ─── Main tab ─────────────────────────────────────────────────────────────────
 
-export default function FlowsTab({ instanceName }: Props) {
+export default function FlowsTab({ instanceName, focus = null }: Props) {
   const [flows, setFlows] = useState<Flow[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -205,6 +206,18 @@ export default function FlowsTab({ instanceName }: Props) {
   }, [instanceName])
 
   useEffect(() => { fetchFlows() }, [fetchFlows])
+
+  // Abre direto no canvas o fluxo pedido de fora (mini janelas do Sandbox).
+  // O nonce já tratado evita reabrir quando a lista recarrega.
+  const handledFocusRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!focus || handledFocusRef.current === focus.nonce) return
+    const flow = flows.find((f) => f.id === focus.id)
+    if (!flow) return
+    handledFocusRef.current = focus.nonce
+    setSelectedId(flow.id)
+    setEditingFlow(flow)
+  }, [focus, flows])
 
   async function handleCreate() {
     const res = await fetch('/api/flows', {

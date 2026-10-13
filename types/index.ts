@@ -505,3 +505,33 @@ export interface AnalysisResult {
   analysis: string
   suggestions: MemorySuggestion[]
 }
+
+// ─── Sandbox ──────────────────────────────────────────────────────────────────
+
+// Contato de teste da conta __sandbox__ (linha de `conversations`).
+export interface SandboxContact {
+  id: string
+  wa_id: string
+  contact_name: string | null
+  contact_phone: string | null
+  sandbox_source_instance: string | null
+  sandbox_real_send_enabled: boolean
+}
+
+// Contato real encontrado na busca para importar como contato de teste.
+export interface SandboxRealContactResult {
+  id: string
+  wa_id: string
+  instance_name: string
+  contact_name: string | null
+  contact_phone: string | null
+  accountLabel: string
+}
+
+// Pedido externo para uma aba abrir um item específico (ex: as mini janelas
+// do Sandbox). `nonce` muda a cada clique, então clicar de novo no mesmo item
+// reabre mesmo depois de fechado.
+export interface ItemFocusRequest {
+  id: string
+  nonce: number
+}
