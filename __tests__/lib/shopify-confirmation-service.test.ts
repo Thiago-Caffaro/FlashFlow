@@ -215,6 +215,7 @@ const {
   reserveConfirmationSendSlot,
   sendAbandonedCheckoutRecovery,
   runAbandonedCheckoutTrigger,
+  createSandboxAbandonedCheckout,
   _resetConfirmationSendPacingForTests,
 } = require('@/lib/shopify-confirmation-service')
 
@@ -1066,6 +1067,73 @@ describe('shopify-confirmation-service', () => {
         triggerId: 'trigger-24h',
         runAt: new Date(NOW - 10 * MINUTE + 24 * 60 * MINUTE),
       }))
+    })
+
+    describe('carrinho simulado no sandbox', () => {
+      function sandboxInput(immediate: boolean) {
+        return {
+          integrationId: 'shopify-1',
+          shopDomain: 'loja.myshopify.com',
+          defaultCountry: 'SPAIN',
+          payload: checkoutPayload({ created_at: new Date(NOW).toISOString(), updated_at: new Date(NOW).toISOString() }),
+          contactPhone: '000000000',
+          immediate,
+        }
+      }
+
+      it('grava como simulação na conta sandbox e dispara agora, mesmo com os gatilhos Shopify pausados', async () => {
+        jest.useFakeTimers({ now: NOW })
+        mockGetShopifyTriggersEnabled.mockResolvedValue(false)
+        const insert = queryBuilder({
+          data: savedCheckout({
+            assigned_instance_name: '__sandbox__',
+            is_simulation: true,
+            contact_phone: '000000000',
+            raw_shopify_payload: { created_at: new Date(NOW).toISOString(), updated_at: new Date(NOW).toISOString() },
+          }),
+          error: null,
+        })
+        setTableQueues({
+          shopify_abandoned_checkouts: [insert],
+          triggers: [queryBuilder({ data: [{ id: 'trigger-cart', delay_ms: 0, action_payload: { flow_id: 'flow-cart' } }], error: null })],
+        })
+
+        const result = await createSandboxAbandonedCheckout(sandboxInput(true))
+
+        expect(result.scheduled).toBe(1)
+        expect(insert.insert).toHaveBeenCalledWith(expect.objectContaining({
+          assigned_instance_name: '__sandbox__',
+          is_simulation: true,
+          contact_phone: '000000000',
+          recovery_status: 'Pendente',
+        }))
+        expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledWith(expect.objectContaining({
+          instanceName: '__sandbox__',
+          flowId: 'flow-cart',
+          runAt: new Date(NOW),
+        }))
+      })
+
+      it('respeita o delay do gatilho quando não é para disparar agora', async () => {
+        jest.useFakeTimers({ now: NOW })
+        setTableQueues({
+          shopify_abandoned_checkouts: [queryBuilder({
+            data: savedCheckout({
+              assigned_instance_name: '__sandbox__',
+              is_simulation: true,
+              raw_shopify_payload: { created_at: new Date(NOW).toISOString(), updated_at: new Date(NOW).toISOString() },
+            }),
+            error: null,
+          })],
+          triggers: [queryBuilder({ data: [{ id: 'trigger-cart', delay_ms: 0, action_payload: { flow_id: 'flow-cart' } }], error: null })],
+        })
+
+        await createSandboxAbandonedCheckout(sandboxInput(false))
+
+        expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledWith(expect.objectContaining({
+          runAt: new Date(NOW + 60 * MINUTE),
+        }))
+      })
     })
 
     it('ignora carrinho sem telefone', async () => {

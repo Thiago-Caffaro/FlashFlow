@@ -1,8 +1,8 @@
 'use client'
 
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Radio, RotateCcw, Send } from 'lucide-react'
-import { Message, SandboxContact } from '@/types'
+import { Loader2, Radio, Reply, RotateCcw, Send } from 'lucide-react'
+import { FlowReplyButton, Message, SandboxContact } from '@/types'
 import MessageBubble from '@/components/chat/message-bubble'
 import { getJson, sandboxBtnPrimary, sandboxInputClass } from './sandbox-styles'
 
@@ -20,6 +20,8 @@ const POLL_MS = 3000
 
 export default function SandboxChat({ activeContact, active, accountLabel, onMessage, headerActions }: SandboxChatProps) {
   const [messages, setMessages] = useState<Message[]>([])
+  // Botões do fluxo pausado esperando resposta (flow_run waiting_confirmation).
+  const [replyButtons, setReplyButtons] = useState<FlowReplyButton[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
   const [resetBusy, setResetBusy] = useState(false)
@@ -30,7 +32,10 @@ export default function SandboxChat({ activeContact, active, accountLabel, onMes
   const loadChat = useCallback(async () => {
     const qs = activeContactId ? `?conversationId=${encodeURIComponent(activeContactId)}` : ''
     const json = await fetch(`/api/fulfillment/sandbox/message${qs}`, { cache: 'no-store' }).then(getJson)
-    if (json.ok) setMessages(json.messages ?? [])
+    if (json.ok) {
+      setMessages(json.messages ?? [])
+      setReplyButtons(Array.isArray(json.replyButtons) ? json.replyButtons : [])
+    }
   }, [activeContactId])
 
   useEffect(() => {
@@ -54,11 +59,12 @@ export default function SandboxChat({ activeContact, active, accountLabel, onMes
     if (chat && shouldStickToBottomRef.current) chat.scrollTop = chat.scrollHeight
   }, [messages])
 
-  async function sendChatMessage() {
-    const text = chatInput.trim()
+  async function sendChatMessage(override?: string) {
+    const text = (override ?? chatInput).trim()
     if (!text) return
     setChatBusy(true)
-    setChatInput('')
+    if (override === undefined) setChatInput('')
+    setReplyButtons([])
     shouldStickToBottomRef.current = true
     const json = await fetch('/api/fulfillment/sandbox/message', {
       method: 'POST',
@@ -125,6 +131,22 @@ export default function SandboxChat({ activeContact, active, accountLabel, onMes
           <p className="py-8 text-center text-sm text-[#667781]">Nenhuma mensagem ainda. Envie algo abaixo para começar.</p>
         )}
         {messages.map((msg) => <MessageBubble key={msg.id} message={msg} />)}
+        {replyButtons.length > 0 && (
+          // Toque num botão = o cliente respondendo com o texto dele, como no WhatsApp.
+          <div className="ml-auto flex w-full max-w-[85%] flex-col gap-1 pt-1" aria-label="Botões de resposta">
+            {replyButtons.map((button) => (
+              <button
+                key={button.id}
+                onClick={() => void sendChatMessage(button.label)}
+                disabled={chatBusy}
+                className="flex items-center justify-center gap-1.5 rounded-lg bg-white px-3 py-2 text-sm font-medium text-[#027eb5] shadow-sm hover:bg-[#f5f6f6] disabled:opacity-50 dark:bg-[#202c33] dark:text-[#53bdeb] dark:hover:bg-[#2a3942]"
+              >
+                <Reply size={14} />
+                {button.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2 border-t border-[#f0f2f5] p-3 dark:border-[#2a3942]">
@@ -135,7 +157,7 @@ export default function SandboxChat({ activeContact, active, accountLabel, onMes
           onChange={(e) => setChatInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !chatBusy) void sendChatMessage() }}
         />
-        <button onClick={sendChatMessage} disabled={chatBusy || !chatInput.trim()} className={sandboxBtnPrimary} aria-label="Enviar">
+        <button onClick={() => void sendChatMessage()} disabled={chatBusy || !chatInput.trim()} className={sandboxBtnPrimary} aria-label="Enviar">
           {chatBusy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
         </button>
       </div>

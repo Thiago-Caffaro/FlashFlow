@@ -414,6 +414,7 @@ export default function OrdersSection({
               >
                 <div>
                   <span className="font-semibold dark:text-[#e9edef]">{checkout.customer_name || checkout.email || 'Sem nome'}</span>
+                  {checkout.is_simulation && <span className="ml-2 text-xs text-purple-600 dark:text-purple-400">simulação</span>}
                   <p className="text-xs text-[#667781]">{checkout.contact_phone || 'Sem tel.'} · {checkout.country}</p>
                 </div>
                 <div>

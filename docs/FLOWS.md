@@ -164,7 +164,14 @@ instância (conta WhatsApp), não uma memória isolada por conversa.
 A UI é a view **Sandbox** do app principal (`components/sandbox/`, abaixo
 de Memória no menu): conversa de teste fixa à esquerda e, à direita, sub-abas
 Visão geral (mini janelas de gatilhos, fluxos e memória da conta sandbox),
-Gatilhos, Fluxos, Memória, Simular pedido e Produtos fictícios. Gatilhos,
+Gatilhos, Fluxos, Memória, Simular pedido, Carrinho abandonado e Produtos
+fictícios. O carrinho simulado (`createSandboxAbandonedCheckout`) é gravado
+com `is_simulation=true` na conta sandbox e agenda os gatilhos "Carrinho
+abandonado" dela — na hora ou respeitando o delay —, mesmo com os gatilhos
+Shopify pausados, como os pedidos simulados.
+No chat de teste, os botões de resposta do fluxo pausado aparecem clicáveis
+(vêm de `flow_runs.variables.replyButtons`); a retomada passa `flowRunId`,
+`orderId`/`checkoutId` e `normalizeReplyInput` como o webhook real. Gatilhos,
 Fluxos e Memória são as mesmas abas das contas reais, montadas com
 `__sandbox__`; uma edição salva vale já na próxima mensagem de teste. O chat
 só consulta o servidor com a view aberta e a janela visível. Ver
