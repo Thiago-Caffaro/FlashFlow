@@ -61,7 +61,11 @@ export async function checkToolSupport(provider: string, apiKey: string, model: 
           messages: [{ role: 'user', content: 'ping' }],
           tools: [PING_TOOL_OPENAI],
           tool_choice: 'required',
-          max_tokens: 10,
+          // OpenAI: max_tokens é rejeitado pelos modelos novos (a checagem
+          // falhava e o modelo aparecia como "sem suporte a tools"). Modelos de
+          // raciocínio gastam tokens pensando antes de chamar a ferramenta,
+          // então o limite precisa de folga.
+          ...(provider === 'openai' ? { max_completion_tokens: 1024 } : { max_tokens: 10 }),
         }),
       })
       if (!res.ok) return false
