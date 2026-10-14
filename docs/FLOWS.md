@@ -159,6 +159,32 @@ sempre injetados no prompt; blocos com `keywords` só entram se alguma
 keyword aparecer na mensagem do lead. É memória compartilhada por
 instância (conta WhatsApp), não uma memória isolada por conversa.
 
+## Indicador "digitando…" da IA
+
+Enquanto a IA gera uma resposta (nó Agente do fluxo e sessão de IA ativa —
+nesta, só depois do debounce, quando o cliente parou de escrever), o cliente
+vê "digitando…" (`startTypingIndicator`, `lib/flow-engine.ts`). Falhar em
+exibi-lo nunca impede a resposta, e conversas de sandbox sem envio real não
+disparam nada.
+
+- **Evolution** (`lib/whatsapp-evolution-adapter.ts`): `/chat/sendPresence`
+  em ciclos curtos de "composing" (5s, até 20s no total). Há **um laço por
+  conversa**: uma nova resposta da IA na mesma conversa estende o laço em
+  andamento em vez de abrir outro — assim o "paused" que a Evolution manda no
+  fim de um ciclo antigo não apaga o indicador da resposta seguinte. Quando a
+  resposta sai, o laço só para de renovar (o WhatsApp já apaga o indicador ao
+  receber a mensagem); se nada vai ser enviado (falha, resposta vazia,
+  escalonamento), manda "paused" na hora.
+- **WhatsApp Cloud API**: a Meta só exibe "digitando…" junto com a
+  **confirmação de leitura** da mensagem recebida
+  (`status: 'read'` + `typing_indicator`). Consequência: **sempre que a IA vai
+  responder, o cliente passa a ver os tiques azuis** nessa mensagem e nas
+  anteriores — mesmo que nenhum atendente humano tenha lido a conversa. Não há
+  como mostrar o indicador sem marcar como lida, nem como cancelá-lo (some ao
+  enviar a resposta ou após ~25s). Execuções sem mensagem recebida (ex.: fluxo
+  disparado por job de pedido ou carrinho) não mostram indicador nem marcam
+  leitura.
+
 ## Sandbox
 
 A UI é a view **Sandbox** do app principal (`components/sandbox/`, abaixo

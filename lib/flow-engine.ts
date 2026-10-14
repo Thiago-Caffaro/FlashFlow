@@ -107,11 +107,13 @@ export function resolveRealSendTarget(ctx: FlowContext): string | undefined {
 
 export interface TypingIndicator {
   // Apaga o indicador quando nenhuma resposta vai ser enviada (falha da IA,
-  // resposta vazia). Enviar uma mensagem já o apaga — não precisa chamar.
+  // resposta vazia, envio que falhou).
   stop(): Promise<void>
+  // A resposta saiu: o WhatsApp já apaga o indicador — só para de renová-lo.
+  release(): Promise<void>
 }
 
-const NO_TYPING_INDICATOR: TypingIndicator = { stop: async () => {} }
+const NO_TYPING_INDICATOR: TypingIndicator = { stop: async () => {}, release: async () => {} }
 
 /**
  * Mostra "digitando…" ao cliente enquanto a IA gera a resposta. Dispara a
@@ -131,14 +133,16 @@ export function startTypingIndicator(ctx: FlowContext): TypingIndicator {
     }
   })()
 
+  const clear = async (replied: boolean) => {
+    try {
+      await dispatchClearTypingIndicator(target, ctx.remoteJid, { replied })
+    } catch (err) {
+      engineLog.warn('falha ao apagar "digitando…"', { instance: target, err }, { throttleKey: `typing-clear:${target}` })
+    }
+  }
   return {
-    async stop() {
-      try {
-        await dispatchClearTypingIndicator(target, ctx.remoteJid)
-      } catch (err) {
-        engineLog.warn('falha ao apagar "digitando…"', { instance: target, err }, { throttleKey: `typing-clear:${target}` })
-      }
-    },
+    stop: () => clear(false),
+    release: () => clear(true),
   }
 }
 
@@ -1343,7 +1347,13 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
           .update({ pending_messages: [], history: updatedHistory })
           .eq('id', session.id)
         if (saveErr) logError(`handleActiveSession: failed to save history`, { sessionId: session.id, error: saveErr.message })
-        await sendWhatsApp(ctx, reply)
+        try {
+          await sendWhatsApp(ctx, reply)
+        } catch (sendErr) {
+          await typing.stop()
+          throw sendErr
+        }
+        await typing.release()
         log(`handleActiveSession: reply sent`, { replyLength: reply.length, historyTurns: updatedHistory.length })
       } else {
         log(`handleActiveSession: empty reply, not sending`)
@@ -2042,6 +2052,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
         if (reply.trim()) {
           log(`executeFlow aiAssistant: sending reply`, { replyLength: reply.length })
           await sendWhatsApp(ctx, reply)
+          await typing.release()
           anyMessageSent = true
         } else {
           log(`executeFlow aiAssistant: empty reply, not sending`)

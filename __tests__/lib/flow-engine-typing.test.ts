@@ -95,10 +95,16 @@ describe('startTypingIndicator', () => {
     expect(mockDispatchSendTyping).toHaveBeenCalledWith('wa-real', '5511999999999@s.whatsapp.net', { inboundMessageId: undefined })
   })
 
+  it('release() only stops renewing after the reply went out', async () => {
+    const typing = startTypingIndicator(baseCtx)
+    await typing.release()
+    expect(mockDispatchClearTyping).toHaveBeenCalledWith('wa-1', '5511999999999@s.whatsapp.net', { replied: true })
+  })
+
   it('stop() clears the indicator and swallows a failure', async () => {
     const typing = startTypingIndicator(baseCtx)
     await typing.stop()
-    expect(mockDispatchClearTyping).toHaveBeenCalledWith('wa-1', '5511999999999@s.whatsapp.net')
+    expect(mockDispatchClearTyping).toHaveBeenCalledWith('wa-1', '5511999999999@s.whatsapp.net', { replied: false })
 
     mockDispatchClearTyping.mockRejectedValue(new Error('evolution down'))
     await expect(typing.stop()).resolves.toBeUndefined()

@@ -1,7 +1,7 @@
 import 'server-only'
 import { fetchEvolution } from './evolution-api'
 import type { RenderedMessageContent } from './message-template'
-import type { SendResult, WhatsAppProviderAdapter } from './whatsapp-dispatch'
+import type { SendResult, WhatsAppProviderAdapter, TypingIndicatorClearOptions } from './whatsapp-dispatch'
 
 function extractWaMessageId(body: unknown): string | null {
   const record = body && typeof body === 'object' ? body as Record<string, unknown> : {}
@@ -27,12 +27,31 @@ async function sendText(
 }
 
 // A rota /chat/sendPresence da Evolution é síncrona: envia a presença, segura a
-// requisição pelo `delay` e só então manda "paused". Para o "digitando…" durar
-// enquanto a IA gera a resposta, a chamada fica aberta por este tempo — por
-// isso o dispatcher deve ser chamado sem await (ver startTypingIndicator).
-// Até 20s a Evolution usa um único ciclo composing → paused.
+// requisição pelo `delay` e só então manda "paused" sozinha. Um ciclo único e
+// longo (ex.: 20s) tinha um efeito colateral: se a IA respondesse rápido e o
+// cliente mandasse outra mensagem, o "paused" automático daquele ciclo antigo
+// apagava o "digitando…" da resposta seguinte antes da hora.
+//
+// Por isso há um único laço por conversa, em ciclos curtos: uma nova resposta
+// da IA na mesma conversa estende o laço em andamento em vez de abrir outro,
+// e o laço para de renovar o "digitando…" quando a resposta sai. O "paused"
+// do fim de cada ciclo só aparece entre um ciclo e o próximo (milissegundos)
+// ou depois que o laço acabou.
 const TYPING_INDICATOR_DURATION_MS = 20_000
-const TYPING_INDICATOR_TIMEOUT_MS = TYPING_INDICATOR_DURATION_MS + 5_000
+const TYPING_CYCLE_MS = 5_000
+
+interface TypingLoop {
+  deadline: number
+  holders: number
+  stopped: boolean
+}
+
+// Laços ativos por instância + conversa (memória do processo).
+const typingLoops = new Map<string, TypingLoop>()
+
+function typingKey(instanceName: string, remoteJid: string): string {
+  return `${instanceName}|${remoteJid}`
+}
 
 async function postPresence(
   instanceName: string,
@@ -51,12 +70,55 @@ async function postPresence(
   }
 }
 
+// Só resolve quando o laço termina — quem chama não deve aguardar
+// (ver startTypingIndicator em lib/flow-engine.ts).
 async function sendTypingIndicator(instanceName: string, remoteJid: string): Promise<void> {
-  await postPresence(instanceName, remoteJid, 'composing', TYPING_INDICATOR_DURATION_MS, TYPING_INDICATOR_TIMEOUT_MS)
+  const key = typingKey(instanceName, remoteJid)
+  const deadline = Date.now() + TYPING_INDICATOR_DURATION_MS
+  const running = typingLoops.get(key)
+  if (running) {
+    // Outra resposta da IA nesta conversa: estende o laço em andamento.
+    running.deadline = Math.max(running.deadline, deadline)
+    running.holders += 1
+    running.stopped = false
+    return
+  }
+
+  const loop: TypingLoop = { deadline, holders: 1, stopped: false }
+  typingLoops.set(key, loop)
+  try {
+    while (!loop.stopped && Date.now() < loop.deadline) {
+      const cycle = Math.min(TYPING_CYCLE_MS, loop.deadline - Date.now())
+      if (cycle <= 0) break
+      await postPresence(instanceName, remoteJid, 'composing', cycle, cycle + 5_000)
+    }
+  } finally {
+    if (typingLoops.get(key) === loop) typingLoops.delete(key)
+  }
 }
 
-async function clearTypingIndicator(instanceName: string, remoteJid: string): Promise<void> {
+// `replied`: a resposta já foi enviada (o WhatsApp apaga o "digitando…"
+// sozinho) — só para de renovar. Sem resposta (falha, resposta vazia), manda
+// "paused" na hora.
+async function clearTypingIndicator(
+  instanceName: string,
+  remoteJid: string,
+  options: TypingIndicatorClearOptions = {}
+): Promise<void> {
+  const loop = typingLoops.get(typingKey(instanceName, remoteJid))
+  if (loop) {
+    loop.holders = Math.max(0, loop.holders - 1)
+    if (loop.holders === 0) loop.stopped = true
+    // Outra resposta ainda em preparo nesta conversa: o "digitando…" continua.
+    if (loop.holders > 0) return
+  }
+  if (options.replied) return
   await postPresence(instanceName, remoteJid, 'paused', 0, 8_000)
+}
+
+// Só para testes: zera os laços em memória.
+export function _resetTypingLoopsForTests(): void {
+  typingLoops.clear()
 }
 
 async function sendImage(

@@ -161,12 +161,12 @@ describe('whatsapp-dispatch', () => {
 
   it('dispatches clearing the typing indicator to the right adapter', async () => {
     mockGetAccountProvider.mockResolvedValue('evolution')
-    await dispatchClearTypingIndicator('wa-1', 'jid')
-    expect(mockEvolutionClearTyping).toHaveBeenCalledWith('wa-1', 'jid')
+    await dispatchClearTypingIndicator('wa-1', 'jid', { replied: true })
+    expect(mockEvolutionClearTyping).toHaveBeenCalledWith('wa-1', 'jid', { replied: true })
 
     mockGetAccountProvider.mockResolvedValue('cloud_api')
     await dispatchClearTypingIndicator('wa-cloud', 'jid')
-    expect(mockCloudClearTyping).toHaveBeenCalledWith('wa-cloud', 'jid')
+    expect(mockCloudClearTyping).toHaveBeenCalledWith('wa-cloud', 'jid', undefined)
   })
 
   it('dispatches sendTemplate to the evolution adapter, which rejects as unsupported', async () => {
