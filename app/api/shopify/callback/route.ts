@@ -1,11 +1,13 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
-import { encryptSecret, decryptSecret } from '@/lib/ai-crypto'
+import { encryptSecret } from '@/lib/ai-crypto'
 import { normalizeShopDomain } from '@/lib/shopify-client'
 import { SHOPIFY_INTEGRATION_PUBLIC_SELECT } from '@/lib/shopify-confirmation-service'
 import { ensureOrderCreateWebhookRegisteredWithToken } from '@/lib/shopify-webhook-setup'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
+import { getShopifyAppCredentials, loadShopifyAppFieldsByDomain } from '@/lib/shopify-integration-store'
+import { SHOPIFY_OAUTH_STATE_COOKIE, decodeShopifyOAuthState } from '@/lib/shopify-oauth-state'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,6 +20,16 @@ function encryptedTokenPatch(value: string) {
   }
 }
 
+function encryptedAppSecretPatch(clientId: string, clientSecret: string) {
+  const encrypted = encryptSecret(clientSecret)
+  return {
+    app_client_id: clientId,
+    encrypted_app_client_secret: encrypted.encrypted_key,
+    app_client_secret_iv: encrypted.iv,
+    app_client_secret_auth_tag: encrypted.auth_tag,
+  }
+}
+
 function hmacEqual(a: string, b: string): boolean {
   try {
     return timingSafeEqual(Buffer.from(a), Buffer.from(b))
@@ -27,20 +39,13 @@ function hmacEqual(a: string, b: string): boolean {
 }
 
 export async function GET(req: NextRequest) {
-  const [clientIdDb, clientSecretDb, appBaseUrlDb] = await Promise.all([
-    getSetting('shopify_client_id'),
-    getSetting('shopify_client_secret'),
-    getSetting('shopify_app_base_url'),
-  ])
-  const clientId = clientIdDb ?? process.env.SHOPIFY_CLIENT_ID ?? ''
-  const clientSecret = clientSecretDb ?? process.env.SHOPIFY_CLIENT_SECRET ?? ''
-  const appBaseUrl = appBaseUrlDb ?? process.env.APP_BASE_URL ?? ''
+  const appBaseUrl = (await getSetting('shopify_app_base_url')) ?? process.env.APP_BASE_URL ?? ''
 
   function fail(msg: string) {
     return NextResponse.redirect(`${appBaseUrl}/fulfillment?shopifyError=${encodeURIComponent(msg)}`)
   }
 
-  if (!clientId || !clientSecret || !appBaseUrl) return fail('Configuração OAuth incompleta no servidor')
+  if (!appBaseUrl) return fail('Configuração OAuth incompleta no servidor')
 
   const params = req.nextUrl.searchParams
   const hmac = params.get('hmac') ?? ''
@@ -58,28 +63,13 @@ export async function GET(req: NextRequest) {
     return fail('Domínio inválido — use o formato loja.myshopify.com')
   }
 
-  // Step 1 — Verify HMAC
-  const sortedMessage = Array.from(params.entries())
-    .filter(([k]) => k !== 'hmac')
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join('&')
-
-  const expectedHmac = createHmac('sha256', clientSecret).update(sortedMessage).digest('hex')
-  if (!hmacEqual(expectedHmac, hmac)) return fail('Assinatura HMAC inválida')
-
-  // Step 2 — Verify state from cookie (encrypted)
-  const cookieRaw = req.cookies.get('shopify_oauth_state')?.value
+  // Step 1 — Estado do cookie (cifrado pelo servidor). Vem antes do HMAC
+  // porque diz qual app assina este callback: o app próprio da loja ou o
+  // global.
+  const cookieRaw = req.cookies.get(SHOPIFY_OAUTH_STATE_COOKIE)?.value
   if (!cookieRaw) return fail('Cookie de estado expirado — tente novamente')
-
-  let cookieData: { nonce: string; country: string }
-  try {
-    const encrypted = JSON.parse(cookieRaw) as { encrypted_key: string; iv: string; auth_tag: string }
-    const plain = decryptSecret(encrypted.encrypted_key, encrypted.iv, encrypted.auth_tag)
-    cookieData = JSON.parse(plain) as { nonce: string; country: string }
-  } catch {
-    return fail('Cookie de estado inválido ou corrompido')
-  }
+  const cookieData = decodeShopifyOAuthState(cookieRaw)
+  if (!cookieData) return fail('Cookie de estado inválido ou corrompido')
 
   const nonceA = Buffer.from(cookieData.nonce, 'utf8')
   const nonceB = Buffer.from(state, 'utf8')
@@ -87,6 +77,28 @@ export async function GET(req: NextRequest) {
     return fail('Estado OAuth não confere')
   }
   const country = cookieData.country.toUpperCase()
+
+  let clientId: string
+  let clientSecret: string
+  try {
+    const credentials = cookieData.app
+      ?? await getShopifyAppCredentials(await loadShopifyAppFieldsByDomain(shop))
+    clientId = credentials.clientId
+    clientSecret = credentials.clientSecret
+  } catch {
+    return fail('Falha ao carregar as credenciais do app Shopify')
+  }
+  if (!clientId || !clientSecret) return fail('Configuração OAuth incompleta no servidor')
+
+  // Step 2 — Verify HMAC
+  const sortedMessage = Array.from(params.entries())
+    .filter(([k]) => k !== 'hmac')
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&')
+
+  const expectedHmac = createHmac('sha256', clientSecret).update(sortedMessage).digest('hex')
+  if (!hmacEqual(expectedHmac, hmac)) return fail('Assinatura HMAC inválida — confira se o Client Secret do app está correto')
 
   // Step 3 — Exchange code for access token
   let accessToken: string
@@ -128,6 +140,9 @@ export async function GET(req: NextRequest) {
         shop_domain: normalizedDomain,
         default_country: country,
         ...encryptedTokenPatch(accessToken),
+        // App próprio novo: só é gravado depois de o OAuth provar que o
+        // Client ID/Secret estão certos.
+        ...(cookieData.app ? encryptedAppSecretPatch(cookieData.app.clientId, cookieData.app.clientSecret) : {}),
         oauth_connected: true,
         active: true,
         updated_at: new Date().toISOString(),
@@ -150,6 +165,6 @@ export async function GET(req: NextRequest) {
   const successParams = new URLSearchParams({ shopifyConnected: '1' })
   if (webhookWarning) successParams.set('shopifyWebhookWarning', webhookWarning)
   const res = NextResponse.redirect(`${appBaseUrl}/fulfillment?${successParams.toString()}`)
-  res.cookies.set('shopify_oauth_state', '', { maxAge: 0, path: '/' })
+  res.cookies.set(SHOPIFY_OAUTH_STATE_COOKIE, '', { maxAge: 0, path: '/' })
   return res
 }

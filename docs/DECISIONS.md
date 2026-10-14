@@ -259,3 +259,32 @@ organizacional (quebrar um arquivo grande), não técnico.
 7. [x] Testes: o painel não consulta quando inativo; as sub-abas montam
    com `__sandbox__`. Bump de `APP_VERSION` e atualizar `docs/FLOWS.md`
    (seção Sandbox).
+
+---
+
+## [013] Várias lojas Shopify, cada uma com o próprio app e as próprias contas WhatsApp
+**Status**: Aceita e implementada (2026-10-14, v1.16.0, migration 026)
+
+**Contexto**: o FlashFlow tinha um único app Shopify (Client ID/Secret em
+`app_settings`) para todas as lojas, e a escolha da conta WhatsApp de um
+pedido era global (conta padrão ou país + prioridade). Um app de
+distribuição personalizada só instala em uma loja (ou lojas da mesma
+organização Plus), então uma loja de outro cliente não conseguia conectar.
+
+**Decisão**:
+- Cada loja pode guardar o app dela (`app_client_id` + Client Secret
+  cifrado em `shopify_integrations`). Vazio = app global, como antes —
+  a loja já conectada não muda.
+- O OAuth começa por `POST /api/shopify/auth` (o Client Secret não pode ir
+  em URL). As credenciais novas viajam no cookie de estado cifrado e só são
+  gravadas no callback, depois de o HMAC e a troca do código provarem que
+  estão certas. O callback e os webhooks verificam a assinatura com o
+  segredo do app da própria loja (`resolveShopifyWebhookSecret`).
+- `shopify_integration_accounts` liga várias contas WhatsApp a uma loja.
+  Ordem de escolha (`assignConfirmationAccount`): contas da loja (a do país
+  do pedido primeiro, depois a prioridade) → conta padrão global → país +
+  prioridade entre todas. Loja sem vínculo segue a regra geral.
+
+**Descartado**: OAuth público ("Adicionar ao Shopify" com app listado) —
+exige revisão da Shopify e não é necessário para poucas lojas operadas
+pelo mesmo dono.

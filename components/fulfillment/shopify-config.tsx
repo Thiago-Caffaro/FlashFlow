@@ -6,6 +6,7 @@ import {
   RotateCcw, Save, ShoppingBag, Trash2, Webhook,
 } from 'lucide-react'
 import { Account, ShopifyIntegration } from '@/types'
+import ShopifyStoreAccountsEditor from '@/components/fulfillment/shopify-store-accounts-editor'
 
 type ShopifyIntegrationForm = {
   shop_domain: string
@@ -77,6 +78,9 @@ export default function ShopifyConfig({
   const [credsLoaded, setCredsLoaded] = useState(false)
   const [showCredsForm, setShowCredsForm] = useState(false)
   const [credsBusy, setCredsBusy] = useState(false)
+
+  const [appMode, setAppMode] = useState<'global' | 'own'>('global')
+  const [storeApp, setStoreApp] = useState({ clientId: '', clientSecret: '' })
 
   const [webhookBusy, setWebhookBusy] = useState(false)
   const [webhookResult, setWebhookResult] = useState<{ text: string; error?: boolean } | null>(null)
@@ -218,6 +222,8 @@ export default function ShopifyConfig({
     })
     setShowForm(true)
     setActiveStep(1)
+    setAppMode('global')
+    setStoreApp({ clientId: '', clientSecret: '' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -226,6 +232,36 @@ export default function ShopifyConfig({
     setForm(emptyForm)
     setShowForm(false)
     setActiveStep(1)
+    setAppMode('global')
+    setStoreApp({ clientId: '', clientSecret: '' })
+  }
+
+  // Inicia o OAuth por POST: o Client Secret do app próprio não pode ir em URL.
+  async function startOAuth() {
+    if (!form.shop_domain || !form.default_country) {
+      showMsg('Preencha o domínio e o país padrão antes de conectar.', true)
+      return
+    }
+    if (appMode === 'own' && (!storeApp.clientId || !storeApp.clientSecret)) {
+      showMsg('Preencha o Client ID e o Client Secret do app da loja.', true)
+      return
+    }
+    setBusy('oauth')
+    const json = await fetch('/api/shopify/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shop: form.shop_domain,
+        country: form.default_country,
+        ...(appMode === 'own' ? storeApp : {}),
+      }),
+    }).then(getJson)
+    if (json.ok && typeof json.authUrl === 'string') {
+      window.location.href = json.authUrl
+      return
+    }
+    showMsg(json.error ?? 'Não foi possível iniciar a conexão com o Shopify.', true)
+    setBusy(null)
   }
 
   async function save() {
@@ -286,6 +322,8 @@ export default function ShopifyConfig({
   ]
 
   const canSave = Boolean(editingId && form.shop_domain && form.default_country)
+  const editingIntegration = shopifyIntegrations.find((integration) => integration.id === editingId) ?? null
+  const callbackUrl = `${(creds.appBaseUrl || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/+$/, '')}/api/shopify/callback`
 
   return (
     <div className="space-y-6">
@@ -403,7 +441,7 @@ export default function ShopifyConfig({
         <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
           <div className="border-b border-[#f0f2f5] px-6 py-4 dark:border-[#2a3942]">
             <h3 className="font-bold dark:text-[#e9edef]">{editingId ? 'Editar loja' : 'Conectar nova loja'}</h3>
-            <p className="mt-0.5 text-xs text-[#667781]">{editingId ? 'Edite mensagens e roteamento WhatsApp.' : 'Autentique via OAuth para conectar sua loja Shopify.'}</p>
+            <p className="mt-0.5 text-xs text-[#667781]">{editingId ? 'Edite mensagens, contas WhatsApp da loja ou reconecte.' : 'Autentique via OAuth para conectar sua loja Shopify.'}</p>
           </div>
 
           {/* Step tabs */}
@@ -447,32 +485,83 @@ export default function ShopifyConfig({
                   />
                   <p className="mt-1 text-xs text-[#667781]">Deve corresponder ao país configurado nas credenciais FenixCOD.</p>
                 </div>
-                {!editingId && (
-                  <div className="rounded-lg border border-[#d1d7db] bg-[#f8f9fa] p-4 dark:border-[#2a3942] dark:bg-[#0b141a]">
-                    <p className="mb-3 text-sm font-semibold dark:text-[#e9edef]">Autenticar via Shopify OAuth</p>
-                    <p className="mb-4 text-xs text-[#667781]">
-                      Você será redirecionado para o Shopify para autorizar o acesso. O token de acesso será capturado e armazenado automaticamente.
+                <div className="space-y-3 rounded-lg border border-[#d1d7db] bg-[#f8f9fa] p-4 dark:border-[#2a3942] dark:bg-[#0b141a]">
+                  <p className="text-sm font-semibold dark:text-[#e9edef]">App Shopify desta loja</p>
+                  {editingIntegration && (
+                    <p className="text-xs text-[#667781]">
+                      Em uso: {editingIntegration.app_client_id
+                        ? <>app próprio da loja (Client ID <code className={VAR_HINT_CLASSES}>{editingIntegration.app_client_id.slice(0, 8)}…</code>)</>
+                        : 'app global (Credenciais do App Shopify)'}
                     </p>
-                    <button
-                      onClick={() => {
-                        if (!form.shop_domain || !form.default_country) {
-                          showMsg('Preencha o domínio e o país padrão antes de conectar.', true)
-                          return
-                        }
-                        window.location.href = `/api/shopify/auth?shop=${encodeURIComponent(form.shop_domain)}&country=${encodeURIComponent(form.default_country)}`
-                      }}
-                      className={`${btnPrimary} w-full justify-center`}
-                    >
-                      <ExternalLink size={14} />
-                      Conectar com Shopify
-                    </button>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      ['global', editingIntegration?.app_client_id ? 'Manter o app atual' : 'App global'],
+                      ['own', editingIntegration ? 'Trocar por um app próprio' : 'App próprio da loja'],
+                    ] as const).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setAppMode(mode)}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${appMode === mode ? 'bg-[#00a884] text-white' : 'bg-[#f0f2f5] text-[#667781] dark:bg-[#2a3942]'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
-                )}
-                {editingId && (
+                  {appMode === 'own' ? (
+                    <div className="space-y-3">
+                      <p className="text-xs text-[#667781]">
+                        Use quando a loja é de outra organização Shopify (um app de distribuição personalizada só instala em uma loja).
+                        Crie o app em <b>dev.shopify.com</b> e, nas configurações dele, adicione esta URL de redirecionamento:
+                      </p>
+                      <code className="block break-all rounded bg-[#f0f2f5] px-2 py-1.5 font-mono text-xs dark:bg-[#2a3942] dark:text-[#e9edef]">{callbackUrl}</code>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <label htmlFor="shopify-store-client-id" className="mb-1 block text-xs font-semibold text-[#667781]">Client ID do app da loja</label>
+                          <input
+                            id="shopify-store-client-id"
+                            className={inputClass}
+                            value={storeApp.clientId}
+                            autoComplete="off"
+                            onChange={(e) => setStoreApp((a) => ({ ...a, clientId: e.target.value.trim() }))}
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="shopify-store-client-secret" className="mb-1 block text-xs font-semibold text-[#667781]">Client Secret do app da loja</label>
+                          <input
+                            id="shopify-store-client-secret"
+                            type="password"
+                            className={inputClass}
+                            value={storeApp.clientSecret}
+                            autoComplete="off"
+                            onChange={(e) => setStoreApp((a) => ({ ...a, clientSecret: e.target.value.trim() }))}
+                          />
+                        </div>
+                      </div>
+                      <p className="text-xs text-[#667781]">O Client Secret é guardado cifrado e só é salvo depois que a autorização no Shopify der certo.</p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[#667781]">
+                      {editingIntegration?.app_client_id
+                        ? 'Reconecta usando o mesmo app próprio já salvo para esta loja.'
+                        : 'Usa as Credenciais do App Shopify configuradas acima, compartilhadas entre as lojas que usam o app global.'}
+                    </p>
+                  )}
                   <p className="text-xs text-[#667781]">
-                    O token OAuth é gerenciado automaticamente. Para reconectar, desative a loja e use "Conectar loja" novamente.
+                    {editingId
+                      ? 'Reconectar renova o token de acesso e os webhooks; as mensagens e contas desta loja são mantidas.'
+                      : 'Você será redirecionado para o Shopify para autorizar o acesso. O token é guardado automaticamente.'}
                   </p>
-                )}
+                  <button
+                    onClick={() => void startOAuth()}
+                    disabled={busy === 'oauth'}
+                    className={`${btnPrimary} w-full justify-center`}
+                  >
+                    {busy === 'oauth' ? <Loader2 size={14} className="animate-spin" /> : <ExternalLink size={14} />}
+                    {editingId ? 'Reconectar com Shopify' : 'Conectar com Shopify'}
+                  </button>
+                </div>
               </>
             )}
 
@@ -487,8 +576,10 @@ export default function ShopifyConfig({
                 <div className="rounded-lg border border-[#f0f2f5] bg-[#f8f9fa] p-4 text-sm dark:border-[#2a3942] dark:bg-[#182229]">
                   <p className="font-semibold dark:text-[#e9edef]">Recebimento em tempo real de pedidos</p>
                   <p className="mt-1 text-[#667781]">
-                    Ao conectar uma loja, o FlashFlow tenta registrar automaticamente os webhooks <code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">orders/create</code> e <code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">orders/delete</code> apontando para
-                    {' '}<code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">/api/webhook/shopify/orders</code>, para que pedidos apareçam e sejam arquivados na Fila em tempo real — sem precisar clicar em Sincronizar.
+                    Ao conectar uma loja, o FlashFlow registra sozinho os webhooks de pedidos (criado, atualizado, pago, cancelado e excluído) em
+                    {' '}<code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">/api/webhook/shopify/orders</code> e de checkout (criado e atualizado) em
+                    {' '}<code className="rounded bg-[#f0f2f5] px-1 dark:bg-[#2a3942]">/api/webhook/shopify/abandoned-checkouts</code>, para que pedidos e carrinhos apareçam em tempo real — sem precisar clicar em Sincronizar.
+                    Não crie webhooks à mão no admin da Shopify: eles são assinados com outra chave e são rejeitados.
                     Use o botão abaixo para verificar/registrar de novo a qualquer momento (ex: em lojas conectadas antes desse recurso existir, ou depois de trocar a URL do app).
                   </p>
                   <button onClick={ensureWebhooks} disabled={webhookBusy} className={`${btnSecondary} mt-3`}>
@@ -584,10 +675,20 @@ export default function ShopifyConfig({
 
             {activeStep === 4 && (
               <>
-                <p className="text-sm text-[#667781]">
-                  Configure quais contas WhatsApp enviam mensagens para os pedidos desta loja.
-                  Menor número de prioridade = prioridade mais alta.
-                </p>
+                {editingId ? (
+                  <ShopifyStoreAccountsEditor integrationId={editingId} accounts={accounts} />
+                ) : (
+                  <p className="rounded-lg bg-[#f0f2f5] px-3 py-2 text-sm text-[#667781] dark:bg-[#2a3942]">
+                    Conecte a loja primeiro; depois, em Editar, escolha as contas WhatsApp dela.
+                  </p>
+                )}
+                <div className="border-t border-[#f0f2f5] pt-4 dark:border-[#2a3942]">
+                  <p className="text-sm font-semibold dark:text-[#e9edef]">Regra geral</p>
+                  <p className="mt-0.5 text-xs text-[#667781]">
+                    Vale para lojas sem conta vinculada: a conta padrão dos novos pedidos (topo da página) ou, sem ela, a conta ativa do país do pedido com a menor prioridade.
+                    Estas opções valem para todas as lojas.
+                  </p>
+                </div>
                 {accounts.length === 0 && (
                   <p className="text-sm text-[#667781]">Nenhuma conta WhatsApp cadastrada.</p>
                 )}
@@ -655,6 +756,9 @@ export default function ShopifyConfig({
               </div>
               {integration.oauth_connected && (
                 <span className="rounded-full bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">OAuth</span>
+              )}
+              {integration.app_client_id && (
+                <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" title="Conectada com o app próprio da loja">app próprio</span>
               )}
               <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusClass(integration.active)}`}>
                 {integration.active ? 'ativa' : 'inativa'}

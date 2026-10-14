@@ -303,8 +303,17 @@ export interface ShopifyIntegration {
   recovery_message_template: string | null
   recovery_template_id: string | null
   recovery_template_variable_map: Record<string, string> | null
+  // Client ID do app próprio da loja (migration 026); null = app global.
+  app_client_id: string | null
   created_at: string
   updated_at: string
+}
+
+// Conta WhatsApp vinculada a uma loja Shopify (shopify_integration_accounts).
+export interface ShopifyStoreAccountLink {
+  instance_name: string
+  priority: number
+  enabled: boolean
 }
 
 export interface ShopifyProduct {
