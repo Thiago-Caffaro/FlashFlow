@@ -9,6 +9,7 @@ const mockExecuteFlow = jest.fn()
 const mockRpc = jest.fn()
 const mockEnqueueShopifyOrderFlowJob = jest.fn()
 const mockGetDefaultShopifyOrderInstance = jest.fn()
+const mockPickShopifyStoreAccount = jest.fn()
 
 jest.mock('@/lib/supabase-admin', () => ({
   supabaseAdmin: { from: mockFrom, rpc: mockRpc },
@@ -61,6 +62,10 @@ jest.mock('@/lib/shopify-trigger-settings', () => ({
 
 jest.mock('@/lib/shopify-order-settings', () => ({
   getDefaultShopifyOrderInstance: mockGetDefaultShopifyOrderInstance,
+}))
+
+jest.mock('@/lib/shopify-store-accounts', () => ({
+  pickShopifyStoreAccount: mockPickShopifyStoreAccount,
 }))
 
 jest.mock('@/lib/fulfillment-service', () => ({
@@ -220,6 +225,7 @@ describe('shopify-confirmation-service', () => {
     mockEnqueueShopifyOrderFlowJob.mockResolvedValue({ id: 'job-1' })
     mockSubmitFulfillmentOrder.mockResolvedValue({ id: 'order-1', status: 'created', send_status: 'Enviado' })
     mockGetDefaultShopifyOrderInstance.mockResolvedValue(null)
+    mockPickShopifyStoreAccount.mockResolvedValue(null)
     mockGetShopifyTriggersEnabled.mockResolvedValue(true)
     mockEnqueueAbandonedCheckoutFlowJob.mockResolvedValue({ id: 'job-cart' })
     mockCancelPendingAbandonedCheckoutJobs.mockResolvedValue(undefined)
@@ -245,6 +251,26 @@ describe('shopify-confirmation-service', () => {
 
     expect(assigned).toBe('wa-default')
     expect(mockFrom).not.toHaveBeenCalled()
+  })
+
+  it('prefers the accounts linked to the store over the default account', async () => {
+    mockPickShopifyStoreAccount.mockResolvedValue('wa-store')
+    mockGetDefaultShopifyOrderInstance.mockResolvedValue('wa-default')
+
+    const assigned = await assignConfirmationAccount('spain', 'shopify-2')
+
+    expect(assigned).toBe('wa-store')
+    expect(mockPickShopifyStoreAccount).toHaveBeenCalledWith('shopify-2', 'spain')
+    expect(mockGetDefaultShopifyOrderInstance).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the general rule when the store has no usable linked account', async () => {
+    mockPickShopifyStoreAccount.mockResolvedValue(null)
+    mockGetDefaultShopifyOrderInstance.mockResolvedValue('wa-default')
+
+    const assigned = await assignConfirmationAccount('spain', 'shopify-2')
+
+    expect(assigned).toBe('wa-default')
   })
 
   it('maps a Shopify order payload to the local fulfillment order shape', async () => {

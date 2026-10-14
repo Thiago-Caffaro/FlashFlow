@@ -30,7 +30,7 @@ testes dedicados em `__tests__/api/*-isolation.test.ts`.
 | Contas WhatsApp | `accounts` (coluna `provider`: `evolution` \| `cloud_api`) |
 | Automação | `triggers`, `flows`, `flow_runs`, `flow_jobs`, `flow_media`, `message_variables` |
 | IA | `ai_sessions`, `agent_memory_blocks`, `ai_provider_keys`, `instance_ai_config` |
-| Shopify | `shopify_integrations`, `shopify_products`, `shopify_abandoned_checkouts` |
+| Shopify | `shopify_integrations` (com app próprio opcional por loja, migration 026), `shopify_integration_accounts` (contas WhatsApp de cada loja, 026), `shopify_products`, `shopify_abandoned_checkouts` |
 | Fulfillment | `fulfillment_orders`, `fulfillment_products`, `fulfillment_integrations`, `fulfillment_order_events`, `fulfillment_delivery_status_mappings` |
 | Outros | `notifications`, `app_settings` (segredos cifrados em repouso) |
 

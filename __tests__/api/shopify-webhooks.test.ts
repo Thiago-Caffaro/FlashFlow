@@ -2,25 +2,18 @@ import { createHmac } from 'node:crypto'
 import { NextRequest } from 'next/server'
 
 const mockLoadShopifyIntegrationForWebhook = jest.fn()
-const mockDecodeShopifyWebhookSecret = jest.fn(() => 'webhook-secret')
+const mockResolveShopifyWebhookSecret = jest.fn(async () => 'webhook-secret')
 const mockArchiveShopifyOrder = jest.fn()
 const mockUpsertShopifyOrder = jest.fn()
 const mockUpsertShopifyAbandonedCheckout = jest.fn()
-const mockGetSetting = jest.fn(async (_key: string) => 'webhook-secret')
 const mockGetShopifyTriggersEnabled = jest.fn(async () => true)
 
 jest.mock('@/lib/shopify-confirmation-service', () => ({
   archiveShopifyOrder: mockArchiveShopifyOrder,
-  decodeShopifyWebhookSecret: mockDecodeShopifyWebhookSecret,
+  resolveShopifyWebhookSecret: mockResolveShopifyWebhookSecret,
   loadShopifyIntegrationForWebhook: mockLoadShopifyIntegrationForWebhook,
   upsertShopifyOrder: mockUpsertShopifyOrder,
   upsertShopifyAbandonedCheckout: mockUpsertShopifyAbandonedCheckout,
-}))
-
-// Isola o teste de qualquer cliente Supabase real — app-settings.ts importaria
-// lib/supabase-admin.ts (que exige SUPABASE_URL/SERVICE_ROLE_KEY reais) se não mockado.
-jest.mock('@/lib/app-settings', () => ({
-  getSetting: mockGetSetting,
 }))
 
 jest.mock('@/lib/shopify-trigger-settings', () => ({
@@ -157,6 +150,19 @@ describe('Shopify webhooks', () => {
       { id: 123 },
     )
     expect(mockUpsertShopifyOrder).not.toHaveBeenCalled()
+  })
+
+  it('verifies the HMAC with the secret resolved for the store (per-store app)', async () => {
+    mockResolveShopifyWebhookSecret.mockResolvedValueOnce('store-own-secret')
+    const rawBody = JSON.stringify({ id: 123 })
+
+    const rejected = await orderWebhook.POST(request(rawBody, hmac(rawBody), 'orders/create'))
+    expect(rejected.status).toBe(401)
+
+    mockResolveShopifyWebhookSecret.mockResolvedValueOnce('store-own-secret')
+    const accepted = await orderWebhook.POST(request(rawBody, hmac(rawBody, 'store-own-secret'), 'orders/create'))
+    expect(accepted.status).toBe(200)
+    expect(mockResolveShopifyWebhookSecret).toHaveBeenCalledWith(expect.objectContaining({ id: 'shopify-1' }))
   })
 
   it('accepts valid abandoned checkout webhooks', async () => {

@@ -454,7 +454,7 @@ export default function FulfillmentPage() {
               onChange={(event) => void updateDefaultOrderAccount(event.target.value)}
               disabled={defaultOrderAccountBusy || loading}
               aria-label="Conta padrão dos novos pedidos"
-              title="Conta padrão dos novos pedidos Shopify"
+              title="Conta padrão dos novos pedidos Shopify (lojas sem contas WhatsApp próprias)"
               className="min-h-10 w-full rounded-lg border border-[#d1d7db] bg-white py-2 pl-9 pr-8 text-sm font-semibold text-[#54656f] outline-none focus:border-[#00a884] disabled:opacity-60 dark:border-[#3d4f5a] dark:bg-[#111b21] dark:text-[#e9edef]"
             >
               <option value="">Conta por país</option>

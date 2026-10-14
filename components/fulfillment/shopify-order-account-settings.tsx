@@ -20,7 +20,7 @@ export default function ShopifyOrderAccountSettings({ accounts, value, busy, onC
         <div className="min-w-0 flex-1">
           <h2 className="text-base font-bold text-[#111b21] dark:text-[#e9edef]">Conta padrão dos pedidos</h2>
           <p className="mt-1 text-sm text-[#667781] dark:text-[#8696a0]">
-            Pedidos novos do Shopify serão vinculados a esta conta. Sem uma conta padrão, o sistema tenta escolher pela prioridade do país.
+            Pedidos novos do Shopify serão vinculados a esta conta, exceto os de lojas com contas WhatsApp próprias (Editar loja → WhatsApp). Sem uma conta padrão, o sistema tenta escolher pela prioridade do país.
           </p>
           <div className="relative mt-4 max-w-md">
             <select

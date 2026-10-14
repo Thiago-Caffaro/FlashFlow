@@ -28,6 +28,7 @@ import {
 } from './flow-jobs'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
 import { getDefaultShopifyOrderInstance } from './shopify-order-settings'
+import { pickShopifyStoreAccount } from './shopify-store-accounts'
 import {
   calculatePhysicalUnitPrice,
   resolvePackQuantity,
@@ -37,6 +38,7 @@ import {
   SHOPIFY_INTEGRATION_PUBLIC_SELECT,
   decodeShopifyAdminToken,
   decodeShopifyWebhookSecret,
+  resolveShopifyWebhookSecret,
   shopifyClientFromIntegration,
   loadShopifyIntegrationForWebhook,
   listActiveShopifyIntegrations,
@@ -52,6 +54,7 @@ export {
   SHOPIFY_INTEGRATION_PUBLIC_SELECT,
   decodeShopifyAdminToken,
   decodeShopifyWebhookSecret,
+  resolveShopifyWebhookSecret,
   shopifyClientFromIntegration,
   loadShopifyIntegrationForWebhook,
   listActiveShopifyIntegrations,
@@ -231,7 +234,14 @@ function mapLineItems(value: unknown): ShopifyOrderMappedFields['items'] {
   })
 }
 
-export async function assignConfirmationAccount(country: string): Promise<string | null> {
+// Ordem: contas vinculadas à loja (quando `integrationId` vem e a loja tem
+// alguma) → conta padrão global → país + prioridade entre todas as contas.
+export async function assignConfirmationAccount(country: string, integrationId?: string): Promise<string | null> {
+  if (integrationId) {
+    const storeInstanceName = await pickShopifyStoreAccount(integrationId, country)
+    if (storeInstanceName) return storeInstanceName
+  }
+
   const defaultInstanceName = await getDefaultShopifyOrderInstance()
   if (defaultInstanceName) return defaultInstanceName
 
@@ -325,7 +335,7 @@ export async function upsertShopifyOrder(
     shipping.country_code ?? shipping.country ?? billing.country_code ?? billing.country,
     integration.defaultCountry
   )
-  const assignedInstanceName = options.forceInstanceName ?? await assignConfirmationAccount(country)
+  const assignedInstanceName = options.forceInstanceName ?? await assignConfirmationAccount(country, integration.id)
   const mapped = await mapShopifyOrderPayload(payload, integration, assignedInstanceName)
 
   const { data: existing, error: existingError } = await supabaseAdmin
@@ -637,7 +647,7 @@ export async function upsertShopifyAbandonedCheckout(
     shipping.country_code ?? shipping.country ?? billing.country_code ?? billing.country,
     integration.defaultCountry
   )
-  const assignedInstanceName = await assignConfirmationAccount(country)
+  const assignedInstanceName = await assignConfirmationAccount(country, integration.id)
   const mapped = mapShopifyAbandonedCheckoutPayload(payload, integration, assignedInstanceName)
 
   const { data: existing, error: existingError } = mapped.shopify_checkout_id
