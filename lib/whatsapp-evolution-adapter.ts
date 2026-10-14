@@ -26,6 +26,39 @@ async function sendText(
   return { waMessageId: extractWaMessageId(response.body), raw: response.body }
 }
 
+// A rota /chat/sendPresence da Evolution é síncrona: envia a presença, segura a
+// requisição pelo `delay` e só então manda "paused". Para o "digitando…" durar
+// enquanto a IA gera a resposta, a chamada fica aberta por este tempo — por
+// isso o dispatcher deve ser chamado sem await (ver startTypingIndicator).
+// Até 20s a Evolution usa um único ciclo composing → paused.
+const TYPING_INDICATOR_DURATION_MS = 20_000
+const TYPING_INDICATOR_TIMEOUT_MS = TYPING_INDICATOR_DURATION_MS + 5_000
+
+async function postPresence(
+  instanceName: string,
+  remoteJid: string,
+  presence: 'composing' | 'paused',
+  delay: number,
+  timeoutMs: number
+): Promise<void> {
+  const response = await fetchEvolution(`/chat/sendPresence/${encodeURIComponent(instanceName)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ number: remoteJid, presence, delay }),
+  }, timeoutMs)
+  if (!response.ok) {
+    throw new Error(`Falha ao enviar presença "${presence}" via WhatsApp (${response.status}): ${response.text.slice(0, 300)}`)
+  }
+}
+
+async function sendTypingIndicator(instanceName: string, remoteJid: string): Promise<void> {
+  await postPresence(instanceName, remoteJid, 'composing', TYPING_INDICATOR_DURATION_MS, TYPING_INDICATOR_TIMEOUT_MS)
+}
+
+async function clearTypingIndicator(instanceName: string, remoteJid: string): Promise<void> {
+  await postPresence(instanceName, remoteJid, 'paused', 0, 8_000)
+}
+
 async function sendImage(
   instanceName: string,
   remoteJid: string,
@@ -85,4 +118,11 @@ async function sendTemplate(): Promise<SendResult> {
   throw new Error('Templates não são suportados para contas Evolution')
 }
 
-export const evolutionAdapter: WhatsAppProviderAdapter = { sendText, sendImage, sendButtons, sendTemplate }
+export const evolutionAdapter: WhatsAppProviderAdapter = {
+  sendText,
+  sendTypingIndicator,
+  clearTypingIndicator,
+  sendImage,
+  sendButtons,
+  sendTemplate,
+}

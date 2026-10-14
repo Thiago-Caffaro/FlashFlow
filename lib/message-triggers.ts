@@ -8,7 +8,9 @@ export async function executeTriggers(
   remoteJid: string,
   conversationId: string,
   messageContent: string,
-  messageType: string
+  messageType: string,
+  // Só a Cloud API usa: o "digitando…" do nó de IA é atrelado a esta mensagem.
+  inboundWaMessageId?: string
 ) {
   if (messageType !== 'text') return
 
@@ -74,7 +76,7 @@ export async function executeTriggers(
         // Re-check session right before executing — handles race conditions and delayed triggers
         const activeSession = await checkActiveSession(instanceName, remoteJid)
         if (activeSession) return
-        await executeFlow(flowId, { instanceName, remoteJid, conversationId, incomingMessage: messageContent })
+        await executeFlow(flowId, { instanceName, remoteJid, conversationId, incomingMessage: messageContent, inboundWaMessageId })
           .catch((err) => console.error('executeFlow error:', err))
       }
 
