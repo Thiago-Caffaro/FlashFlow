@@ -14,8 +14,12 @@ const mockEvolutionSendText = jest.fn()
 const mockEvolutionSendImage = jest.fn()
 const mockEvolutionSendButtons = jest.fn()
 const mockEvolutionSendTemplate = jest.fn()
+const mockEvolutionSendTyping = jest.fn()
+const mockEvolutionClearTyping = jest.fn()
 jest.mock('@/lib/whatsapp-evolution-adapter', () => ({
   evolutionAdapter: {
+    sendTypingIndicator: (...args: unknown[]) => mockEvolutionSendTyping(...args),
+    clearTypingIndicator: (...args: unknown[]) => mockEvolutionClearTyping(...args),
     sendText: (...args: unknown[]) => mockEvolutionSendText(...args),
     sendImage: (...args: unknown[]) => mockEvolutionSendImage(...args),
     sendButtons: (...args: unknown[]) => mockEvolutionSendButtons(...args),
@@ -27,8 +31,12 @@ const mockCloudSendText = jest.fn()
 const mockCloudSendImage = jest.fn()
 const mockCloudSendButtons = jest.fn()
 const mockCloudSendTemplate = jest.fn()
+const mockCloudSendTyping = jest.fn()
+const mockCloudClearTyping = jest.fn()
 jest.mock('@/lib/whatsapp-cloud-adapter', () => ({
   cloudApiAdapter: {
+    sendTypingIndicator: (...args: unknown[]) => mockCloudSendTyping(...args),
+    clearTypingIndicator: (...args: unknown[]) => mockCloudClearTyping(...args),
     sendText: (...args: unknown[]) => mockCloudSendText(...args),
     sendImage: (...args: unknown[]) => mockCloudSendImage(...args),
     sendButtons: (...args: unknown[]) => mockCloudSendButtons(...args),
@@ -37,7 +45,14 @@ jest.mock('@/lib/whatsapp-cloud-adapter', () => ({
 }))
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { dispatchSendText, dispatchSendImage, dispatchSendButtons, dispatchSendTemplate } = require('@/lib/whatsapp-dispatch')
+const {
+  dispatchSendText,
+  dispatchSendImage,
+  dispatchSendButtons,
+  dispatchSendTemplate,
+  dispatchSendTypingIndicator,
+  dispatchClearTypingIndicator,
+} = require('@/lib/whatsapp-dispatch')
 
 describe('whatsapp-dispatch', () => {
   beforeEach(() => {
@@ -122,6 +137,36 @@ describe('whatsapp-dispatch', () => {
     await dispatchSendTemplate('wa-cloud', '5511999999999', 'order_confirmation', 'pt_BR', [], options)
 
     expect(mockCloudSendTemplate).toHaveBeenCalledWith('wa-cloud', '5511999999999', 'order_confirmation', 'pt_BR', [], options)
+  })
+
+  it('dispatches the typing indicator to the evolution adapter for an evolution account', async () => {
+    mockGetAccountProvider.mockResolvedValue('evolution')
+    mockEvolutionSendTyping.mockResolvedValue(undefined)
+
+    await dispatchSendTypingIndicator('wa-1', '5511999999999@s.whatsapp.net', { inboundMessageId: 'ignored' })
+
+    expect(mockEvolutionSendTyping).toHaveBeenCalledWith('wa-1', '5511999999999@s.whatsapp.net', { inboundMessageId: 'ignored' })
+    expect(mockCloudSendTyping).not.toHaveBeenCalled()
+  })
+
+  it('dispatches the typing indicator to the cloud adapter, passing the inbound message id', async () => {
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    mockCloudSendTyping.mockResolvedValue(undefined)
+
+    await dispatchSendTypingIndicator('wa-cloud', '5511999999999', { inboundMessageId: 'wamid.IN' })
+
+    expect(mockCloudSendTyping).toHaveBeenCalledWith('wa-cloud', '5511999999999', { inboundMessageId: 'wamid.IN' })
+    expect(mockEvolutionSendTyping).not.toHaveBeenCalled()
+  })
+
+  it('dispatches clearing the typing indicator to the right adapter', async () => {
+    mockGetAccountProvider.mockResolvedValue('evolution')
+    await dispatchClearTypingIndicator('wa-1', 'jid', { replied: true })
+    expect(mockEvolutionClearTyping).toHaveBeenCalledWith('wa-1', 'jid', { replied: true })
+
+    mockGetAccountProvider.mockResolvedValue('cloud_api')
+    await dispatchClearTypingIndicator('wa-cloud', 'jid')
+    expect(mockCloudClearTyping).toHaveBeenCalledWith('wa-cloud', 'jid', undefined)
   })
 
   it('dispatches sendTemplate to the evolution adapter, which rejects as unsupported', async () => {

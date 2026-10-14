@@ -4,7 +4,15 @@ import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTur
 import { decrypt } from './ai-crypto'
 import { getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
 import { SANDBOX_INSTANCE_NAME } from './sandbox'
-import { dispatchSendButtons, dispatchSendImage, dispatchSendTemplate, dispatchSendText, supportsNativeButtons } from './whatsapp-dispatch'
+import {
+  dispatchClearTypingIndicator,
+  dispatchSendButtons,
+  dispatchSendImage,
+  dispatchSendTemplate,
+  dispatchSendText,
+  dispatchSendTypingIndicator,
+  supportsNativeButtons,
+} from './whatsapp-dispatch'
 import { getAccountProvider } from './whatsapp-account-provider'
 import { loadWhatsAppTemplateById } from './whatsapp-templates'
 import { getTemplateQuickReplyButtons } from './whatsapp-template-buttons'
@@ -56,6 +64,9 @@ export interface FlowContext {
   // outbound WhatsApp sends for this conversation go out for real through
   // this instance instead of being intercepted.
   realSendInstanceName?: string
+  // Id (wamid) da mensagem do cliente que disparou esta execução. Só a
+  // Cloud API usa: o "digitando…" dela é atrelado a uma mensagem recebida.
+  inboundWaMessageId?: string
 }
 
 
@@ -92,6 +103,47 @@ export function resolveRealSendTarget(ctx: FlowContext): string | undefined {
     return ctx.isSandbox ? ctx.realSendInstanceName : undefined
   }
   return ctx.instanceName
+}
+
+export interface TypingIndicator {
+  // Apaga o indicador quando nenhuma resposta vai ser enviada (falha da IA,
+  // resposta vazia, envio que falhou).
+  stop(): Promise<void>
+  // A resposta saiu: o WhatsApp já apaga o indicador — só para de renová-lo.
+  release(): Promise<void>
+}
+
+const NO_TYPING_INDICATOR: TypingIndicator = { stop: async () => {}, release: async () => {} }
+
+/**
+ * Mostra "digitando…" ao cliente enquanto a IA gera a resposta. Dispara a
+ * chamada em segundo plano (a da Evolution só retorna ao fim do indicador) e
+ * nunca lança: falhar em exibir o indicador não pode impedir a resposta.
+ * Respeita a mesma barreira de sandbox do envio real.
+ */
+export function startTypingIndicator(ctx: FlowContext): TypingIndicator {
+  const target = resolveRealSendTarget(ctx)
+  if (!target) return NO_TYPING_INDICATOR
+
+  void (async () => {
+    try {
+      await dispatchSendTypingIndicator(target, ctx.remoteJid, { inboundMessageId: ctx.inboundWaMessageId })
+    } catch (err) {
+      engineLog.warn('falha ao exibir "digitando…"', { instance: target, err }, { throttleKey: `typing:${target}` })
+    }
+  })()
+
+  const clear = async (replied: boolean) => {
+    try {
+      await dispatchClearTypingIndicator(target, ctx.remoteJid, { replied })
+    } catch (err) {
+      engineLog.warn('falha ao apagar "digitando…"', { instance: target, err }, { throttleKey: `typing-clear:${target}` })
+    }
+  }
+  return {
+    stop: () => clear(false),
+    release: () => clear(true),
+  }
 }
 
 export async function sendWhatsApp(ctx: FlowContext, text: string) {
@@ -1208,10 +1260,16 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
 
       log(`handleActiveSession: escalation mode`, { provider, withEscalation, useTextSignal, withFulfillmentTools, toolsSupported })
 
+      // Só aqui, depois do debounce: durante a espera o cliente ainda pode
+      // estar mandando mensagens e a IA ainda não começou a responder.
+      const typing = startTypingIndicator(ctx)
       const { reply: rawReply, requiresHuman: toolRequiresHuman } = await callAI(
         provider, model, customModel, systemPrompt, userMessage, temperature, history, maxTokens,
         withEscalation, withFulfillmentTools, withFulfillmentTools ? buildFulfillmentToolExecutor(ctx) : undefined
-      )
+      ).catch(async (err: unknown) => {
+        await typing.stop()
+        throw err
+      })
 
       // In text signal mode, detect and strip the signal manually (callAI only strips it for OpenRouter)
       let requiresHuman = toolRequiresHuman
@@ -1234,6 +1292,7 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
 
       if (recheck?.requires_human && !requiresHuman) {
         log(`handleActiveSession: sessão foi escalada durante a chamada de IA — descartando resposta`, { sessionId: session.id })
+        await typing.stop()
         return
       }
 
@@ -1288,10 +1347,17 @@ export async function handleActiveSession(session: AISession, ctx: FlowContext):
           .update({ pending_messages: [], history: updatedHistory })
           .eq('id', session.id)
         if (saveErr) logError(`handleActiveSession: failed to save history`, { sessionId: session.id, error: saveErr.message })
-        await sendWhatsApp(ctx, reply)
+        try {
+          await sendWhatsApp(ctx, reply)
+        } catch (sendErr) {
+          await typing.stop()
+          throw sendErr
+        }
+        await typing.release()
         log(`handleActiveSession: reply sent`, { replyLength: reply.length, historyTurns: updatedHistory.length })
       } else {
         log(`handleActiveSession: empty reply, not sending`)
+        await typing.stop()
       }
 
       const expired =
@@ -1978,6 +2044,7 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
       log(`executeFlow aiAssistant`, { provider, model, systemPromptLength: systemPrompt.length, memoryBlocks: memoryBlockIds.length, temperature, maxTokens, continueConversation: continueConv })
 
       let reply = ''
+      const typing = startTypingIndicator(ctx)
       try {
         const result = await callAI(provider, model, customModel, systemPrompt, ctx.incomingMessage, temperature, [], maxTokens)
         reply = result.reply
@@ -1985,12 +2052,15 @@ export async function executeFlow(flowId: string, ctx: FlowContext, resumeNodeId
         if (reply.trim()) {
           log(`executeFlow aiAssistant: sending reply`, { replyLength: reply.length })
           await sendWhatsApp(ctx, reply)
+          await typing.release()
           anyMessageSent = true
         } else {
           log(`executeFlow aiAssistant: empty reply, not sending`)
+          await typing.stop()
         }
       } catch (err) {
         logError(`executeFlow aiAssistant call failed`, { error: err })
+        await typing.stop()
       }
 
       if (continueConv && reply.trim()) {

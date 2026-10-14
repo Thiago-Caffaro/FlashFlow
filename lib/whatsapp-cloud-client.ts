@@ -101,6 +101,34 @@ export async function sendCloudText(
   return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
 }
 
+// Exibe "digitando…" ao cliente. A Cloud API só aceita o indicador junto com a
+// marcação de leitura da mensagem recebida — então isto também deixa a
+// mensagem (e as anteriores) com tiques azuis. A Meta apaga o indicador
+// sozinha quando uma resposta é enviada ou após ~25s; não há como cancelá-lo.
+export async function sendCloudTypingIndicator(
+  phoneNumberId: string,
+  accessToken: string,
+  inboundMessageId: string,
+  timeoutMs?: number
+): Promise<void> {
+  const response = await fetchCloudApi(`/${phoneNumberId}/messages`, accessToken, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: inboundMessageId,
+      typing_indicator: { type: 'text' },
+    }),
+  }, timeoutMs)
+
+  if (!response.ok) {
+    throw new Error(
+      `Falha ao enviar indicador de digitação via WhatsApp Cloud API (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`
+    )
+  }
+}
+
 export interface SendCloudButtonsInput {
   headerText?: string
   headerImageUrl?: string

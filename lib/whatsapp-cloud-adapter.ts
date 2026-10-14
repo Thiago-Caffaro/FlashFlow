@@ -1,7 +1,7 @@
 import 'server-only'
 import { decodeCloudAccessToken, loadCloudCredentials, recordCloudSendError } from './whatsapp-cloud-credentials'
-import { sendCloudButtons, sendCloudImage, sendCloudTemplate, sendCloudText } from './whatsapp-cloud-client'
-import type { SendResult, SendTemplateOptions, WhatsAppProviderAdapter } from './whatsapp-dispatch'
+import { sendCloudButtons, sendCloudImage, sendCloudTemplate, sendCloudText, sendCloudTypingIndicator } from './whatsapp-cloud-client'
+import type { SendResult, SendTemplateOptions, TypingIndicatorOptions, WhatsAppProviderAdapter } from './whatsapp-dispatch'
 import type { RenderedMessageContent } from './message-template'
 
 // Título de botão interativo tem teto de 20 caracteres na Cloud API —
@@ -30,6 +30,24 @@ async function sendText(
     throw error
   }
 }
+
+// Falha ao exibir "digitando…" não é falha de envio da conta — por isso não
+// passa por recordCloudSendError (que sinaliza a conta como com problema).
+async function sendTypingIndicator(
+  instanceName: string,
+  _remoteJid: string,
+  options: TypingIndicatorOptions = {}
+): Promise<void> {
+  // O indicador da Cloud API vai atrelado a uma mensagem recebida; sem ela
+  // (ex.: fluxo retomado por job) não há como exibi-lo.
+  if (!options.inboundMessageId) return
+  const row = await requireCredentials(instanceName)
+  await sendCloudTypingIndicator(row.phone_number_id, decodeCloudAccessToken(row), options.inboundMessageId, 5_000)
+}
+
+// A Meta não oferece cancelamento — o indicador some ao enviar uma resposta
+// ou após ~25s.
+async function clearTypingIndicator(): Promise<void> {}
 
 async function sendImage(
   instanceName: string,
@@ -109,6 +127,8 @@ async function sendTemplate(
 
 export const cloudApiAdapter: WhatsAppProviderAdapter = {
   sendText,
+  sendTypingIndicator,
+  clearTypingIndicator,
   sendImage,
   sendButtons,
   sendTemplate,

@@ -10,7 +10,7 @@ const fetchMock = jest.fn()
 global.fetch = fetchMock
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { sendCloudText, sendCloudImage, sendCloudButtons, sendCloudTemplate, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
+const { sendCloudText, sendCloudImage, sendCloudButtons, sendCloudTemplate, sendCloudTypingIndicator, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -19,6 +19,39 @@ function jsonResponse(status: number, body: unknown) {
     text: jest.fn().mockResolvedValue(JSON.stringify(body)),
   }
 }
+
+describe('sendCloudTypingIndicator', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    delete process.env.WHATSAPP_CLOUD_API_VERSION
+  })
+
+  it('marks the inbound message as read with a text typing indicator', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { success: true }))
+
+    await sendCloudTypingIndicator('123456', 'token-abc', 'wamid.IN')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://graph.facebook.com/v21.0/123456/messages')
+    expect(init.method).toBe('POST')
+    expect(init.headers.Authorization).toBe('Bearer token-abc')
+    expect(JSON.parse(init.body)).toEqual({
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: 'wamid.IN',
+      typing_indicator: { type: 'text' },
+    })
+  })
+
+  it('throws with the readable Meta error message on failure', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(400, {
+      error: { message: 'Message not found', type: 'OAuthException', code: 100 },
+    }))
+
+    await expect(sendCloudTypingIndicator('123456', 'token', 'wamid.GONE')).rejects.toThrow('Message not found')
+  })
+})
 
 describe('sendCloudText', () => {
   beforeEach(() => {

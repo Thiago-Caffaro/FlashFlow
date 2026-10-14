@@ -233,6 +233,7 @@ async function processInboundMessage(
           remoteJid,
           conversationId: flowRunIsSandboxFallback ? flowRun.conversation_id : conversation.id,
           incomingMessage: normalizedContent,
+          inboundWaMessageId: waMessageId,
           orderId: typeof variables.orderId === 'string' ? variables.orderId : undefined,
           checkoutId: typeof variables.checkoutId === 'string' ? variables.checkoutId : undefined,
           flowRunId: typeof flowRun.id === 'string' ? flowRun.id : undefined,
@@ -247,9 +248,10 @@ async function processInboundMessage(
             remoteJid,
             conversationId: conversation.id,
             incomingMessage: content,
+            inboundWaMessageId: waMessageId,
           })
         } else {
-          await executeTriggers(instanceName, remoteJid, conversation.id, content, type)
+          await executeTriggers(instanceName, remoteJid, conversation.id, content, type, waMessageId)
         }
       }
     } catch (err) {

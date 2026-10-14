@@ -18,7 +18,9 @@ const mockSendCloudText = jest.fn()
 const mockSendCloudImage = jest.fn()
 const mockSendCloudButtons = jest.fn()
 const mockSendCloudTemplate = jest.fn()
+const mockSendCloudTypingIndicator = jest.fn()
 jest.mock('@/lib/whatsapp-cloud-client', () => ({
+  sendCloudTypingIndicator: (...args: unknown[]) => mockSendCloudTypingIndicator(...args),
   sendCloudText: (...args: unknown[]) => mockSendCloudText(...args),
   sendCloudImage: (...args: unknown[]) => mockSendCloudImage(...args),
   sendCloudButtons: (...args: unknown[]) => mockSendCloudButtons(...args),
@@ -72,6 +74,50 @@ describe('cloudApiAdapter.sendText', () => {
       'wa-1',
       expect.stringContaining('Invalid OAuth access token')
     )
+  })
+})
+
+describe('cloudApiAdapter.sendTypingIndicator', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  const credentials = {
+    instance_name: 'wa-1', phone_number_id: '123456',
+    encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
+  }
+
+  it('sends the indicator tied to the inbound message id using the account credentials', async () => {
+    mockLoadCloudCredentials.mockResolvedValue(credentials)
+    mockDecodeCloudAccessToken.mockReturnValue('plain-token')
+    mockSendCloudTypingIndicator.mockResolvedValue(undefined)
+
+    await cloudApiAdapter.sendTypingIndicator('wa-1', '5511999999999', { inboundMessageId: 'wamid.IN' })
+
+    expect(mockSendCloudTypingIndicator).toHaveBeenCalledWith('123456', 'plain-token', 'wamid.IN', expect.any(Number))
+  })
+
+  it('does nothing when there is no inbound message to attach the indicator to', async () => {
+    await cloudApiAdapter.sendTypingIndicator('wa-1', '5511999999999')
+    await cloudApiAdapter.sendTypingIndicator('wa-1', '5511999999999', { inboundMessageId: null })
+
+    expect(mockLoadCloudCredentials).not.toHaveBeenCalled()
+    expect(mockSendCloudTypingIndicator).not.toHaveBeenCalled()
+  })
+
+  it('re-throws a failure without flagging the account as having a send error', async () => {
+    mockLoadCloudCredentials.mockResolvedValue(credentials)
+    mockDecodeCloudAccessToken.mockReturnValue('plain-token')
+    mockSendCloudTypingIndicator.mockRejectedValue(new Error('boom'))
+
+    await expect(cloudApiAdapter.sendTypingIndicator('wa-1', '5511999999999', { inboundMessageId: 'wamid.IN' }))
+      .rejects.toThrow('boom')
+    expect(mockRecordCloudSendError).not.toHaveBeenCalled()
+  })
+
+  it('clearTypingIndicator is a no-op (the Cloud API cannot cancel it)', async () => {
+    await expect(cloudApiAdapter.clearTypingIndicator('wa-1', '5511999999999')).resolves.toBeUndefined()
+    expect(mockLoadCloudCredentials).not.toHaveBeenCalled()
   })
 })
 

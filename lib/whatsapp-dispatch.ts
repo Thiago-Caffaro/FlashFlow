@@ -17,8 +17,27 @@ export interface SendTemplateOptions {
   quickReplyPayloads?: Array<{ index: number; payload: string }>
 }
 
+export interface TypingIndicatorOptions {
+  // Id (wamid) da mensagem recebida mais recente do cliente — a Cloud API só
+  // exibe o "digitando…" atrelado a ela. A Evolution ignora.
+  inboundMessageId?: string | null
+}
+
+export interface TypingIndicatorClearOptions {
+  // A resposta já foi enviada: só parar de renovar o indicador (o WhatsApp o
+  // apaga ao receber a mensagem). Sem isto, apaga na hora ("paused").
+  replied?: boolean
+}
+
 export interface WhatsAppProviderAdapter {
   sendText(instanceName: string, remoteJid: string, text: string, timeoutMs?: number): Promise<SendResult>
+  // Exibe "digitando…" ao cliente enquanto a resposta é preparada. Pode demorar
+  // a retornar (a Evolution segura a chamada durante o indicador) — quem chama
+  // não deve aguardá-la no caminho da resposta.
+  sendTypingIndicator(instanceName: string, remoteJid: string, options?: TypingIndicatorOptions): Promise<void>
+  // Apaga o indicador quando nenhuma mensagem vai ser enviada para limpá-lo
+  // (enviar uma resposta já o apaga sozinho).
+  clearTypingIndicator(instanceName: string, remoteJid: string, options?: TypingIndicatorClearOptions): Promise<void>
   sendImage(instanceName: string, remoteJid: string, imageUrl: string, caption?: string): Promise<SendResult>
   sendButtons(
     instanceName: string,
@@ -54,6 +73,24 @@ export async function dispatchSendText(
 ): Promise<SendResult> {
   const adapter = await resolveAdapter(instanceName)
   return adapter.sendText(instanceName, remoteJid, text, timeoutMs)
+}
+
+export async function dispatchSendTypingIndicator(
+  instanceName: string,
+  remoteJid: string,
+  options?: TypingIndicatorOptions
+): Promise<void> {
+  const adapter = await resolveAdapter(instanceName)
+  return adapter.sendTypingIndicator(instanceName, remoteJid, options)
+}
+
+export async function dispatchClearTypingIndicator(
+  instanceName: string,
+  remoteJid: string,
+  options?: TypingIndicatorClearOptions
+): Promise<void> {
+  const adapter = await resolveAdapter(instanceName)
+  return adapter.clearTypingIndicator(instanceName, remoteJid, options)
 }
 
 export async function dispatchSendImage(
