@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { openAITokenLimit, postOpenAIChat } from './openai-chat'
 import { FlowImage, FlowNode, FlowEdge, AIProvider, AgentMemoryBlock, HistoryTurn, AISession, SwitchCase, FlowNodeData, FlowReplyButton } from '@/types'
 import { decrypt } from './ai-crypto'
 import { getCountryForInstance, getFulfillmentClient, refreshFulfillmentOrder } from './fulfillment-service'
@@ -580,7 +581,7 @@ async function callAI(
       model: actualModel,
       messages,
       temperature: safeTemp,
-      ...(maxTokens ? { max_tokens: maxTokens } : {}),
+      ...openAITokenLimit(maxTokens),
     }
 
     const openaiTools: Record<string, unknown>[] = []
@@ -631,18 +632,9 @@ async function callAI(
       withFulfillmentTools,
     })
 
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(requestBody),
-    })
-
+    const res = await postOpenAIChat(apiKey, requestBody)
     log(`callAI openai response status`, { status: res.status, ok: res.ok })
-
-    const data = await res.json().catch((e) => {
-      logError(`callAI openai response parse error`, { error: e })
-      return {}
-    })
+    const data = res.data
 
     log(`callAI openai response body`, JSON.stringify(data))
 
@@ -687,15 +679,8 @@ async function callAI(
         assistantToolCallMessage,
         { role: 'tool', tool_call_id: fulfillmentCall.id, content: toolResult },
       ]
-      const followRes = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: actualModel, messages: lastMessages, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }),
-      })
-      const followData = await followRes.json().catch((e) => {
-        logError(`callAI openai follow-up parse error`, { error: e })
-        return {}
-      })
+      const followRes = await postOpenAIChat(apiKey, { model: actualModel, messages: lastMessages, temperature: safeTemp, ...openAITokenLimit(maxTokens) })
+      const followData = followRes.data
       log(`callAI openai follow-up response`, JSON.stringify(followData))
       if (followRes.ok) {
         reply = followData.choices?.[0]?.message?.content ?? ''
@@ -710,15 +695,8 @@ async function callAI(
     // leaving the customer without any reply.
     if (!reply.trim() && !requiresHuman) {
       log(`callAI openai: empty reply, retrying`)
-      const retryRes = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: actualModel, messages: lastMessages, temperature: safeTemp, ...(maxTokens ? { max_tokens: maxTokens } : {}) }),
-      })
-      const retryData = await retryRes.json().catch((e) => {
-        logError(`callAI openai retry parse error`, { error: e })
-        return {}
-      })
+      const retryRes = await postOpenAIChat(apiKey, { model: actualModel, messages: lastMessages, temperature: safeTemp, ...openAITokenLimit(maxTokens) })
+      const retryData = retryRes.data
       log(`callAI openai retry response`, JSON.stringify(retryData))
       if (retryRes.ok) {
         reply = retryData.choices?.[0]?.message?.content ?? ''
