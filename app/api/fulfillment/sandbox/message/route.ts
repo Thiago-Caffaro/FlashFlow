@@ -3,8 +3,24 @@ import { isAdminRequest } from '@/lib/server-auth'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { checkActiveFlowRun, checkActiveSession, handleActiveSession, executeFlow, type FlowContext } from '@/lib/flow-engine'
 import { SANDBOX_INSTANCE_NAME, SANDBOX_REMOTE_JID } from '@/lib/sandbox'
+import { normalizeReplyInput } from '@/lib/message-template'
+import type { FlowReplyButton } from '@/types'
 
 export const dynamic = 'force-dynamic'
+
+function readFlowRunVariables(raw: unknown): { replyButtons: FlowReplyButton[]; orderId?: string; checkoutId?: string } {
+  const variables = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+  const replyButtons = Array.isArray(variables.replyButtons)
+    ? (variables.replyButtons as unknown[]).filter((button): button is FlowReplyButton => (
+      Boolean(button) && typeof (button as FlowReplyButton).id === 'string' && typeof (button as FlowReplyButton).label === 'string'
+    ))
+    : []
+  return {
+    replyButtons,
+    orderId: typeof variables.orderId === 'string' ? variables.orderId : undefined,
+    checkoutId: typeof variables.checkoutId === 'string' ? variables.checkoutId : undefined,
+  }
+}
 
 // Fetches (creating if needed) a sandbox conversation and its history.
 // `conversationId` selects one of possibly several test contacts; omitted,
@@ -20,7 +36,14 @@ export async function GET(req: NextRequest) {
       .eq('conversation_id', conversation.id)
       .order('created_at', { ascending: true })
     if (error) throw new Error(error.message)
-    return NextResponse.json({ ok: true, conversationId: conversation.id, messages: messages ?? [] })
+
+    // Botões do fluxo pausado esperando resposta — o chat do sandbox os mostra
+    // clicáveis, como no WhatsApp.
+    const flowRun = await checkActiveFlowRun(SANDBOX_INSTANCE_NAME, String(conversation.wa_id))
+    const replyButtons = flowRun?.status === 'waiting_confirmation'
+      ? readFlowRunVariables(flowRun.variables).replyButtons
+      : []
+    return NextResponse.json({ ok: true, conversationId: conversation.id, messages: messages ?? [], replyButtons })
   } catch (error) {
     return NextResponse.json({
       ok: false,
@@ -136,7 +159,17 @@ export async function POST(req: NextRequest) {
 
     const flowRun = await checkActiveFlowRun(SANDBOX_INSTANCE_NAME, remoteJid)
     if (flowRun) {
-      await executeFlow(flowRun.flow_id, ctx, flowRun.node_id)
+      // Igual ao webhook real: sem flowRunId o flow_run pausado nunca era
+      // apagado ao terminar, e toda mensagem seguinte voltava para o mesmo
+      // nó (ex: o Switch Case), sem chegar à sessão do Agente.
+      const variables = readFlowRunVariables(flowRun.variables)
+      await executeFlow(flowRun.flow_id, {
+        ...ctx,
+        incomingMessage: normalizeReplyInput(text, variables.replyButtons),
+        orderId: variables.orderId,
+        checkoutId: variables.checkoutId,
+        flowRunId: typeof flowRun.id === 'string' ? flowRun.id : undefined,
+      }, flowRun.node_id)
     } else {
       const session = await checkActiveSession(SANDBOX_INSTANCE_NAME, remoteJid)
       if (session) {

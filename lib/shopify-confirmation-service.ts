@@ -555,12 +555,22 @@ function checkoutLastActivityAt(checkout: AbandonedCheckoutRow): number {
   return new Date(shopifyTimestamp ?? checkout.created_at).getTime()
 }
 
-async function scheduleAbandonedCheckoutTriggers(checkout: AbandonedCheckoutRow): Promise<number> {
+// `ignoreDelay` (só no sandbox) agenda para agora, sem esperar o delay do
+// gatilho — para testar o fluxo sem aguardar 60 min.
+async function scheduleAbandonedCheckoutTriggers(
+  checkout: AbandonedCheckoutRow,
+  options: { ignoreDelay?: boolean } = {}
+): Promise<number> {
   const instanceName = checkout.assigned_instance_name ?? ''
-  if (checkout.is_simulation || checkout.recovery_status !== 'Pendente' || checkout.shopify_completed_at) return 0
+  const isSandbox = instanceName === SANDBOX_INSTANCE_NAME
+  // Simulação só roda na conta sandbox, nunca numa conta real.
+  if (checkout.is_simulation && !isSandbox) return 0
+  if (checkout.recovery_status !== 'Pendente' || checkout.shopify_completed_at) return 0
   // Carrinho sem telefone (só e-mail) é ignorado — não há para quem mandar WhatsApp.
   if (!instanceName || !checkout.contact_phone) return 0
-  if (!(await getShopifyTriggersEnabled())) return 0
+  // O interruptor global pausa automações reais; o sandbox segue testável,
+  // como acontece com os pedidos simulados.
+  if (!isSandbox && !(await getShopifyTriggersEnabled())) return 0
 
   const { data: triggers, error } = await supabaseAdmin
     .from('triggers')
@@ -577,7 +587,7 @@ async function scheduleAbandonedCheckoutTriggers(checkout: AbandonedCheckoutRow)
     const flowId = asRecord(trigger.action_payload).flow_id
     if (typeof flowId !== 'string' || !flowId) continue
     const delayMs = Number(trigger.delay_ms) > 0 ? Number(trigger.delay_ms) : DEFAULT_ABANDONED_CHECKOUT_DELAY_MS
-    const idealRunAt = lastActivityAt + delayMs
+    const idealRunAt = options.ignoreDelay && isSandbox ? now : lastActivityAt + delayMs
     if (idealRunAt < now - ABANDONED_CHECKOUT_MAX_LATENESS_MS) continue
     await enqueueAbandonedCheckoutFlowJob({
       checkoutId: checkout.id,
@@ -703,6 +713,44 @@ export async function upsertShopifyAbandonedCheckout(
   return result.data
 }
 
+// Carrinho abandonado simulado pelo Sandbox: mesmo mapeamento do webhook
+// real, mas preso à conta sandbox e ao contato de teste escolhido
+// (is_simulation=true). Nunca toca a Shopify; o fluxo só manda WhatsApp de
+// verdade se o contato de teste tiver envio real ligado.
+export async function createSandboxAbandonedCheckout(input: {
+  integrationId: string | null
+  shopDomain: string
+  defaultCountry: string
+  payload: unknown
+  contactPhone: string
+  immediate: boolean
+}): Promise<{ checkout: Record<string, unknown>; scheduled: number }> {
+  const mapped = mapShopifyAbandonedCheckoutPayload(input.payload, {
+    id: input.integrationId ?? '',
+    shopDomain: normalizeShopDomain(input.shopDomain),
+    defaultCountry: input.defaultCountry,
+  }, SANDBOX_INSTANCE_NAME)
+  const now = new Date().toISOString()
+  const { data, error } = await supabaseAdmin
+    .from('shopify_abandoned_checkouts')
+    .insert({
+      ...mapped,
+      shopify_integration_id: input.integrationId,
+      // Telefone exatamente como na conversa de teste: é por ele que o fluxo
+      // encontra a conversa na hora de rodar.
+      contact_phone: input.contactPhone,
+      recovery_status: 'Pendente',
+      is_simulation: true,
+      updated_at: now,
+    })
+    .select()
+    .single()
+  if (error || !data) throw new Error(error?.message ?? 'Falha ao gravar carrinho simulado')
+
+  const scheduled = await scheduleAbandonedCheckoutTriggers(data as AbandonedCheckoutRow, { ignoreDelay: input.immediate })
+  return { checkout: data as Record<string, unknown>, scheduled }
+}
+
 // Um pedido desse telefone nesta integração feito depois do checkout conta
 // como conversão mesmo sem checkout_token (ex: cliente abandonou um checkout
 // e comprou por outro). Rede de segurança do momento do envio — o
@@ -747,7 +795,9 @@ export async function runAbandonedCheckoutTrigger(checkoutId: string, flowId: st
   if (!data) return { skipped: 'Checkout não encontrado' }
   const checkout = data as AbandonedCheckoutRow
 
-  if (checkout.is_simulation) return { skipped: 'Checkout de simulação' }
+  if (checkout.is_simulation && checkout.assigned_instance_name !== SANDBOX_INSTANCE_NAME) {
+    return { skipped: 'Checkout de simulação' }
+  }
   if (checkout.recovery_status === 'Convertido' || checkout.recovery_status === 'Não enviar') {
     return { skipped: `Checkout com status ${checkout.recovery_status}` }
   }

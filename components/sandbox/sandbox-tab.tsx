@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import {
-  BookOpen, FlaskConical, GitBranch, LayoutGrid, Package, PanelLeftClose, PanelLeftOpen, ShoppingCart, Zap,
+  BookOpen, FlaskConical, GitBranch, LayoutGrid, Package, PanelLeftClose, PanelLeftOpen, ShoppingBasket, ShoppingCart, Zap,
 } from 'lucide-react'
 import { Account, FulfillmentProduct, ItemFocusRequest, SandboxContact, ShopifyProduct } from '@/types'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
@@ -13,6 +13,7 @@ import SandboxChat from './sandbox-chat'
 import SandboxContacts from './sandbox-contacts'
 import SandboxOverview, { SandboxSection } from './sandbox-overview'
 import SandboxOrderSimulator from './sandbox-order-simulator'
+import SandboxCheckoutSimulator from './sandbox-checkout-simulator'
 import SandboxFictitiousProducts from './sandbox-fictitious-products'
 import { getJson } from './sandbox-styles'
 
@@ -22,7 +23,7 @@ interface SandboxTabProps {
   active: boolean
 }
 
-type Section = 'overview' | SandboxSection | 'pedido' | 'produtos'
+type Section = 'overview' | SandboxSection | 'pedido' | 'carrinho' | 'produtos'
 
 const SECTIONS: { id: Section; label: string; Icon: React.ElementType }[] = [
   { id: 'overview', label: 'Visão geral', Icon: LayoutGrid },
@@ -30,6 +31,7 @@ const SECTIONS: { id: Section; label: string; Icon: React.ElementType }[] = [
   { id: 'fluxos', label: 'Fluxos', Icon: GitBranch },
   { id: 'memoria', label: 'Memória', Icon: BookOpen },
   { id: 'pedido', label: 'Simular pedido', Icon: ShoppingCart },
+  { id: 'carrinho', label: 'Carrinho abandonado', Icon: ShoppingBasket },
   { id: 'produtos', label: 'Produtos fictícios', Icon: Package },
 ]
 
@@ -248,6 +250,21 @@ export default function SandboxTab({ active }: SandboxTabProps) {
                   if (contactId) setActiveContactId(contactId)
                   setChatVisible(true)
                 }}
+                onMessage={showMessage}
+              />
+            )}
+          </div>
+          <div className={sectionClass('carrinho')}>
+            {mounted('carrinho') && (
+              <SandboxCheckoutSimulator
+                products={products}
+                contacts={contacts}
+                activeContactId={activeContactId}
+                onCheckoutCreated={(contactId) => {
+                  setActiveContactId(contactId)
+                  setChatVisible(true)
+                }}
+                onOpenTriggers={() => openSection('gatilhos')}
                 onMessage={showMessage}
               />
             )}
