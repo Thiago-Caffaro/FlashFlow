@@ -29,6 +29,9 @@ import {
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
 import { getDefaultShopifyOrderInstance } from './shopify-order-settings'
 import { pickShopifyStoreAccount } from './shopify-store-accounts'
+import { createLogger } from './logger'
+
+const checkoutLog = createLogger('shopify-checkout')
 import {
   calculatePhysicalUnitPrice,
   resolvePackQuantity,
@@ -566,11 +569,18 @@ async function scheduleAbandonedCheckoutTriggers(
   // Simulação só roda na conta sandbox, nunca numa conta real.
   if (checkout.is_simulation && !isSandbox) return 0
   if (checkout.recovery_status !== 'Pendente' || checkout.shopify_completed_at) return 0
+  // Cada motivo de não agendar vai para o log — sem isso, um carrinho que
+  // chegou mas não gerou mensagem é indistinguível de um que nunca chegou.
+  const skip = (reason: string) => {
+    checkoutLog.info('gatilho de carrinho não agendado', { checkoutId: checkout.id, instance: instanceName || 'none', reason })
+    return 0
+  }
   // Carrinho sem telefone (só e-mail) é ignorado — não há para quem mandar WhatsApp.
-  if (!instanceName || !checkout.contact_phone) return 0
+  if (!checkout.contact_phone) return skip('sem telefone')
+  if (!instanceName) return skip('sem conta WhatsApp atribuída')
   // O interruptor global pausa automações reais; o sandbox segue testável,
   // como acontece com os pedidos simulados.
-  if (!isSandbox && !(await getShopifyTriggersEnabled())) return 0
+  if (!isSandbox && !(await getShopifyTriggersEnabled())) return skip('Gatilhos Shopify pausados')
 
   const { data: triggers, error } = await supabaseAdmin
     .from('triggers')
@@ -598,6 +608,8 @@ async function scheduleAbandonedCheckoutTriggers(
     })
     scheduled += 1
   }
+  if ((triggers ?? []).length === 0) return skip('conta sem gatilho "Carrinho abandonado"')
+  checkoutLog.info('gatilho de carrinho agendado', { checkoutId: checkout.id, instance: instanceName, scheduled })
   return scheduled
 }
 
