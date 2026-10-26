@@ -48,6 +48,33 @@ describe('shopify webhook setup', () => {
 
     await ensureOrderCreateWebhookRegisteredWithToken('loja.myshopify.com', 'token')
 
-    expect(mockCreateWebhook.mock.calls.map(([topic]) => topic)).toEqual(['checkouts/create', 'checkouts/update'])
+    expect(mockCreateWebhook.mock.calls.map(([topic]) => topic)).toEqual([
+      'checkouts/create',
+      'checkouts/update',
+      'draft_orders/create',
+      'draft_orders/update',
+      'draft_orders/delete',
+    ])
+  })
+
+  it('registers the draft order topics on their own route', async () => {
+    await ensureOrderCreateWebhookRegisteredWithToken('loja.myshopify.com', 'token')
+
+    expect(mockCreateWebhook).toHaveBeenCalledWith('draft_orders/create', 'https://app.example/api/webhook/shopify/draft-orders')
+    expect(mockCreateWebhook).toHaveBeenCalledWith('draft_orders/delete', 'https://app.example/api/webhook/shopify/draft-orders')
+  })
+
+  it('keeps registering the other topics when the store did not grant draft orders, and says how to fix it', async () => {
+    mockCreateWebhook.mockImplementation(async (topic: string) => {
+      if (topic.startsWith('draft_orders/')) throw new Error('Shopify API 403: This action requires merchant approval for read_draft_orders scope.')
+      return { webhook: { id: 1 } }
+    })
+
+    const result = await ensureOrderCreateWebhookRegisteredWithToken('loja.myshopify.com', 'token')
+
+    expect(mockCreateWebhook).toHaveBeenCalledWith('checkouts/update', expect.any(String))
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('read_draft_orders')
+    expect(result.error).toContain('reconecte a loja')
   })
 })

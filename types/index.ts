@@ -404,10 +404,19 @@ export interface AppNotificationSlackState {
   error: string | null
 }
 
+// Origem do carrinho abandonado (migration 028): checkout clássico da
+// Shopify ou rascunho (draft order) criado por app de formulário COD e nunca
+// convertido em pedido.
+export type ShopifyCheckoutSource = 'checkout' | 'draft_order'
+
 export interface ShopifyAbandonedCheckout {
   id: string
   shopify_integration_id: string | null
+  // Rascunho: "draft:<id do rascunho>".
   shopify_checkout_id: string | null
+  source: ShopifyCheckoutSource
+  // Nome do rascunho na Shopify (ex: "#D12"); null em checkouts.
+  shopify_name: string | null
   checkout_token: string | null
   shop_domain: string
   assigned_instance_name: string | null

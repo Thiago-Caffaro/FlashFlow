@@ -216,6 +216,8 @@ const {
   sendAbandonedCheckoutRecovery,
   runAbandonedCheckoutTrigger,
   createSandboxAbandonedCheckout,
+  upsertShopifyDraftOrder,
+  removeShopifyDraftOrder,
   _resetConfirmationSendPacingForTests,
 } = require('@/lib/shopify-confirmation-service')
 
@@ -649,6 +651,86 @@ describe('shopify-confirmation-service', () => {
       checkout_token: 'cart-token',
       assigned_instance_name: 'wa-country',
       recovery_status: 'Pendente',
+    })
+  })
+
+  describe('rascunhos (draft orders)', () => {
+    function draftPayload(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 555,
+        name: '#D12',
+        status: 'open',
+        order_id: null,
+        email: 'rascunho@example.com',
+        phone: '+573001112233',
+        total_price: '120000.00',
+        currency: 'COP',
+        invoice_url: 'https://loja.myshopify.com/123/invoices/abc',
+        shipping_address: { name: 'Cliente Rascunho', country_code: 'CO' },
+        line_items: [{ title: 'Produto', quantity: 1, price: '120000.00' }],
+        created_at: '2026-10-20T10:00:00.000Z',
+        updated_at: '2026-10-20T10:05:00.000Z',
+        ...overrides,
+      }
+    }
+
+    it('saves an open draft as an abandoned cart with its own id space, name and invoice link', async () => {
+      const inserted = queryBuilder({ data: { id: 'checkout-d1', recovery_status: 'Pendente' }, error: null })
+      setTableQueues({
+        accounts: [queryBuilder({ data: { instance_name: 'wa-co' }, error: null })],
+        shopify_abandoned_checkouts: [queryBuilder({ data: null, error: null }), inserted],
+      })
+
+      await upsertShopifyDraftOrder(integrationRow(), draftPayload(), { scheduleTriggers: false })
+
+      expect(inserted.inserts[0]).toMatchObject({
+        shopify_checkout_id: 'draft:555',
+        source: 'draft_order',
+        shopify_name: '#D12',
+        checkout_token: null,
+        abandoned_checkout_url: 'https://loja.myshopify.com/123/invoices/abc',
+        recovery_status: 'Pendente',
+        shopify_completed_at: null,
+      })
+    })
+
+    it('marks a draft completed in Shopify (converted into an order) as Convertido', async () => {
+      const existing = queryBuilder({ data: { id: 'checkout-d1', assigned_instance_name: 'wa-co', recovery_status: 'Enviado' }, error: null })
+      const updated = queryBuilder({ data: { id: 'checkout-d1', recovery_status: 'Convertido' }, error: null })
+      setTableQueues({
+        accounts: [queryBuilder({ data: { instance_name: 'wa-co' }, error: null })],
+        shopify_abandoned_checkouts: [existing, updated],
+      })
+
+      await upsertShopifyDraftOrder(integrationRow(), draftPayload({ status: 'completed', order_id: 9001 }))
+
+      expect(updated.updates[0]).toMatchObject({ recovery_status: 'Convertido', source: 'draft_order' })
+      expect(mockCancelPendingAbandonedCheckoutJobs).toHaveBeenCalledWith(['checkout-d1'], expect.any(String))
+    })
+
+    it('stops reminders for a deleted draft that was not converted', async () => {
+      const found = queryBuilder({ data: { id: 'checkout-d1', recovery_status: 'Pendente' }, error: null })
+      const updated = queryBuilder({ data: null, error: null })
+      setTableQueues({ shopify_abandoned_checkouts: [found, updated] })
+
+      const result = await removeShopifyDraftOrder(integrationRow(), { id: 555 })
+
+      expect(result).toEqual({ id: 'checkout-d1' })
+      expect(found.eq).toHaveBeenCalledWith('shopify_checkout_id', 'draft:555')
+      expect(updated.updates[0]).toMatchObject({ recovery_status: 'Não enviar' })
+      expect(mockCancelPendingAbandonedCheckoutJobs).toHaveBeenCalledWith(['checkout-d1'], 'Rascunho excluído na Shopify')
+    })
+
+    it('does not write source on plain checkouts (works before migration 028)', async () => {
+      const inserted = queryBuilder({ data: { id: 'checkout-1', recovery_status: 'Pendente' }, error: null })
+      setTableQueues({
+        accounts: [queryBuilder({ data: { instance_name: 'wa-country' }, error: null })],
+        shopify_abandoned_checkouts: [queryBuilder({ data: null, error: null }), inserted],
+      })
+
+      await upsertShopifyAbandonedCheckout(integrationRow(), { id: 987, token: 't', phone: '+351900000001', shipping_address: { country_code: 'PT' } }, { scheduleTriggers: false })
+
+      expect(inserted.inserts[0]).not.toHaveProperty('source')
     })
   })
 

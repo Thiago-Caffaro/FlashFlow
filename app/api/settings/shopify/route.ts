@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { DEFAULT_SHOPIFY_SCOPES, withRequiredShopifyScopes } from '@/lib/shopify-scopes'
 import { isAdminRequest } from '@/lib/server-auth'
 import { getSetting, setSetting } from '@/lib/app-settings'
 
@@ -25,7 +26,8 @@ export async function GET(req: NextRequest) {
     ok: true,
     clientId: clientId ?? '',
     clientSecretSet: Boolean(clientSecretRaw),
-    scopes: scopes ?? process.env.SHOPIFY_SCOPES ?? 'read_orders,read_products,read_checkouts,read_inventory',
+    // Mostra o que de fato é pedido na autorização (obrigatórios incluídos).
+    scopes: withRequiredShopifyScopes(scopes ?? process.env.SHOPIFY_SCOPES ?? DEFAULT_SHOPIFY_SCOPES),
     appBaseUrl: appBaseUrl ?? process.env.APP_BASE_URL ?? '',
   })
 }

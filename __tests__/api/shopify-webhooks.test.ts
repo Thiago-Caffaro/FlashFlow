@@ -6,6 +6,8 @@ const mockResolveShopifyWebhookSecret = jest.fn(async () => 'webhook-secret')
 const mockArchiveShopifyOrder = jest.fn()
 const mockUpsertShopifyOrder = jest.fn()
 const mockUpsertShopifyAbandonedCheckout = jest.fn()
+const mockUpsertShopifyDraftOrder = jest.fn()
+const mockRemoveShopifyDraftOrder = jest.fn()
 const mockGetShopifyTriggersEnabled = jest.fn(async () => true)
 
 jest.mock('@/lib/shopify-confirmation-service', () => ({
@@ -14,6 +16,8 @@ jest.mock('@/lib/shopify-confirmation-service', () => ({
   loadShopifyIntegrationForWebhook: mockLoadShopifyIntegrationForWebhook,
   upsertShopifyOrder: mockUpsertShopifyOrder,
   upsertShopifyAbandonedCheckout: mockUpsertShopifyAbandonedCheckout,
+  upsertShopifyDraftOrder: mockUpsertShopifyDraftOrder,
+  removeShopifyDraftOrder: mockRemoveShopifyDraftOrder,
 }))
 
 jest.mock('@/lib/shopify-trigger-settings', () => ({
@@ -40,6 +44,8 @@ function request(rawBody: string, signature: string, topic?: string) {
 const orderWebhook = require('@/app/api/webhook/shopify/orders/route')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const checkoutWebhook = require('@/app/api/webhook/shopify/abandoned-checkouts/route')
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const draftWebhook = require('@/app/api/webhook/shopify/draft-orders/route')
 
 describe('Shopify webhooks', () => {
   beforeEach(() => {
@@ -176,5 +182,35 @@ describe('Shopify webhooks', () => {
       expect.objectContaining({ id: 'shopify-1' }),
       { id: 987, token: 'cart-token' }
     )
+  })
+
+  it('stores draft_orders/create as an abandoned cart (draft source)', async () => {
+    mockUpsertShopifyDraftOrder.mockResolvedValue({ id: 'checkout-d1', shopify_name: '#D12', recovery_status: 'Pendente' })
+    const rawBody = JSON.stringify({ id: 555, name: '#D12', status: 'open' })
+
+    const response = await draftWebhook.POST(request(rawBody, hmac(rawBody), 'draft_orders/create'))
+
+    expect(response.status).toBe(200)
+    expect(mockUpsertShopifyDraftOrder).toHaveBeenCalledWith(expect.objectContaining({ id: 'shopify-1' }), { id: 555, name: '#D12', status: 'open' })
+  })
+
+  it('handles draft_orders/delete without upserting', async () => {
+    mockRemoveShopifyDraftOrder.mockResolvedValue({ id: 'checkout-d1' })
+    const rawBody = JSON.stringify({ id: 555 })
+
+    const response = await draftWebhook.POST(request(rawBody, hmac(rawBody), 'draft_orders/delete'))
+
+    expect(response.status).toBe(200)
+    expect(mockRemoveShopifyDraftOrder).toHaveBeenCalled()
+    expect(mockUpsertShopifyDraftOrder).not.toHaveBeenCalled()
+  })
+
+  it('rejects draft webhooks with invalid HMAC', async () => {
+    const rawBody = JSON.stringify({ id: 555 })
+
+    const response = await draftWebhook.POST(request(rawBody, 'invalid', 'draft_orders/update'))
+
+    expect(response.status).toBe(401)
+    expect(mockUpsertShopifyDraftOrder).not.toHaveBeenCalled()
   })
 })

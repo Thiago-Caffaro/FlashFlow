@@ -218,7 +218,7 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
             <div className="flex items-start gap-2 p-3 rounded-xl bg-[#f0f2f5] dark:bg-[#2a3942]">
               <ShoppingCart size={13} className="text-[#667781] mt-0.5 shrink-0" />
               <p className="text-xs text-[#667781] leading-relaxed">
-                Roda o fluxo abaixo quando um cliente deixa o checkout da Shopify sem comprar. O tempo conta a partir da última atividade dele no checkout; se ele comprar antes disso, nada é enviado. Carrinhos sem telefone são ignorados. Use {'{{carrinho.link}}'} na mensagem para o link de retomada.
+                Roda o fluxo abaixo quando um cliente deixa o checkout da Shopify sem comprar ou quando um rascunho de pedido (formulário COD) fica sem ser confirmado. O tempo conta a partir da última atividade do cliente; se ele comprar antes disso, nada é enviado. Carrinhos sem telefone são ignorados. Use {'{{carrinho.link}}'} na mensagem para o link de retomada.
               </p>
             </div>
             <div>

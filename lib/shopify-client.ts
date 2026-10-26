@@ -181,6 +181,15 @@ export class ShopifyClient {
     })
   }
 
+  // Rascunhos abertos (exige o escopo read_draft_orders).
+  getOpenDraftOrders(options: ShopifyRequestOptions = {}) {
+    return this.request<{ draft_orders?: unknown[] }>('/draft_orders.json', {
+      limit: options.limit ?? 50,
+      updated_at_min: options.updatedAtMin,
+      status: 'open',
+    })
+  }
+
   listWebhooks(options: { topic?: string } = {}) {
     return this.request<{ webhooks?: Array<{ id: number; topic: string; address: string }> }>('/webhooks.json', {
       topic: options.topic,

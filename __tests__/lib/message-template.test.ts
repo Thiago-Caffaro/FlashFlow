@@ -70,6 +70,8 @@ function checkout(overrides: Partial<ShopifyAbandonedCheckout> = {}): ShopifyAba
     id: 'checkout-1',
     shopify_integration_id: 'integration-1',
     shopify_checkout_id: '987',
+    source: 'checkout',
+    shopify_name: null,
     checkout_token: 'cart-token',
     shop_domain: 'loja.myshopify.com',
     assigned_instance_name: 'wa-1',
