@@ -6,6 +6,7 @@ import { executeFlow } from './flow-engine'
 import { runAbandonedCheckoutTrigger, runOrderFlow, runShopifyOrderTrigger } from './shopify-confirmation-service'
 import { supabaseAdmin } from './supabase-admin'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
+import { getLightfunnelsTriggersEnabled } from './lightfunnels-trigger-settings'
 import { registerFlowJobWorkerWake } from './flow-job-signal'
 
 // Fila vazia: o intervalo dobra a cada poll ocioso (1s → 2s → … → 15s).
@@ -75,6 +76,15 @@ async function processJob(job: FlowJob) {
   if (job.job_type === 'shopify_order_flow') {
     if (!job.order_id) throw new Error('Job Shopify sem order_id')
     if (!(await getShopifyTriggersEnabled())) return
+    await runShopifyOrderTrigger(job.order_id, job.flow_id, {
+      respectShopifyTriggerSetting: true,
+    })
+    return
+  }
+
+  if (job.job_type === 'lightfunnels_order_flow') {
+    if (!job.order_id) throw new Error('Job Lightfunnels sem order_id')
+    if (!(await getLightfunnelsTriggersEnabled())) return
     await runShopifyOrderTrigger(job.order_id, job.flow_id, {
       respectShopifyTriggerSetting: true,
     })

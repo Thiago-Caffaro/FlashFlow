@@ -22,6 +22,7 @@ const SOURCE_LABEL: Record<TriggerSource, string> = {
   shopify_order: 'Pedido Shopify',
   delivery_status: 'Status de entrega',
   shopify_abandoned_checkout: 'Carrinho abandonado',
+  lightfunnels_order: 'Pedido Lightfunnels',
 }
 
 const instanceQuery = `instance=${encodeURIComponent(SANDBOX_INSTANCE_NAME)}`

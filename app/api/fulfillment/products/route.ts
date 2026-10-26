@@ -118,18 +118,14 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  const { data: mirror, error: mirrorError } = await supabaseAdmin
-    .from('shopify_products')
-    .select('id')
-    .eq('local_product_id', id)
-    .maybeSingle()
-  if (mirrorError) {
-    return NextResponse.json({ ok: false, error: mirrorError.message }, { status: 500 })
+  const mirror = await findMirrorPlatform(id)
+  if ('error' in mirror) {
+    return NextResponse.json({ ok: false, error: mirror.error }, { status: 500 })
   }
-  if (mirror) {
+  if (mirror.platform) {
     return NextResponse.json({
       ok: false,
-      error: 'Este produto é espelhado do catálogo Shopify; edite pela tela de produtos reais.',
+      error: `Este produto é espelhado do catálogo ${mirror.platform}; edite pela tela de produtos reais.`,
     }, { status: 409 })
   }
 
@@ -143,23 +139,39 @@ export async function PUT(req: NextRequest) {
   return NextResponse.json({ ok: true, product: data })
 }
 
+// Produto local que é cópia de um catálogo de e-commerce só muda pelo
+// catálogo de origem (o próximo sync sobrescreveria a edição).
+async function findMirrorPlatform(id: string): Promise<{ platform: 'Shopify' | 'Lightfunnels' | null } | { error: string }> {
+  const { data: shopifyMirror, error: shopifyError } = await supabaseAdmin
+    .from('shopify_products')
+    .select('id')
+    .eq('local_product_id', id)
+    .maybeSingle()
+  if (shopifyError) return { error: shopifyError.message }
+  if (shopifyMirror) return { platform: 'Shopify' }
+
+  const { data: lightfunnelsMirror, error: lightfunnelsError } = await supabaseAdmin
+    .from('lightfunnels_products')
+    .select('id')
+    .eq('local_product_id', id)
+    .maybeSingle()
+  if (lightfunnelsError) return { error: lightfunnelsError.message }
+  return { platform: lightfunnelsMirror ? 'Lightfunnels' : null }
+}
+
 export async function DELETE(req: NextRequest) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   const id = String(req.nextUrl.searchParams.get('id') ?? '')
   if (!id) return NextResponse.json({ ok: false, error: 'id required' }, { status: 400 })
 
-  const { data: mirror, error: mirrorError } = await supabaseAdmin
-    .from('shopify_products')
-    .select('id')
-    .eq('local_product_id', id)
-    .maybeSingle()
-  if (mirrorError) {
-    return NextResponse.json({ ok: false, error: mirrorError.message }, { status: 500 })
+  const mirror = await findMirrorPlatform(id)
+  if ('error' in mirror) {
+    return NextResponse.json({ ok: false, error: mirror.error }, { status: 500 })
   }
-  if (mirror) {
+  if (mirror.platform) {
     return NextResponse.json({
       ok: false,
-      error: 'Este produto é espelhado do catálogo Shopify; altere a cópia local pela tela de produtos reais.',
+      error: `Este produto é espelhado do catálogo ${mirror.platform}; altere a cópia local pela tela de produtos reais.`,
     }, { status: 409 })
   }
 

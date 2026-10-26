@@ -22,6 +22,8 @@ import FenixCODConfig, { Integration } from '@/components/fulfillment/fenixcod-c
 import ShopifyProductsPanel from '@/components/fulfillment/shopify-products-panel'
 import { ShopifyProductFormValues } from '@/components/fulfillment/shopify-product-form'
 import ShopifyOrderAccountSettings from '@/components/fulfillment/shopify-order-account-settings'
+import LightfunnelsConfig from '@/components/fulfillment/lightfunnels-config'
+import LightfunnelsProductsPanel from '@/components/fulfillment/lightfunnels-products-panel'
 
 type Tab = 'queue' | 'orders' | 'products' | 'settings'
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
@@ -554,17 +556,20 @@ export default function FulfillmentPage() {
         )}
 
         {!loading && tab === 'products' && (
-          <ShopifyProductsPanel
-            products={shopifyProducts}
-            busyId={shopifyProductsBusyId}
-            syncBusy={shopifyProductsSyncBusy}
-            bulkBusy={shopifyProductsBulkBusy}
-            onSync={syncShopifyProducts}
-            onToggleKeepLocalCopy={toggleKeepLocalCopy}
-            onBulkToggleKeepLocalCopy={bulkToggleKeepLocalCopy}
-            onSave={saveShopifyProduct}
-            onDelete={deleteShopifyProduct}
-          />
+          <div className="space-y-10">
+            <ShopifyProductsPanel
+              products={shopifyProducts}
+              busyId={shopifyProductsBusyId}
+              syncBusy={shopifyProductsSyncBusy}
+              bulkBusy={shopifyProductsBulkBusy}
+              onSync={syncShopifyProducts}
+              onToggleKeepLocalCopy={toggleKeepLocalCopy}
+              onBulkToggleKeepLocalCopy={bulkToggleKeepLocalCopy}
+              onSave={saveShopifyProduct}
+              onDelete={deleteShopifyProduct}
+            />
+            <LightfunnelsProductsPanel />
+          </div>
         )}
 
         {!loading && tab === 'settings' && (
@@ -581,6 +586,11 @@ export default function FulfillmentPage() {
               syncBusy={syncBusy}
               onSync={syncShopify}
               onRefresh={load}
+            />
+            <LightfunnelsConfig
+              accounts={accounts}
+              fulfillmentCountries={[...new Set(integrations.map((integration) => integration.country))]}
+              onOrdersChanged={refreshOrders}
             />
             <FenixCODConfig
               integrations={integrations}

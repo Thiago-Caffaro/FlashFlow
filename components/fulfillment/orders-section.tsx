@@ -25,6 +25,8 @@ import CustomerOrderGroup from './customer-order-group'
 import { groupOrdersByCustomer, type CustomerGroup } from '@/lib/fulfillment-grouping'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 import ConfirmationTriggerStatus from './confirmation-trigger-status'
+import { getOrderDisplayNumber, isOrderCancelled, isOrderPaymentSettled, isOrderRemoved } from '@/lib/order-platform'
+import LightfunnelsOrderStatusBadges from './lightfunnels-order-status-badges'
 import ShopifyOrderStatusBadges from './shopify-order-status-badges'
 import { getShopifyOrderStatus, isShopifyOrderCancelled, isShopifyPaymentSettled } from '@/lib/shopify-order-status'
 
@@ -122,15 +124,17 @@ function OrderRow({
   onOrderAction: (id: string, action: OrderAction) => Promise<void>
 }) {
   const hasLead = Boolean(order.lead_number)
-  const shopifyCancelled = isShopifyOrderCancelled(order)
-  const alreadyPaidExternally = isShopifyPaymentSettled(getShopifyOrderStatus(order).financialStatus)
+  const shopifyCancelled = isShopifyOrderCancelled(order) || isOrderCancelled(order) || isOrderRemoved(order)
+  const alreadyPaidExternally = order.source === 'lightfunnels'
+    ? isOrderPaymentSettled(order)
+    : isShopifyPaymentSettled(getShopifyOrderStatus(order).financialStatus)
   const canSubmit = !shopifyCancelled && !hasLead && ['pending_operator', 'failed'].includes(order.status) && !order.is_simulation
   const isBusy = busyId === order.id
   const accountLabel = accounts.find((a) => a.instanceName === (order.assigned_instance_name || order.instance_name))?.label
   const isSandboxOrder = (order.assigned_instance_name || order.instance_name) === SANDBOX_INSTANCE_NAME
   // Sandbox test orders can re-run the confirmation trigger repeatedly; real
   // simulations (not tied to the sandbox) stay blocked from ever sending.
-  const canResend = !shopifyCancelled && order.source === 'shopify' && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
+  const canResend = !shopifyCancelled && (order.source === 'shopify' || order.source === 'lightfunnels') && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
 
   return (
     <div
@@ -143,7 +147,7 @@ function OrderRow({
         <p className="text-xs text-[#667781]">{order.city}</p>
       </div>
       <div>
-        <span className="dark:text-[#e9edef]">{order.shopify_order_name || order.order_number}</span>
+        <span className="dark:text-[#e9edef]">{getOrderDisplayNumber(order)}</span>
         <p className="text-xs text-[#667781]">
           {order.country} ·{' '}
           {alreadyPaidExternally ? (
@@ -162,12 +166,12 @@ function OrderRow({
         <p className="flex items-center gap-1 text-[11px] text-[#8696a0]" title="Quando este pedido entrou no FlashFlow">
           <Download size={10} />recebido {formatOrderDateTime(order.created_at)}
         </p>
-        <div className="mt-1.5"><ShopifyOrderStatusBadges order={order} compact /></div>
+        <div className="mt-1.5"><ShopifyOrderStatusBadges order={order} compact /><LightfunnelsOrderStatusBadges order={order} compact /></div>
         {order.is_simulation && <span className="text-xs text-purple-600 dark:text-purple-400">simulação</span>}
       </div>
       <div>
         <CommercialBadge status={order.commercial_status} />
-        {order.source === 'shopify' && (
+        {(order.source === 'shopify' || order.source === 'lightfunnels') && (
           <div className="mt-1.5"><ConfirmationTriggerStatus order={order} compact /></div>
         )}
       </div>
@@ -288,7 +292,7 @@ export default function OrdersSection({
         if (
           !o.customer_name?.toLowerCase().includes(q) &&
           !o.contact_phone?.includes(q) &&
-          !(o.shopify_order_name || o.order_number)?.toLowerCase().includes(q)
+          !getOrderDisplayNumber(o).toLowerCase().includes(q)
         ) return false
       }
       if (statusFilter && o.commercial_status !== statusFilter) return false

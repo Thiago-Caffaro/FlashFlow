@@ -198,6 +198,14 @@ export async function DELETE(
     if (checkoutsErr) { console.error('[DELETE accounts] shopify_abandoned_checkouts:', checkoutsErr.message); failedSteps.push('shopify_abandoned_checkouts') }
     else console.log('[DELETE accounts] shopify_abandoned_checkouts desvinculados')
 
+    // Vínculos loja/conta de e-commerce → esta conta WhatsApp. Sem a conta,
+    // o vínculo só é ignorado no roteamento; removê-lo evita que a tela de
+    // vínculos mostre uma conta que não existe mais.
+    for (const table of ['shopify_integration_accounts', 'lightfunnels_integration_accounts'] as const) {
+      const { error: linksErr } = await supabaseAdmin.from(table).delete().eq('instance_name', name)
+      if (linksErr) { console.error(`[DELETE accounts] ${table}:`, linksErr.message); failedSteps.push(table) }
+    }
+
     // ── 10. ai_provider_keys (somente se for a última conta real) ───────────────
     // Sandbox never counts here — it's a permanent fixture, not a real account,
     // so its presence must not block cleanup when the last real account goes.

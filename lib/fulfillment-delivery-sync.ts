@@ -15,6 +15,7 @@ import {
 import { getFulfillmentClient } from './fulfillment-service'
 import { supabaseAdmin } from './supabase-admin'
 import { wakeFlowJobWorker } from './flow-job-signal'
+import { scheduleLightfunnelsWriteback } from './lightfunnels-writeback'
 import type { DeliveryStatus, FulfillmentOrder } from '@/types'
 
 const MAX_LEAD_PAGES = 500
@@ -47,6 +48,7 @@ type SyncOrder = Pick<
   | 'external_delivery_status'
   | 'external_delivery_status_key'
   | 'delivery_status_source'
+  | 'source'
 >
 
 function errorMessage(error: unknown): string {
@@ -194,6 +196,7 @@ async function syncResolvedOrder(
     occurredAt: resolved.occurredAt,
     snapshot: resolved.snapshot,
   })
+  if (changed) scheduleLightfunnelsWriteback(order)
   return changed ? 'updated' : 'unchanged'
 }
 
@@ -305,7 +308,7 @@ export async function runClaimedFulfillmentDeliverySync(claim: DeliverySyncClaim
     const [{ data: orders, error: ordersError }, mappings, leadResult] = await Promise.all([
       supabaseAdmin
         .from('fulfillment_orders')
-        .select('id, lead_number, country, delivery_status, external_delivery_status, external_delivery_status_key, delivery_status_source')
+        .select('id, source, lead_number, country, delivery_status, external_delivery_status, external_delivery_status_key, delivery_status_source')
         .eq('country', claim.country)
         .eq('is_simulation', false)
         .not('lead_number', 'is', null),

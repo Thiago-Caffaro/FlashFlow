@@ -77,7 +77,7 @@ describe('/api/fulfillment/products writes', () => {
     const product = { id: 'product-1', active: true }
     const mirrorBuilder = queryBuilder({ data: null, error: null })
     const productBuilder = queryBuilder({ data: product, error: null })
-    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : productBuilder))
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' || table === 'lightfunnels_products' ? mirrorBuilder : productBuilder))
 
     const response = await PUT(request('http://localhost/api/fulfillment/products', {
       id: 'product-1',
@@ -109,7 +109,7 @@ describe('/api/fulfillment/products writes', () => {
   it('allows PUT that resends the same (unchanged) country', async () => {
     const builder = queryBuilder({ data: { id: 'product-1', country: 'PT', name: 'Produto' }, error: null })
     const mirrorBuilder = queryBuilder({ data: null, error: null })
-    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : builder))
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' || table === 'lightfunnels_products' ? mirrorBuilder : builder))
 
     const response = await PUT(request('http://localhost/api/fulfillment/products', {
       id: 'product-1',
@@ -124,7 +124,7 @@ describe('/api/fulfillment/products writes', () => {
     const product = { id: 'product-1', active: false }
     const builder = queryBuilder({ data: product, error: null })
     const mirrorBuilder = queryBuilder({ data: null, error: null })
-    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : builder))
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' || table === 'lightfunnels_products' ? mirrorBuilder : builder))
 
     const response = await DELETE(new NextRequest('http://localhost/api/fulfillment/products?id=product-1'))
     const body = await response.json()
@@ -137,7 +137,7 @@ describe('/api/fulfillment/products writes', () => {
   it('rejects deleting a local product mirrored from Shopify', async () => {
     const mirrorBuilder = queryBuilder({ data: { id: 'shopify-product-1' }, error: null })
     const productBuilder = queryBuilder({ data: { id: 'product-1' }, error: null })
-    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : productBuilder))
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' || table === 'lightfunnels_products' ? mirrorBuilder : productBuilder))
 
     const response = await DELETE(new NextRequest('http://localhost/api/fulfillment/products?id=product-1'))
 
@@ -148,7 +148,7 @@ describe('/api/fulfillment/products writes', () => {
   it('fails closed when the Shopify mirror lookup fails during deletion', async () => {
     const mirrorBuilder = queryBuilder({ data: null, error: { message: 'mirror lookup failed' } })
     const productBuilder = queryBuilder({ data: { id: 'product-1' }, error: null })
-    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' ? mirrorBuilder : productBuilder))
+    mockFrom.mockImplementation((table: string) => (table === 'shopify_products' || table === 'lightfunnels_products' ? mirrorBuilder : productBuilder))
 
     const response = await DELETE(new NextRequest('http://localhost/api/fulfillment/products?id=product-1'))
 

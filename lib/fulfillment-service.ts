@@ -14,8 +14,18 @@ import {
   type PackQuantitySource,
 } from './shopify-pack-quantity'
 import { getShopifyOrderStatus, isShopifyPaymentSettled } from './shopify-order-status'
+import {
+  getOrderDisplayNumber,
+  getPlatformCancelledMessage,
+  getPlatformRemovedMessage,
+  isOrderCancelled,
+  isOrderPaymentSettled,
+  isOrderRemoved,
+  type OrderPlatformFields,
+} from './order-platform'
+import { scheduleLightfunnelsWriteback } from './lightfunnels-writeback'
 import { supabaseAdmin } from './supabase-admin'
-import type { ExternalFulfillmentLead } from '@/types'
+import type { ExternalFulfillmentLead, OrderSource } from '@/types'
 
 type IntegrationRow = {
   country: string
@@ -47,6 +57,9 @@ type FulfillmentOrderItem = {
   shopify_product_id?: string
   shopify_variant_id?: string
   shopify_quantity?: number
+  lightfunnels_product_id?: string
+  lightfunnels_variant_id?: string
+  lightfunnels_quantity?: number
   units_per_pack?: number
   pack_quantity_source?: PackQuantitySource
   sku: string
@@ -79,11 +92,16 @@ type FulfillmentOrderRow = {
   shopify_order_name?: string | null
   shopify_integration_id?: string | null
   raw_shopify_payload?: Record<string, unknown> | null
-  source?: 'manual' | 'shopify'
+  source?: OrderSource
   is_simulation?: boolean | null
   shopify_deleted_at?: string | null
   shopify_cancelled_at?: string | null
   shopify_financial_status?: string | null
+  lightfunnels_integration_id?: string | null
+  lightfunnels_order_name?: string | null
+  lightfunnels_financial_status?: string | null
+  lightfunnels_cancelled_at?: string | null
+  lightfunnels_archived_at?: string | null
 }
 
 export interface OrderInput {
@@ -265,6 +283,8 @@ export async function submitFulfillmentOrder(orderId: string) {
     .eq('is_simulation', false)
     .is('shopify_deleted_at', null)
     .is('shopify_cancelled_at', null)
+    .is('lightfunnels_archived_at', null)
+    .is('lightfunnels_cancelled_at', null)
     .in('status', ['pending_operator', 'failed'])
     .select('*')
     .single()
@@ -272,19 +292,19 @@ export async function submitFulfillmentOrder(orderId: string) {
   if (orderError || !order) {
     const { data: current } = await supabaseAdmin
       .from('fulfillment_orders')
-      .select('id, lead_number, status, is_simulation, shopify_deleted_at, shopify_cancelled_at')
+      .select('id, source, lead_number, status, is_simulation, shopify_deleted_at, shopify_cancelled_at, lightfunnels_archived_at, lightfunnels_cancelled_at')
       .eq('id', orderId)
       .maybeSingle()
 
-    if ((current as { shopify_cancelled_at?: string | null } | null)?.shopify_cancelled_at) {
-      throw new Error('Pedido foi cancelado no Shopify e não pode ser enviado ao FenixCOD')
+    if (current && isOrderCancelled(current as OrderPlatformFields)) {
+      throw new Error(`${getPlatformCancelledMessage(current as OrderPlatformFields)} e não pode ser enviado ao FenixCOD`)
     }
 
     if (!current) throw new Error('Pedido não encontrado')
     if (current.lead_number) throw new Error('Pedido já foi enviado para o FenixCOD')
     if ((current as { is_simulation?: boolean }).is_simulation) throw new Error('Pedido de simulação não pode ser enviado ao FenixCOD')
-    if ((current as { shopify_deleted_at?: string | null }).shopify_deleted_at) {
-      throw new Error('Pedido foi excluído no Shopify e não pode ser enviado ao FenixCOD')
+    if (isOrderRemoved(current as OrderPlatformFields)) {
+      throw new Error(`${getPlatformRemovedMessage(current as OrderPlatformFields)} e não pode ser enviado ao FenixCOD`)
     }
     if (current.status === 'cancelled') throw new Error('Pedido local já foi cancelado')
     if (current.status === 'unknown') throw new Error('Pedido está com envio incerto; verifique no FenixCOD antes de reenviar')
@@ -298,11 +318,14 @@ export async function submitFulfillmentOrder(orderId: string) {
     const resolvedItems = await resolveOrderItemsForSubmission(orderRow)
     const resolvedTotal = orderItemsTotal(resolvedItems)
     const client = await getFulfillmentClient(orderRow.country)
-    // Pedido já pago no Shopify: o cliente não deve pagar de novo na
-    // entrega, então o valor enviado ao FenixCOD (o que é cobrado do
-    // destinatário) vai zerado. O valor real continua gravado em
-    // fulfillment_orders/exibido na interface — só o payload externo muda.
-    const alreadyPaidExternally = isShopifyPaymentSettled(getShopifyOrderStatus(orderRow).financialStatus)
+    // Pedido já pago na plataforma (Shopify/Lightfunnels): o cliente não
+    // deve pagar de novo na entrega, então o valor enviado ao FenixCOD (o
+    // que é cobrado do destinatário) vai zerado. O valor real continua
+    // gravado em fulfillment_orders/exibido na interface — só o payload
+    // externo muda.
+    const alreadyPaidExternally = orderRow.source === 'lightfunnels'
+      ? isOrderPaymentSettled(orderRow)
+      : isShopifyPaymentSettled(getShopifyOrderStatus(orderRow).financialStatus)
     const payload = buildLeadPayload(
       orderRow,
       alreadyPaidExternally ? resolvedItems.map((item) => ({ ...item, total: 0 })) : resolvedItems,
@@ -326,6 +349,7 @@ export async function submitFulfillmentOrder(orderId: string) {
       .select()
       .single()
     await recordOrderEvent(orderRow.id, 'created', { lead_number: leadNumber })
+    scheduleLightfunnelsWriteback(orderRow)
     return updated
   } catch (error) {
     const message = submissionErrorMessage(error, orderRow.country)
@@ -423,7 +447,7 @@ function buildLeadPayload(
     payment_type: order.payment_type,
     country: order.country,
     email: order.email,
-    order_number: order.shopify_order_name || order.order_number,
+    order_number: getOrderDisplayNumber(order),
     items: items.map((item) => ({ sku: item.sku, quantity: item.quantity, total: item.total })),
   }
 }
@@ -440,6 +464,7 @@ function normalizeOrderItems(value: unknown): FulfillmentOrderItem[] {
       throw new Error('Pedido local sem itens válidos')
     }
     const shopifyQuantity = Number(record.shopify_quantity)
+    const lightfunnelsQuantity = Number(record.lightfunnels_quantity)
     const unitsPerPack = Number(record.units_per_pack)
     const packQuantitySource = String(record.pack_quantity_source ?? '')
     return {
@@ -447,6 +472,9 @@ function normalizeOrderItems(value: unknown): FulfillmentOrderItem[] {
       shopify_product_id: record.shopify_product_id ? String(record.shopify_product_id) : undefined,
       shopify_variant_id: record.shopify_variant_id ? String(record.shopify_variant_id) : undefined,
       shopify_quantity: Number.isInteger(shopifyQuantity) && shopifyQuantity > 0 ? shopifyQuantity : undefined,
+      lightfunnels_product_id: record.lightfunnels_product_id ? String(record.lightfunnels_product_id) : undefined,
+      lightfunnels_variant_id: record.lightfunnels_variant_id ? String(record.lightfunnels_variant_id) : undefined,
+      lightfunnels_quantity: Number.isInteger(lightfunnelsQuantity) && lightfunnelsQuantity > 0 ? lightfunnelsQuantity : undefined,
       units_per_pack: Number.isInteger(unitsPerPack) && unitsPerPack > 0 ? unitsPerPack : undefined,
       pack_quantity_source: ['sku', 'catalog', 'title', 'default'].includes(packQuantitySource)
         ? packQuantitySource as PackQuantitySource
@@ -470,8 +498,63 @@ function isShopifyIdentifierSku(sku: string, productId: string, variantId: strin
   return Boolean(sku) && (sku === productId || sku === variantId || sku.startsWith('SHOPIFY-'))
 }
 
+// Pedido Lightfunnels: o SKU de cada snapshot pode estar vazio ou
+// desatualizado — o catálogo sincronizado (lightfunnels_products) tem a
+// palavra final, como shopify_products para a Shopify.
+async function resolveLightfunnelsItemsForSubmission(
+  order: FulfillmentOrderRow,
+  items: FulfillmentOrderItem[]
+): Promise<FulfillmentOrderItem[]> {
+  const variantIds = [...new Set(items.map((item) => item.lightfunnels_variant_id).filter((id): id is string => Boolean(id)))]
+  const catalogByVariantId = new Map<string, { sku: string; unitsPerPack: number; variantTitle: string }>()
+  if (variantIds.length > 0 && order.lightfunnels_integration_id) {
+    const { data, error } = await supabaseAdmin
+      .from('lightfunnels_products')
+      .select('lf_variant_id, sku, units_per_pack, variant_title')
+      .eq('lightfunnels_integration_id', order.lightfunnels_integration_id)
+      .in('lf_variant_id', variantIds)
+    if (error) throw new Error(`Falha ao validar os SKUs do Lightfunnels: ${error.message}`)
+    for (const row of data ?? []) {
+      catalogByVariantId.set(String(row.lf_variant_id ?? ''), {
+        sku: String(row.sku ?? '').trim(),
+        unitsPerPack: Number(row.units_per_pack ?? 1),
+        variantTitle: String(row.variant_title ?? ''),
+      })
+    }
+  }
+
+  return items.map((item) => {
+    const catalog = item.lightfunnels_variant_id ? catalogByVariantId.get(item.lightfunnels_variant_id) : undefined
+    const storedSku = item.sku.trim().startsWith('LIGHTFUNNELS-') ? '' : item.sku.trim()
+    const pack = resolvePackQuantity({
+      rawSku: catalog?.sku || storedSku,
+      configuredUnits: catalog?.unitsPerPack && catalog.unitsPerPack > 1 ? catalog.unitsPerPack : undefined,
+      titles: [catalog?.variantTitle, item.name],
+    })
+    if (!pack.sku) {
+      throw new Error(
+        `O produto "${item.name}" não possui SKU válido no Lightfunnels. ` +
+        'Cadastre no Lightfunnels o mesmo SKU usado no FenixCOD, sincronize os produtos e tente novamente.'
+      )
+    }
+    const packCount = item.lightfunnels_quantity
+    const storedBaseline = packCount ? packCount * (item.units_per_pack ?? 1) : item.quantity
+    const manuallyOverridden = item.quantity !== storedBaseline
+    const quantity = manuallyOverridden || !packCount ? item.quantity : packCount * pack.unitsPerPack
+    return {
+      ...item,
+      sku: pack.sku,
+      units_per_pack: pack.unitsPerPack,
+      pack_quantity_source: pack.source,
+      quantity,
+      unit_price: quantity !== item.quantity && quantity > 0 ? calculatePhysicalUnitPrice(item.total, quantity) : item.unit_price,
+    }
+  })
+}
+
 async function resolveOrderItemsForSubmission(order: FulfillmentOrderRow): Promise<FulfillmentOrderItem[]> {
   const items = normalizeOrderItems(order.items)
+  if (order.source === 'lightfunnels') return resolveLightfunnelsItemsForSubmission(order, items)
   if (order.source !== 'shopify' || !order.shopify_integration_id) {
     if (items.some((item) => !item.sku)) throw new Error('Pedido local possui item sem SKU')
     return items

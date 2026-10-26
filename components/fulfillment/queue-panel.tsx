@@ -15,6 +15,8 @@ import OrderEditModal from './order-edit-modal'
 import CustomerOrderGroup from './customer-order-group'
 import { groupOrdersByCustomer, type CustomerGroup } from '@/lib/fulfillment-grouping'
 import ConfirmationTriggerStatus from './confirmation-trigger-status'
+import { isOrderCancelled, isOrderRemoved } from '@/lib/order-platform'
+import LightfunnelsOrderStatusBadges from './lightfunnels-order-status-badges'
 import ShopifyOrderStatusBadges from './shopify-order-status-badges'
 import { isShopifyOrderCancelled } from '@/lib/shopify-order-status'
 import {
@@ -126,6 +128,7 @@ function QueueOrderCard({
           </div>
           <div className="mt-1.5 flex justify-end">
             <ShopifyOrderStatusBadges order={order} compact />
+            <LightfunnelsOrderStatusBadges order={order} compact />
           </div>
         </div>
       </div>
@@ -237,7 +240,7 @@ export default function QueuePanel({
   const queueOrders = useMemo(() => {
     return orders
       .filter((o) => o.commercial_status === 'Não responde' && !o.is_simulation)
-      .filter((o) => !isShopifyOrderCancelled(o))
+      .filter((o) => !isShopifyOrderCancelled(o) && !isOrderCancelled(o) && !isOrderRemoved(o))
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
   }, [orders])
 
@@ -366,8 +369,8 @@ export default function QueuePanel({
                   && hasCountryIntegration
                   && ['pending_operator', 'failed'].includes(order.status)
                   && !order.is_simulation
-                  && !isShopifyOrderCancelled(order)
-                const canRunConfirmation = order.source === 'shopify' && !order.is_simulation && !isShopifyOrderCancelled(order)
+                  && !isShopifyOrderCancelled(order) && !isOrderCancelled(order)
+                const canRunConfirmation = (order.source === 'shopify' || order.source === 'lightfunnels') && !order.is_simulation && !isShopifyOrderCancelled(order) && !isOrderCancelled(order)
                 return (
                   <QueueOrderCard
                     order={order}

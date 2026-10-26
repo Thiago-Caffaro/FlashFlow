@@ -1,4 +1,5 @@
 import type { FlowReplyButton, FulfillmentOrder, ShopifyAbandonedCheckout, ShopifyProduct } from '@/types'
+import { getOrderDisplayNumber } from './order-platform'
 
 export interface AutomaticMessageVariable {
   key: string
@@ -14,7 +15,7 @@ export interface MessageTemplateContext {
   }
   order?: FulfillmentOrder | null
   checkout?: ShopifyAbandonedCheckout | null
-  productsByVariantId?: Map<string, ShopifyProduct>
+  productsByVariantId?: Map<string, CatalogProductName>
   customVariables?: Record<string, string>
 }
 
@@ -97,19 +98,29 @@ function formatDate(value: string): string {
   }).format(date)
 }
 
+// Nome do catálogo local (shopify_products / lightfunnels_products) por id de
+// variante; a chave da Lightfunnels leva o prefixo `lf:` para não colidir.
+export type CatalogProductName = Pick<ShopifyProduct, 'title'>
+
+export function lightfunnelsCatalogKey(variantId: string): string {
+  return `lf:${variantId}`
+}
+
 function itemName(
   item: FulfillmentOrder['items'][number],
-  productsByVariantId?: Map<string, ShopifyProduct>
+  productsByVariantId?: Map<string, CatalogProductName>
 ): string {
   const localProduct = item.shopify_variant_id
     ? productsByVariantId?.get(item.shopify_variant_id)
-    : undefined
+    : item.lightfunnels_variant_id
+      ? productsByVariantId?.get(lightfunnelsCatalogKey(item.lightfunnels_variant_id))
+      : undefined
   return localProduct?.title?.trim() || item.name?.trim()
 }
 
 function orderValues(
   order: FulfillmentOrder,
-  productsByVariantId?: Map<string, ShopifyProduct>
+  productsByVariantId?: Map<string, CatalogProductName>
 ): Record<string, string> {
   const productNames = order.items.map((item) => itemName(item, productsByVariantId))
   const products = productNames.length === 1
@@ -129,7 +140,7 @@ function orderValues(
   ].map((part) => part?.trim()).filter(Boolean).join(', ')
 
   return {
-    'pedido.numero': order.shopify_order_name || order.order_number,
+    'pedido.numero': getOrderDisplayNumber(order),
     'pedido.cliente': order.customer_name,
     'pedido.email': order.email || '',
     'pedido.endereco': order.address,

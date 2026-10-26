@@ -1,5 +1,6 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { assertLinkableAccounts, pickLinkedAccount } from './store-account-links'
 import type { ShopifyStoreAccountLink } from '@/types'
 
 // Contas WhatsApp vinculadas a uma loja Shopify (migration 026). Loja sem
@@ -26,17 +27,7 @@ export async function replaceShopifyStoreAccounts(
   integrationId: string,
   links: ShopifyStoreAccountLink[]
 ): Promise<ShopifyStoreAccountLink[]> {
-  const names = [...new Set(links.map((link) => link.instance_name))]
-  if (names.length > 0) {
-    const { data: accounts, error: accountsError } = await supabaseAdmin
-      .from('accounts')
-      .select('instance_name, is_sandbox')
-      .in('instance_name', names)
-    if (accountsError) throw new Error(`Falha ao validar contas WhatsApp: ${accountsError.message}`)
-    const valid = new Set((accounts ?? []).filter((a) => a.is_sandbox !== true).map((a) => String(a.instance_name)))
-    const invalid = names.filter((name) => !valid.has(name))
-    if (invalid.length > 0) throw new Error(`Conta WhatsApp inválida: ${invalid.join(', ')}`)
-  }
+  await assertLinkableAccounts([...new Set(links.map((link) => link.instance_name))])
 
   const { error: deleteError } = await supabaseAdmin
     .from('shopify_integration_accounts')
@@ -63,26 +54,5 @@ export async function replaceShopifyStoreAccounts(
 // a do país do pedido vem primeiro; empate (ou nenhuma do país) decide pela
 // prioridade. null = loja sem conta utilizável → regra geral.
 export async function pickShopifyStoreAccount(integrationId: string, country: string): Promise<string | null> {
-  const links = (await listShopifyStoreAccounts(integrationId)).filter((link) => link.enabled)
-  if (links.length === 0) return null
-
-  // Conta apagada ou virada sandbox depois do vínculo não serve.
-  const { data: accounts, error } = await supabaseAdmin
-    .from('accounts')
-    .select('instance_name, country, is_sandbox')
-    .in('instance_name', links.map((link) => link.instance_name))
-  if (error) throw new Error(`Falha ao carregar contas da loja: ${error.message}`)
-  const countryByName = new Map(
-    (accounts ?? [])
-      .filter((account) => account.is_sandbox !== true)
-      .map((account) => [String(account.instance_name), String(account.country ?? '').trim().toUpperCase()])
-  )
-  const usable = links.filter((link) => countryByName.has(link.instance_name))
-  if (usable.length === 0) return null
-
-  const normalizedCountry = country.trim().toUpperCase()
-  const sameCountry = normalizedCountry
-    ? usable.find((link) => countryByName.get(link.instance_name) === normalizedCountry)
-    : undefined
-  return (sameCountry ?? usable[0]).instance_name
+  return pickLinkedAccount(await listShopifyStoreAccounts(integrationId), country)
 }
