@@ -29,6 +29,7 @@ import { OrderContextPendingError, resolveFlowOrder, resolveMessageTemplateConte
 import { enqueueFlowMessageResumeJob } from './flow-jobs'
 import { updateFulfillmentOrderState } from './fulfillment-order-state'
 import { isOrderStateField, isOrderStateValue } from './order-state'
+import { getOrderDisplayNumber } from './order-platform'
 import { recordOutboundMessage } from './outbound-message'
 import { createLogger, isLogLevelEnabled } from './logger'
 import {
@@ -997,7 +998,7 @@ function buildFulfillmentToolExecutor(ctx: FlowContext): FulfillmentToolExecutor
       if (toolName === CONSULTAR_PEDIDO_TOOL_NAME) {
         const { data: order, error } = await supabase
           .from('fulfillment_orders')
-          .select('id, order_number, lead_number, status, commercial_status, send_status, delivery_status')
+          .select('id, source, order_number, shopify_order_name, lightfunnels_order_name, lead_number, status, commercial_status, send_status, delivery_status')
           .eq('conversation_id', ctx.conversationId)
           .order('created_at', { ascending: false })
           .limit(1)
@@ -1005,7 +1006,8 @@ function buildFulfillmentToolExecutor(ctx: FlowContext): FulfillmentToolExecutor
         if (error || !order) return JSON.stringify({ error: 'Nenhum pedido encontrado para esta conversa' })
         const updated = order.lead_number ? await refreshFulfillmentOrder(order.id) : null
         return JSON.stringify({
-          orderNumber: order.order_number,
+          // Número que o cliente conhece (#1001), não a chave interna.
+          orderNumber: getOrderDisplayNumber(order),
           leadNumber: order.lead_number,
           status: updated?.status ?? order.status,
           commercialStatus: order.commercial_status,

@@ -1,10 +1,14 @@
 # Contexto do Projeto — FlashFlow
 
-> Gerado por `explore-project` em 2026-09-08, commit `732e187`. Este
-> documento é conhecimento sintetizado sobre o projeto — não é fonte de
-> verdade. Onde ele divergir do código atual, o código vence. Rode a
-> skill `explore-project` de novo depois de mudanças estruturais para
-> atualizar.
+> Atualizado por `explore-project` em 2026-10-19, sobre o commit `f09c11a`
+> **mais a árvore de trabalho não commitada da branch
+> `feat/lightfunnels-integration`** (integração Lightfunnels, migration 027,
+> `APP_VERSION` 1.19.0). As referências `arquivo:linha` dos arquivos dessa
+> branch apontam para a versão não commitada; se a branch mudar antes do
+> merge, elas podem andar. Geração anterior: 2026-09-08, commit `732e187`.
+> Este documento é conhecimento sintetizado sobre o projeto — não é fonte de
+> verdade. Onde ele divergir do código atual, o código vence. Rode a skill
+> `explore-project` de novo depois de mudanças estruturais para atualizar.
 
 ## Visão geral
 
@@ -12,229 +16,306 @@ FlashFlow é um SaaS de atendimento e automação de WhatsApp para um
 operador de e-commerce com fulfillment contra-reembolso (COD) na Europa.
 Além do chat manual, o produto oferece: um construtor visual de fluxos de
 conversa (com blocos de IA, condições e captura de dados de pedido),
-integração com Shopify (pedidos, catálogo, checkout abandonado) e
-integração com um fulfillment externo (FenixCOD/European Fulfillment)
-para envio físico dos produtos e cobrança na entrega. O uso real de
-WhatsApp já é dual: número(s) via Evolution API (self-hosted) e via
-WhatsApp Cloud API (oficial, Meta), operando lado a lado por conta.
+integração com **duas plataformas de e-commerce lado a lado — Shopify e
+Lightfunnels** (pedidos, catálogo; carrinho abandonado só na Shopify) — e
+integração com um fulfillment externo (FenixCOD/European Fulfillment) para
+envio físico dos produtos e cobrança na entrega. O uso real de WhatsApp é
+dual: número(s) via Evolution API (self-hosted) e via WhatsApp Cloud API
+(oficial, Meta), operando lado a lado por conta.
 
-**Divergência importante**: o `CLAUDE.md` e todo o diretório `docs/`
-(exceto `FULFILLMENT_API.md`) descrevem o projeto no estágio "MVP semana
-1" — sem auth, sem flow builder, sem IA. O código real está na versão
-`1.11.0` (`lib/version.ts`) com todas essas features implementadas e
-testadas há muito tempo. Veja a seção **Divergências** no final.
+O ciclo de pedido é o mesmo para as duas plataformas: o pedido entra em
+`fulfillment_orders` como `pending_operator`, é roteado para uma conta
+WhatsApp (vínculo loja/funil → conta padrão → país), o gatilho "Pedido
+criado" da plataforma roda o fluxo de confirmação nessa conta, e a
+confirmação comercial envia o pedido ao FenixCOD. Ver fluxo 4.
 
 ## Stack técnica
 
 | Camada | Tecnologia real | Onde |
 |---|---|---|
 | Framework | Next.js **16.2.12** (App Router), React 19.2.4 | `package.json` |
-| Linguagem | TypeScript, sem `any` (regra do `CLAUDE.md`, ainda válida) | — |
+| Linguagem | TypeScript, sem `any` (regra do `CLAUDE.md`) | — |
 | Estilo | Tailwind v4 + `shadcn`/`radix-ui` | `package.json`, `components/ui/` |
 | Banco | Supabase (Postgres + Realtime), sem ORM, `@supabase/supabase-js` direto | `lib/supabase.ts`, `lib/supabase-admin.ts` |
 | Flow builder | `@xyflow/react` v12 | `components/flows/` |
-| WhatsApp | **Evolution API** (self-hosted) **e** **WhatsApp Cloud API** (Meta) simultaneamente, por conta (`accounts.provider`) | `lib/whatsapp-dispatch.ts`, `lib/whatsapp-account-provider.ts` |
-| IA | Multi-provider: Gemini, OpenAI, OpenRouter (não só Gemini) | `lib/flow-engine.ts:951-955` |
-| Fulfillment externo | European Fulfillment / FenixCOD (COD) | `lib/fulfillment-client.ts`, contrato em `docs/FULFILLMENT_API.md` (este doc está atualizado) |
-| E-commerce | Shopify (webhooks + OAuth) | `lib/shopify-*.ts` |
+| WhatsApp | **Evolution API** (self-hosted) **e** **WhatsApp Cloud API** (Meta) simultaneamente, por conta (`accounts.provider`) | `lib/whatsapp-dispatch.ts:63-66`, `lib/whatsapp-account-provider.ts:15-23` |
+| IA | Multi-provider: Gemini, OpenAI, OpenRouter | `lib/flow-engine.ts:467`, `lib/flow-engine.ts:770` |
+| Fulfillment externo | European Fulfillment / FenixCOD (COD) | `lib/fulfillment-client.ts`, contrato em `docs/FULFILLMENT_API.md` |
+| E-commerce 1 | Shopify (webhooks REST + OAuth; várias lojas, app próprio opcional por loja — migration 026) | `lib/shopify-*.ts` |
+| E-commerce 2 | **Lightfunnels** (GraphQL `services.lightfunnels.com/api/v2`, OAuth com app de Partners global, webhooks via `createWebhook`) | `lib/lightfunnels-*.ts`, `lib/lightfunnels-client.ts:9`, guia em `docs/LIGHTFUNNELS.md` |
+| Camada comum de pedido | Roteamento de conta e leitura de pedido independentes da plataforma | `lib/order-account-routing.ts`, `lib/order-platform.ts`, `lib/store-account-links.ts` |
 | Auth | Sessão administrativa única via cookie HMAC (não é Supabase Auth) | `lib/server-auth.ts`, `proxy.ts` |
-| Testes | Jest, ~85 arquivos em `__tests__/` | `package.json` (`test`, `test:watch`) |
-| Deploy | Docker → GHCR (`ghcr.io/<repo>`), branch `main` publica `latest`+`test`, outras branches só `test` | `.github/workflows/*.yml` |
-| Gate global de request | `proxy.ts` (não `middleware.ts` — nome do Next 16 para o mesmo mecanismo) | `proxy.ts` |
+| Testes | Jest, ~120 arquivos em `__tests__/` | `package.json` (`test`, `test:watch`) |
+| Deploy | Docker → GHCR, branch `main` publica `latest`+`test`, outras branches só `test` | `.github/workflows/*.yml` |
+| Gate global de request | `proxy.ts` (não `middleware.ts` — nome do Next 16 para o mesmo mecanismo) | `proxy.ts:10-20` |
 
 ## Estrutura de pastas
 
 ```
 app/
-  api/            Toda lógica de banco/integração vive aqui (regra do CLAUDE.md, ainda seguida)
-    webhook/      Rotas públicas server-a-servidor (Evolution, WhatsApp Cloud, Shopify, Slack)
+  api/            Toda lógica de banco/integração vive aqui (regra do CLAUDE.md, seguida)
+    webhook/      Rotas públicas server-a-servidor (Evolution, WhatsApp Cloud, Shopify orders/abandoned-checkouts, Lightfunnels, interatividade do Slack)
     flows/        CRUD de fluxos
-    accounts/     Gestão de contas/instâncias WhatsApp (QR, pairing, reconexão)
+    accounts/     Gestão de contas/instâncias WhatsApp (QR, pairing, reconexão; apagar conta remove os vínculos loja/funil dela)
     shopify/      OAuth + callback + produtos
-    fulfillment/  Pedidos, envio/cancelamento ao FenixCOD, sync de entrega (a UI do sandbox fica em components/sandbox/, view própria do app principal; as rotas continuam em api/fulfillment/sandbox/)
+    lightfunnels/ OAuth (auth + callback) do app de Partners Lightfunnels
+    fulfillment/  Pedidos, envio/cancelamento ao FenixCOD, sync de entrega; fulfillment/lightfunnels/ = integrações (vínculos de conta, funis, sync, webhooks) e catálogo LF; fulfillment/sandbox/ = simuladores (inclui lightfunnels-order)
+    settings/     Configurações globais em app_settings (conta padrão de pedidos, pausa de gatilhos Shopify/Lightfunnels, credenciais do app Lightfunnels)
+    integrations/ Slack
     ai-keys/, ai-sessions/, instance-ai-config/, memory-blocks/   Config e estado de IA
   fulfillment/, order-preview/, catalog-preview/, diagnostics/   Rotas de UI fora do chat principal
 components/
   ui/             shadcn — não editar (regra do CLAUDE.md)
   chat/, chats/   Interface de atendimento
   flows/, flows/nodes/   Editor visual de fluxo (um arquivo por tipo de node)
-  fulfillment/    UI de pedidos/checkouts abandonados/entrega
+  fulfillment/    UI de pedidos/checkouts abandonados/entrega + config das plataformas (lightfunnels-config, lightfunnels-store-accounts-editor, lightfunnels-products-panel, lightfunnels-order-status-badges)
+  sandbox/        Simulador de pedidos (Shopify ou Lightfunnels) e carrinhos
   auth/           Formulário de login único (não há cadastro/multi-usuário)
-  sidebar-right/  Gatilhos (triggers) por instância
+  sidebar-right/  Gatilhos (triggers) por instância — inclui "Pedido Shopify criado" e "Pedido Lightfunnels criado"
   memory/, gallery/, notifications/, ai-sessions/, nav/   Painéis secundários
 contexts/         account-context, auth-context, theme-context (estado client-side global)
-lib/              ~65 arquivos — cada integração/domínio tem seu módulo dedicado (ver tabela abaixo)
-types/index.ts     Único arquivo de tipos do projeto (451 linhas) — fonte de verdade do modelo de dados
-migrations/       SQL numerado 001→020, mas **não é o schema completo** (ver Gotchas)
-docs/             Documentação de projeto pré-existente — parcialmente desatualizada (ver Divergências)
-__tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de "isolation" (ver Regras de negócio)
+lib/              Um módulo por domínio/integração (prefixos shopify-*, lightfunnels-*, fulfillment-*, whatsapp-cloud-*, flow-*), mais a camada comum de pedido (order-*.ts, store-account-links.ts)
+types/index.ts     Único arquivo de tipos do projeto — fonte de verdade do modelo de dados
+migrations/       SQL numerado 001→027, mas **não é o schema completo** (ver Armadilhas)
+docs/             Documentação de referência; LIGHTFUNNELS.md, SLACK.md, FULFILLMENT_API.md são guias específicos
+__tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de "isolation" e de roteamento por loja/funil
 ```
 
 ## Padrões e convenções
 
-- **Um módulo `lib/` por domínio/integração**, nomeado pelo prefixo do domínio: `shopify-*.ts` (11 arquivos), `fulfillment-*.ts` (9 arquivos), `whatsapp-cloud-*.ts` (6 arquivos), `flow-*.ts` (7 arquivos). Não há uma pasta `services/` genérica — o nome do arquivo já é a "camada".
-- **`instance_name` é a chave de particionamento/tenant em quase toda tabela** (`conversations`, `triggers`, `flows`, `flow_media`, `agent_memory_blocks`, `message_variables`, `notifications`, `fulfillment_orders`) — o projeto não é multi-tenant por *cliente final*, é multi-instância por *número de WhatsApp* sob um único admin. Toda rota que recebe um `id` de recurso deve validar posse via `lib/instance-guard.ts` (`belongsToInstance`), nunca confiar em `instance_name` vindo do client — reforçado por uma bateria própria de testes `__tests__/api/*-isolation.test.ts`.
-- **`proxy.ts` é o único gate de autenticação** para `/api/:path*`, por allowlist de pathname exato (nunca prefixo) para rotas públicas: login/verify/logout e os 5 webhooks server-a-servidor (Evolution, WhatsApp Cloud, Shopify orders, Shopify abandoned-checkouts, interatividade do Slack — este autenticado pela assinatura `v0` do Slack). Cada webhook tem sua própria autenticação interna (HMAC/secret), independente do cookie `ff_auth`.
-- **Rate limiting e dedup são in-memory (`Map`), não Redis/Postgres** — `lib/rate-limit.ts` e `lib/login-rate-limit.ts` documentam explicitamente que isso só é seguro enquanto o deploy for de réplica única.
-- **Segredos sensíveis (chaves de IA, credenciais Shopify/WhatsApp Cloud) são criptografados em repouso** com AES-256-GCM (`lib/ai-crypto.ts`), nunca salvos em texto plano no Supabase.
-- **Fetches de saída para URLs de terceiros (imagens) passam por SSRF guard** (`lib/ssrf-guard.ts`): bloqueia IPs privados/loopback/link-local, exige HTTPS, faz pin de DNS contra a resposta, e valida o conteúdo por sniff de bytes, não pelo header `Content-Type` declarado.
-- **Feature flags via env var** (`lib/features.ts`) controlam recursos já implementados mas não necessariamente GA por padrão: `gallery`, `aiSessions`, `switchCase`.
-- **`APP_VERSION` (`lib/version.ts`) é incrementado a cada update relevante** e exibido em Configurações Gerais — convenção intencional para identificar builds deployadas.
+- **Um módulo `lib/` por domínio/integração**, nomeado pelo prefixo: `shopify-*.ts`, `lightfunnels-*.ts` (11 arquivos), `fulfillment-*.ts`, `whatsapp-cloud-*.ts`, `flow-*.ts`. Não há pasta `services/` — o nome do arquivo já é a "camada".
+- **Plataformas de e-commerce lado a lado, sem tabela genérica.** A Lightfunnels ganhou tabelas/colunas próprias no mesmo padrão das da Shopify (`lightfunnels_integrations`, `lightfunnels_integration_accounts`, `lightfunnels_products`, colunas `lightfunnels_*` em `fulfillment_orders`), sem tocar nas `shopify_*` de produção — `migrations/027_lightfunnels_integration.sql:1-16`. `fulfillment_orders.source` é `'manual' | 'shopify' | 'lightfunnels'` (`migrations/027_lightfunnels_integration.sql:110-114`, `types/index.ts:228`).
+- **Quem lê `fulfillment_orders` usa `lib/order-platform.ts`, não as colunas `shopify_*`/`lightfunnels_*` direto**: número exibido ao cliente (`getOrderDisplayNumber`, `lib/order-platform.ts:38-42`), removido/cancelado (`:45-51`), pago (`:55-58`), gatilho da plataforma (`orderTriggerSourceFor`, `:32-34`). O arquivo não é `server-only` — roda também nos componentes.
+- **Roteamento de conta é um módulo só para as duas plataformas** (`assignConfirmationAccount`, `lib/order-account-routing.ts:18-52`); `lib/shopify-confirmation-service.ts:251` só reexporta para chamadas antigas.
+- **`instance_name` é a chave de particionamento/tenant em quase toda tabela** (`conversations`, `triggers`, `flows`, `flow_media`, `agent_memory_blocks`, `message_variables`, `notifications`, `fulfillment_orders`) — multi-instância por *número de WhatsApp* sob um único admin. Rotas que recebem `id` validam posse via `lib/instance-guard.ts` (`belongsToInstance`), reforçado por `__tests__/api/*-isolation.test.ts`.
+- **`proxy.ts` é o único gate de autenticação** para `/api/:path*`, por allowlist de pathname **exato** (`proxy.ts:10-20`): login/verify/logout e 6 webhooks (Evolution, WhatsApp Cloud, Shopify orders, Shopify abandoned-checkouts, Lightfunnels, interatividade do Slack). Cada webhook tem autenticação própria (HMAC/secret). O callback OAuth do Lightfunnels **não** está na lista — exige o cookie de admin do navegador que iniciou o OAuth.
+- **Rate limiting e dedup são in-memory (`Map`)** — `lib/rate-limit.ts` e `lib/login-rate-limit.ts` documentam que só é seguro com réplica única.
+- **Segredos são cifrados em repouso** com AES-256-GCM (`lib/ai-crypto.ts`): chaves de IA, credenciais Shopify/WhatsApp Cloud, access/refresh token do Lightfunnels (`migrations/027_lightfunnels_integration.sql:6-9`).
+- **Fetches de saída para URLs de terceiros passam por SSRF guard** (`lib/ssrf-guard.ts`).
+- **Feature flags via env var** (`lib/features.ts`): `gallery`, `aiSessions`, `switchCase`.
+- **`APP_VERSION` (`lib/version.ts`) é incrementado a cada update relevante** e exibido em Configurações Gerais.
+- **Integrações que escrevem para fora nascem desligadas** (encaminhamento ao Slack, write-back no Lightfunnels — `writeback_enabled DEFAULT false`, `migrations/027_lightfunnels_integration.sql:33-34`).
 
 ## Fluxos críticos
 
 ### 1. Mensagem WhatsApp recebida (inbound) — dual provider
 
 **Evolution API** — `app/api/webhook/evolution/route.ts`
-1. Content-Type deve ser `application/json` — `app/api/webhook/evolution/route.ts:112-115`
-2. Limite de tamanho do body — `lib/evolution-api.ts:10-14`
-3. Header `x-webhook-secret` comparado em tempo constante (falha fechado se `EVOLUTION_WEBHOOK_SECRET` não configurado) — `lib/evolution-api.ts:94-100`
-4. Só `event === 'messages.upsert'` persiste mensagem — `app/api/webhook/evolution/route.ts:224-231`
-5. Dedup por `wa_message_id` antes de inserir (inbound e outbound) — `app/api/webhook/evolution/route.ts:245-254`
-6. `instanceName` vem de `body.instance`; ausente → evento descartado — `app/api/webhook/evolution/route.ts:142,233-237`
-7. Resolução de `@lid`→`@s.whatsapp.net` (lógica diferente para inbound vs outbound) — `app/api/webhook/evolution/route.ts:262-292`
-8. Upsert em `conversations` (`onConflict: wa_id, instance_name`) e insert em `messages` — `app/api/webhook/evolution/route.ts:398-450`
-9. Cascata fire-and-forget: flow pausado → sandbox fallback → sessão de IA ativa → triggers por keyword — `app/api/webhook/evolution/route.ts:452-502`
+1. Content-Type deve ser `application/json` — `app/api/webhook/evolution/route.ts:124`
+2. Limite de tamanho do body (15 MB) — `lib/evolution-api.ts:8-13`
+3. Header `x-webhook-secret` comparado em tempo constante; falha fechado sem `EVOLUTION_WEBHOOK_SECRET` — `lib/evolution-api.ts:94-99`
+4. Só `event === 'messages.upsert'` persiste mensagem — `app/api/webhook/evolution/route.ts:250`
+5. `instanceName` vem de `body.instance`; ausente → evento descartado — `app/api/webhook/evolution/route.ts:153,261`
+6. Dedup por `wa_message_id` antes de inserir (o índice único é a garantia final, 23505 tratado) — `app/api/webhook/evolution/route.ts:24,287-292`
+7. Resolução de `@lid`→`@s.whatsapp.net` (lógica diferente para inbound vs outbound) — `app/api/webhook/evolution/route.ts:305-352`
+8. Upsert em `conversations` (`onConflict: wa_id, instance_name`) e insert em `messages` — `app/api/webhook/evolution/route.ts:459,482`
+9. Cascata fire-and-forget após a resposta HTTP: flow pausado → sandbox com envio real → sessão de IA ativa → triggers por keyword — `app/api/webhook/evolution/route.ts:541-590`
 
 **WhatsApp Cloud API** — `app/api/webhook/whatsapp-cloud/route.ts`
-1. GET faz handshake `hub.verify_token` da Meta — `lib/whatsapp-cloud-webhook-auth.ts:10-16`
-2. POST valida HMAC-SHA256 do corpo cru (`X-Hub-Signature-256`), logado incondicionalmente antes da verificação — `app/api/webhook/whatsapp-cloud/route.ts:256-264`
-3. Conta identificada por `metadata.phone_number_id` → `lib/whatsapp-cloud-credentials.ts:37-47`
-4. Mesma dedup e mesma cascata pós-save que a Evolution, deliberadamente "agnóstica de provedor" — `app/api/webhook/whatsapp-cloud/route.ts:145-149`
+1. GET faz handshake `hub.verify_token` da Meta — `lib/whatsapp-cloud-webhook-auth.ts:10`
+2. POST valida HMAC-SHA256 do corpo cru (`X-Hub-Signature-256`) — `app/api/webhook/whatsapp-cloud/route.ts:376`, `lib/whatsapp-cloud-webhook-auth.ts:21`
+3. Conta identificada por `metadata.phone_number_id` — `app/api/webhook/whatsapp-cloud/route.ts:266`, `lib/whatsapp-cloud-credentials.ts:43`
+4. Mesma dedup e mesma cascata pós-save que a Evolution — `app/api/webhook/whatsapp-cloud/route.ts:211`
 
 ### 2. Envio de mensagem (outbound) — dispatcher + janela de 24h
 
-1. `lib/whatsapp-dispatch.ts:36-39` resolve o adapter (`evolution` ou `cloud_api`) por `accounts.provider`, default `evolution` se coluna ausente — `lib/whatsapp-account-provider.ts:11-23`
-2. `app/api/messages/route.ts` (envio manual do operador) → `lib/whatsapp-text.ts:70` → `dispatchSendText`. **Não checa a janela de 24h.**
-3. Janela de 24h calculada a partir de `conversations.last_inbound_at` (não `last_message_at`) — `lib/messaging-window.ts:13-28`
-4. Só é verificada em dois lugares: `lib/flow-engine.ts:1509-1512` (apenas quando `provider==='cloud_api'`) e `lib/shopify-confirmation-service.ts:964-965`
-5. Fora da janela: `flow-engine` cria notificação para o operador e aborta o node (não tenta template) — `lib/flow-engine.ts:1515-1527`; `shopify-confirmation-service` tenta o template de recuperação configurado antes de desistir — `lib/shopify-confirmation-service.ts:973-988`
+1. `lib/whatsapp-dispatch.ts:63-66` resolve o adapter por `accounts.provider`; qualquer valor que não seja `cloud_api` vira `evolution` — `lib/whatsapp-account-provider.ts:15-23`
+2. Envio manual do operador: `app/api/messages/route.ts` → `lib/whatsapp-text.ts:60-71` → `dispatchSendText`. **Não checa a janela de 24h.**
+3. Janela de 24h calculada de `conversations.last_inbound_at` (não `last_message_at`) — `lib/messaging-window.ts:18-28`
+4. Verificada no node `sendMessage` do flow engine só quando `provider==='cloud_api'` — `lib/flow-engine.ts:1620-1627` — e na recuperação manual de carrinho — `lib/shopify-confirmation-service.ts:1269`
+5. Fora da janela no flow engine: se o node tem `fallbackTemplateId`, envia o template aprovado no lugar do node inteiro e o fluxo pausa até o cliente responder — `lib/flow-engine.ts:1629-1672`; sem template, cria notificação `outside_window` para o operador (encaminhada ao Slack se ligado) e não envia — `lib/flow-engine.ts:1674-1688`. Na recuperação de carrinho, usa o template de recuperação da integração — `lib/shopify-confirmation-service.ts:1274-1290`
 
 ### 3. Gatilho e execução de fluxo (Flow Engine)
 
-1. Prioridade de resposta a uma mensagem inbound (`app/api/webhook/evolution/route.ts:452-502`, mesma cascata na Cloud API):
-   `flow_runs` pausado → sandbox com envio real → `ai_sessions` ativa → `executeTriggers`
-2. `executeTriggers` (`lib/message-triggers.ts:6-87`) compara texto normalizado contra `triggers.valor` (lista por vírgula, suporta `*`), `tipo` = `exact`/`contains`; primeiro match dispara e `break` — **não é gatilho por link/produto, é regra de texto por instância**
-3. `executeFlow` (`lib/flow-engine.ts:1323`) roda **síncrono dentro do próprio webhook**, fire-and-forget (`void (async () => {...})()`), com detecção de loop (`visited.size < 50`) — `lib/flow-engine.ts:1390`
-4. Fila (`flow_jobs` + `lib/flow-job-worker.ts`) só entra para: pedido Shopify ainda não sincronizado (`OrderContextPendingError` → `flow_message_resume`) e disparos originados de eventos Shopify (`shopify_order_flow`, `delivery_status_flow`, `abandoned_checkout_flow`)
-5. Worker é **poll in-process adaptativo** (1s com trabalho, dobrando até 15s ocioso; acordado na hora por jobs enfileirados no próprio processo via `lib/flow-job-signal.ts` — não cron), via RPC `claim_flow_jobs` com `FOR UPDATE SKIP LOCKED` — `lib/flow-job-worker.ts:119-141`, `migrations/009_message_variables_and_flow_jobs.sql:55-107`
-6. Estado de fluxo pausado (esperando botão) vive em `flow_runs` (`UNIQUE(instance_name, remote_jid)`); deletado ao concluir — `lib/flow-engine.ts:1556-1574,1850-1852`
-7. Bloco de IA (`aiAssistant`) suporta Gemini/OpenAI/OpenRouter, credenciais em `ai_provider_keys` cifradas AES-256-GCM — `lib/flow-engine.ts:1748-1844`, `lib/ai-crypto.ts:1-19`
+1. Prioridade de resposta a uma mensagem inbound: `flow_runs` pausado → sandbox com envio real → `ai_sessions` ativa → `executeTriggers` (fluxo 1, passo 9)
+2. `executeTriggers` (`lib/message-triggers.ts:6-87`) compara texto normalizado contra `triggers.valor` (lista por vírgula, suporta `*`), `exact`/`contains`; primeiro match dispara e `break` (`:87`)
+3. Origens de gatilho (`triggers.source`): `message` (texto), e as disparadas por evento — `shopify_order`, `lightfunnels_order`, `delivery_status`, `shopify_abandoned_checkout` — `types/index.ts:47`, `lib/trigger-input.ts:4`. As de evento só fazem sentido com `action='flow'`.
+4. `executeFlow` (`lib/flow-engine.ts:1433`) roda síncrono dentro do webhook, fire-and-forget, com limite de loop (`visited.size < 50`) — `lib/flow-engine.ts:1501`
+5. Fila (`flow_jobs` + `lib/flow-job-worker.ts`) para: pedido ainda não sincronizado (`OrderContextPendingError` → `flow_message_resume`) e disparos por evento (`shopify_order_flow`, `lightfunnels_order_flow`, `delivery_status_flow`, `abandoned_checkout_flow`) — `lib/flow-jobs.ts:6-11`, constraint em `migrations/027_lightfunnels_integration.sql:120-130`
+6. Worker é **poll in-process adaptativo** (1s com trabalho, dobrando até 15s ocioso; acordado na hora por `lib/flow-job-signal.ts`), via RPC `claim_flow_jobs` com `FOR UPDATE SKIP LOCKED` — `lib/flow-job-worker.ts:18-23,131`, `migrations/009_message_variables_and_flow_jobs.sql:55-107`
+7. Estado de fluxo pausado vive em `flow_runs` (`UNIQUE(instance_name, remote_jid)`); apagado ao concluir — `lib/flow-engine.ts:341,2102`
+8. Bloco de IA (`aiAssistant`) — `lib/flow-engine.ts:1995`; credenciais em `ai_provider_keys` cifradas — `lib/flow-engine.ts:1053`, `lib/ai-crypto.ts`
 
-### 4. Pedido Shopify → FenixCOD → status de entrega
+### 4. Pedido (Shopify ou Lightfunnels) → conta WhatsApp → confirmação → FenixCOD → entrega
 
-1. Webhook `orders/create|updated|paid|cancelled|delete` → `POST /api/webhook/shopify/orders`, HMAC verificado via `timingSafeEqual` — `lib/shopify-client.ts:37-43`
-2. `upsertShopifyOrder` insere em `fulfillment_orders` com `status='pending_operator'` — `lib/shopify-confirmation-service.ts:342-353`
-3. Operador muda `commercial_status` para "Confirmado*" → `maybeAutoSubmitConfirmedOrder` decide se auto-envia (`shouldSubmitToFenix`: confirmado + `send_status='Pendente'` + sem `lead_number` + não é simulação) — `lib/fulfillment-order-state.ts:20-48`, `lib/order-state.ts:43-53`
-4. `submitFulfillmentOrder` trava a linha, resolve SKUs reais, monta payload e chama `FulfillmentClient.createLead` — `lib/fulfillment-service.ts:255-341`
-5. `fulfillment-delivery-worker.ts` faz poll a cada 30s, uma integração por vez (lease via RPC), busca leads paginadas e aplica status via RPC `apply_fulfillment_delivery_status` — `lib/fulfillment-delivery-sync.ts:285-387`
-6. UI operador em `/fulfillment` (`components/fulfillment/fulfillment-page.tsx`)
+**Entrada — Shopify**
+1. Webhook `orders/create|updated|paid|cancelled|delete` → `POST /api/webhook/shopify/orders`; loja identificada por `x-shopify-shop-domain`, HMAC com o secret do app próprio da loja ou do app global — `app/api/webhook/shopify/orders/route.ts:14-34`, `lib/shopify-client.ts:37-43`
+2. `orders/delete` → `archiveShopifyOrder` (Desistiu, sai da fila se sem `lead_number`, cancela job pendente) — `lib/shopify-confirmation-service.ts:421-470`
+3. Demais tópicos → `upsertShopifyOrder`; o gatilho só é pedido em `orders/create` e com os gatilhos Shopify ativos — `app/api/webhook/shopify/orders/route.ts:47-49`
 
-### 5. Recuperação de carrinho abandonado (Shopify)
+**Entrada — Lightfunnels** (detalhes em `docs/LIGHTFUNNELS.md`)
+1. Conexão: app de Partners global (Client ID/Secret em `app_settings`) → OAuth → callback troca `code` por token, identifica a conta por `account { id }` e faz upsert por `lf_account_id` — `app/api/lightfunnels/callback/route.ts:40-74`; registra os webhooks na hora — `app/api/lightfunnels/callback/route.ts:85`
+2. Webhooks criados via `createWebhook` com URL `/api/webhook/lightfunnels?integration={id}&event={tipo}`, IDs guardados em `webhook_ids` (não há listagem na API) — `lib/lightfunnels-webhook-setup.ts:11-23,33-36,49-96`
+3. Recepção: id da integração validado como UUID → integração ativa (404 senão) → HMAC `lightfunnels-hmac` com o client secret do app → evento suportado — `app/api/webhook/lightfunnels/route.ts:24-47`. O HMAC é aceito sobre o corpo cru **ou** sobre o `JSON.stringify` do corpo parseado, sempre em tempo constante — `lib/lightfunnels-client.ts:29-43`
+4. Eventos: `order/confirmed` → `upsertLightfunnelsOrder` pedindo gatilho se os gatilhos LF estiverem ativos; `order/updated|cancelled|uncancelled|refunded|fulfilled` → upsert sem gatilho; `payment/paid` é ignorado (o `order/updated` que acompanha atualiza); `product/*` sincroniza o catálogo; `app/uninstalled` desativa a integração — `app/api/webhook/lightfunnels/route.ts:63-104`. Falha de processamento → 500 para permitir reenvio — `:106-112`
+5. Mapeamento: itens são snapshots sem quantidade (cada snapshot = 1 unidade, agrupados por variante+preço, `removed_at` ignorado, pacote `,N` expandido) — `lib/lightfunnels-order-service.ts:129-167`; `payment_type` = `PREPAID` só se `financial_status='paid'` — `:213`; chave interna `order_number = lightfunnels-{lfAccountId}-{orderId}` — `:202`
+6. Gravação: insere como `pending_operator` / "Não responde" / `Pendente` / "Não enviado"; corrida de dois webhooks (23505) relê e atualiza — `lib/lightfunnels-order-service.ts:268-295`. `funnel_id`/`store_id` só vêm no webhook e nunca são apagados por uma leitura da API — `:261-264`
+7. Cancelamento/arquivamento no LF → Desistiu, sai da fila se ainda sem `lead_number`, job `lightfunnels_order_flow` pendente vira `failed` — `lib/lightfunnels-order-service.ts:308-313,385-404`
+8. Enfileira o gatilho se `sendConfirmation` e o pedido ainda não teve `confirmation_message_sent_at` — `lib/lightfunnels-order-service.ts:315-318`; busca o gatilho `source='lightfunnels_order'` da conta e cria job com `dedupe_key lightfunnels-order:{id}`, TTL 24h — `:356-380`, `lib/flow-jobs.ts:73-91`. Sem gatilho/sem conta, grava o motivo em `confirmation_message_error` — `lib/lightfunnels-order-service.ts:371-379`
+9. "Sincronizar" faz backfill (até 4 páginas) sem disparar gatilho — `lib/lightfunnels-order-service.ts:408-425`
 
-> Atualizado em 2026-09-30 (v1.13.0): gatilho automático adicionado. Detalhes em `docs/FLOWS.md` → "Carrinho abandonado".
+**Roteamento para a conta WhatsApp (comum às duas plataformas)** — `assignConfirmationAccount`, `lib/order-account-routing.ts:18-52`
+1. Vínculos da loja/conta da plataforma: Shopify → `pickShopifyStoreAccount` (`lib/shopify-store-accounts.ts:55-57`); Lightfunnels → `pickLightfunnelsStoreAccount` com o `funnel_id` do pedido (`lib/order-account-routing.ts:26-33`)
+   - Lightfunnels: primeiro os vínculos **dedicados ao funil** (`funnel_ids` contém o funil), depois os **genéricos** (`funnel_ids` vazio); pedido sem funil conhecido só casa com genéricos — `lib/lightfunnels-store-accounts.ts:63-82`
+   - Dentro de cada grupo (`pickLinkedAccount`): só vínculos `enabled` de contas que ainda existem e não são sandbox; a conta do país do pedido vem primeiro, senão a de menor `priority` — `lib/store-account-links.ts:17-39`
+2. Conta padrão global de pedidos (`app_settings.shopify_default_order_instance`, a mesma para as duas plataformas; ignorada se virou sandbox ou não existe) — `lib/order-account-routing.ts:35-36`, `lib/shopify-order-settings.ts:7-20`
+3. País + `confirmation_priority` entre contas com `confirmation_enabled` — `lib/order-account-routing.ts:38-51`
+4. Conta já atribuída **não muda** em webhooks seguintes (o operador pode ter movido o pedido à mão) — `lib/lightfunnels-order-service.ts:252-254`, `lib/shopify-confirmation-service.ts:340-342`
 
-1. Webhooks `checkouts/create|update` (auto-registrados em `lib/shopify-webhook-setup.ts`) → `upsertShopifyAbandonedCheckout` grava o checkout e agenda um `flow_job` `abandoned_checkout_flow` por gatilho `source='shopify_abandoned_checkout'` da conta, para (última atividade na Shopify + `delay_ms`, padrão 60 min). Carrinho sem telefone é ignorado; respeita `shopify_triggers_enabled`.
-2. Conversão: pedido com `checkout_token`/`checkout_id` (`markAbandonedCheckoutsConvertedByOrder`) ou checkout com `completed_at` → `Convertido` + cancela jobs. O worker (`runAbandonedCheckoutTrigger`) reconfere na hora do envio (token e telefone) antes de executar o fluxo com `checkoutId` no contexto (variáveis `{{carrinho.*}}`).
-3. Disparo **manual** continua existindo lado a lado: operador clica "recuperar" → `POST /api/fulfillment/shopify/abandoned-checkouts/{id}/recover` → `sendAbandonedCheckoutRecovery`. Dentro da janela de 24h: texto livre do template da integração. Fora da janela (Cloud API): template aprovado da Meta (`recovery_template_id`, migration 020).
+**Confirmação e envio (comum)**
+1. Worker processa `shopify_order_flow` / `lightfunnels_order_flow`, cada um respeitando a **sua** pausa global (`shopify_triggers_enabled` / `lightfunnels_triggers_enabled`) — `lib/flow-job-worker.ts:76-92`, `lib/lightfunnels-trigger-settings.ts:10-21`
+2. Os dois tipos rodam `runShopifyOrderTrigger` (alias neutro `runOrderTrigger`), que escolhe o gatilho por `orderTriggerSourceFor(order.source)` — `lib/shopify-confirmation-service.ts:969-1004,1033`; bloqueia pedido cancelado/removido em qualquer plataforma — `:918-919`
+3. Operador (ou node de fluxo) muda `commercial_status` para "Confirmado*" → `maybeAutoSubmitConfirmedOrder` → `shouldSubmitToFenix` (confirmado + `send_status='Pendente'` + sem `lead_number` + não simulação) — `lib/fulfillment-order-state.ts:20-49`, `lib/order-state.ts:43-53`
+4. `submitFulfillmentOrder` trava a linha, resolve SKUs reais (LF: pelo catálogo `lightfunnels_products` da integração; SKU placeholder `LIGHTFUNNELS-n` não serve) e chama `createLead`; pedido pago na plataforma vai com COD 0 — `lib/fulfillment-service.ts:273-352,504-544`
+5. `fulfillment-delivery-worker.ts` faz poll a cada 30s (`lib/fulfillment-delivery-worker.ts:8`), uma integração por vez, e aplica status via RPC `apply_fulfillment_delivery_status` — `lib/fulfillment-delivery-sync.ts:132,292`
+6. UI em `/fulfillment` (`components/fulfillment/fulfillment-page.tsx`); simulação sem conta real em Sandbox → Simular pedido → Plataforma Lightfunnels (`app/api/fulfillment/sandbox/lightfunnels-order/route.ts:80-99`)
+
+**Write-back no Lightfunnels (opt-in)** — `lib/lightfunnels-writeback.ts`
+1. Disparado sem bloquear, só para `source='lightfunnels'`, depois de: mudança de estado do pedido (`lib/fulfillment-order-state.ts:90`, `lib/shopify-confirmation-service.ts:1194`), envio ao FenixCOD (`lib/fulfillment-service.ts:352`) e mudança de status de entrega (`lib/fulfillment-delivery-sync.ts:199`) — `scheduleLightfunnelsWriteback`, `lib/lightfunnels-writeback.ts:104-110`
+2. Pula simulação, integração inativa/desconectada ou com `writeback_enabled=false` — `lib/lightfunnels-writeback.ts:71-75`
+3. Tags desejadas calculadas do estado atual: `ff:confirmado`/`ff:desistiu`, `ff:enviado-fenixcod`, `ff:a-caminho`/`ff:novidade`/`ff:rejeitado`/`ff:entregue` — `lib/lightfunnels-writeback.ts:34-50`; só chama a API se mudaram em relação a `lightfunnels_writeback_tags` — `:77-78`
+4. Lê as tags atuais do pedido na API, preserva as que não começam com `ff:` e grava via `updateOrder` só com `tags` — `lib/lightfunnels-writeback.ts:56-61,81-85`, `lib/lightfunnels-client.ts:148-150`; erro vai para `lightfunnels_writeback_error` e é refeito na próxima mudança — `lib/lightfunnels-writeback.ts:91-97`
+
+### 5. Recuperação de carrinho abandonado (só Shopify)
+
+> Detalhes em `docs/FLOWS.md` → "Carrinho abandonado". O schema e o
+> roteamento já comportam carrinho Lightfunnels, mas o serviço e a origem
+> `lightfunnels_abandoned_checkout` não existem (`docs/LIGHTFUNNELS.md`,
+> "Fora do escopo atual").
+
+1. Webhooks `checkouts/create|update` → `upsertShopifyAbandonedCheckout`, roteado pela mesma `assignConfirmationAccount` (`lib/shopify-confirmation-service.ts:658`), agenda um `flow_job` `abandoned_checkout_flow` por gatilho `source='shopify_abandoned_checkout'` da conta (última atividade + `delay_ms`, padrão 60 min). Carrinho sem telefone é ignorado; respeita `shopify_triggers_enabled` (também no worker — `lib/flow-job-worker.ts:120-122`).
+2. Conversão: pedido com `checkout_token`/`checkout_id` (`markAbandonedCheckoutsConvertedByOrder`) ou checkout com `completed_at` → `Convertido` + cancela jobs. O worker reconfere token e telefone antes de executar o fluxo (variáveis `{{carrinho.*}}`).
+3. Disparo **manual** lado a lado: `POST /api/fulfillment/shopify/abandoned-checkouts/{id}/recover` → `sendAbandonedCheckoutRecovery`; dentro da janela, texto livre; fora (Cloud API), template aprovado (`recovery_template_id`, migration 020).
 
 ### 6. Atendimento humano via Slack
 
-> Adicionado em 2026-10-06 (v1.14.0). Guia completo e setup em `docs/SLACK.md`.
+> Guia completo e setup em `docs/SLACK.md`.
 
-1. Conexão única (bot token `xoxb-` + Signing Secret) cifrada em `app_settings`, validada com `auth.test` — aba **Integrações**, `app/api/integrations/slack/route.ts`
-2. Node `slackNotify` cria notificação interna `escalation` e posta no canal (do node ou padrão da conta) via `chat.postMessage`; com "Transferir para humano" marca `ai_sessions.requires_human` e encerra o fluxo — `lib/flow-engine.ts`, `lib/slack-notifications.ts`
-3. Encaminhamento opcional (desligado por padrão, por conta, tabela `slack_notification_settings`) de escalonamento da IA, node "Notificar" e "fora da janela de 24h" — `forwardNotificationToSlack`, nunca lança
-4. Botão "Assumir atendimento" → `POST /api/webhook/slack/interactivity` (assinatura `v0`, janela de 5 min) → claim atômico em `slack_messages` → notificação lida + `requires_human` + `chat.update` com quem assumiu
+1. Conexão única (bot token `xoxb-` + Signing Secret) cifrada em `app_settings`, validada com `auth.test` — `app/api/integrations/slack/route.ts`
+2. Node `slackNotify` cria notificação `escalation` e posta no canal; com "Transferir para humano" marca `ai_sessions.requires_human` e encerra o fluxo — `lib/flow-engine.ts:1792`, `lib/slack-notifications.ts`
+3. Encaminhamento opcional (desligado por padrão, por conta, `slack_notification_settings`) de escalonamento da IA, node "Notificar" e "fora da janela de 24h" — `forwardNotificationToSlack`, nunca lança
+4. Botão "Assumir atendimento" → `POST /api/webhook/slack/interactivity` (assinatura `v0`, janela de 5 min) → claim atômico em `slack_messages` → notificação lida + `requires_human` + `chat.update`
 
 ## Regras de negócio
 
-- **Regra:** A janela de resposta de 24h só existe para contas WhatsApp Cloud API — contas Evolution (self-hosted) nunca são bloqueadas por ela.
-  **Onde:** `lib/flow-engine.ts:1509`
-  **Por quê:** é uma restrição imposta pela Meta na API oficial, não uma regra de produto.
+### Pedidos e plataformas
 
-- **Regra:** O envio manual de texto livre pelo operador (`app/api/messages/route.ts`) não verifica a janela de 24h nem oferece fallback de template.
-  **Onde:** `app/api/messages/route.ts`, `lib/whatsapp-text.ts:70`
-  **Contexto:** só os caminhos automatizados (flow engine, recuperação Shopify) checam a janela; um operador humano só descobre a falha pelo erro de retorno da chamada.
+- **Regra:** Pedido Lightfunnels só entra (e só dispara o fluxo de confirmação) no `order/confirmed`, nunca no `order/created`.
+  **Onde:** `lib/lightfunnels-webhook-setup.ts:8-23`, `app/api/webhook/lightfunnels/route.ts:64-67`
+  **Por quê:** o `order/created` dispara antes dos upsells/downsells terminarem e pode chegar sem todos os itens.
 
-- **Regra:** Timeout no envio manual não marca a mensagem como `failed`, fica em `sending`.
-  **Onde:** `app/api/messages/route.ts:100-109`
-  **Por quê:** a Evolution pode ter aceitado o envio mesmo com o timeout do FlashFlow; um retry automático duplicaria a mensagem.
+- **Regra:** No Lightfunnels, o gatilho dispara para qualquer pedido que ainda não teve mensagem de confirmação, mesmo que ele já exista no banco (ex: entrou antes por `order/updated` ou pelo Sincronizar). Na Shopify, só para pedido **novo** em `orders/create`.
+  **Onde:** `lib/lightfunnels-order-service.ts:315-318` vs `lib/shopify-confirmation-service.ts:389`, `app/api/webhook/shopify/orders/route.ts:49`
+  **Contexto:** o job tem `dedupe_key` por pedido (`lib/flow-jobs.ts:80`), então dois `order/confirmed` não duplicam a mensagem.
 
-- **Regra:** Se o `node_id` salvo em um `flow_runs` pausado não existe mais no fluxo atual (fluxo editado enquanto a conversa esperava resposta), o sistema apaga o `flow_runs` órfão e reinicia do node `start`, em vez de travar.
-  **Onde:** `lib/flow-engine.ts:1376-1386`
-  **Contexto:** corrigido pelo commit `00a67fa` — antes disso a conversa travava silenciosamente.
+- **Regra:** O roteamento de pedido para conta WhatsApp segue sempre esta ordem: vínculos da loja/conta da plataforma (no Lightfunnels: dedicados ao funil → genéricos) → conta padrão global → país + `confirmation_priority`. Um vínculo dedicado a um funil ganha de um genérico mesmo com prioridade pior.
+  **Onde:** `lib/order-account-routing.ts:7-10,18-52`, `lib/lightfunnels-store-accounts.ts:63-82`
+  **Contexto:** testes em `__tests__/lib/lightfunnels-store-accounts.test.ts` ("prefers an account dedicated to the order funnel over a generic one with higher priority").
 
-- **Regra:** Um node `sendMessage` com `replyButtons` só pode se conectar diretamente a um node `switchCase`; qualquer outra conexão é bloqueada no save do fluxo.
-  **Onde:** `lib/flow-connection-validation.ts:14-24`, `lib/flow-validation.ts:194-200`
+- **Regra:** Dentro de um grupo de vínculos, a conta do mesmo país do pedido ganha; empate ou nenhuma do país decide pela menor `priority`. Vínculo de conta apagada ou que virou sandbox é ignorado (cai para o próximo grupo / regra geral), e sandbox não pode ser vinculada.
+  **Onde:** `lib/store-account-links.ts:17-39,42-52`
 
-- **Regra:** Se a IA está processando uma resposta e um humano assume a conversa nesse meio-tempo (`requires_human`), a resposta da IA já em andamento é descartada ao voltar.
-  **Onde:** `lib/flow-engine.ts:1192-1201`
+- **Regra:** A conta escolhida na primeira gravação do pedido não é recalculada por webhooks seguintes.
+  **Onde:** `lib/lightfunnels-order-service.ts:252-254`, `lib/shopify-confirmation-service.ts:340-342`
+  **Por quê:** o operador pode ter movido o pedido de conta manualmente.
 
-- **Regra:** O valor cobrado pelo FenixCOD na entrega (`total` do payload) é zerado quando o pedido já foi pago no Shopify (`financial_status='paid'`).
-  **Onde:** `lib/fulfillment-service.ts:301-310`, `lib/shopify-order-status.ts:76-78`
-  **Por quê:** o FenixCOD é fulfillment contra-reembolso (COD) — cobrar de novo na entrega de um pedido já pago duplicaria a cobrança ao cliente. O valor real do pedido permanece intacto na UI/banco; só o payload externo é zerado.
+- **Regra:** Cada plataforma tem sua própria pausa global de gatilhos de pedido (`shopify_triggers_enabled`, `lightfunnels_triggers_enabled`), conferida no webhook **e** de novo no worker; ambas valem `true` quando não configuradas.
+  **Onde:** `lib/lightfunnels-trigger-settings.ts:10-21`, `lib/shopify-trigger-settings.ts:6-9`, `lib/flow-job-worker.ts:78,87`, `lib/shopify-confirmation-service.ts:1002`
 
-- **Regra:** Um pedido só pode ser cancelado localmente sem contato com o FenixCOD se ainda não tiver `lead_number`; depois disso, cancelamento exige chamada real `deleteLead`. País e itens ficam travados para edição assim que `lead_number` existe.
-  **Onde:** `lib/fulfillment-service.ts:350-391`, `lib/shopify-confirmation-service.ts:788,847`
+- **Regra:** Não há mensagem de confirmação estática: sem gatilho "Pedido {plataforma} criado" na conta, nada é enviado e o motivo fica em `confirmation_message_error`.
+  **Onde:** `lib/lightfunnels-order-service.ts:371-379`, `lib/shopify-confirmation-service.ts:1000`
 
-- **Regra:** Quantidade "pacote" do Shopify (SKU com sufixo `, N` ou título com padrão tipo "3 frascos"/"3 bottles") é multiplicada para a quantidade física real antes de enviar ao FenixCOD.
-  **Onde:** `lib/shopify-pack-quantity.ts:32-101`
-  **Contexto:** corrigido pelo commit `4bbc2cc` — pedidos antigos exibiam a quantidade de pacotes como se fosse unidade física.
+- **Regra:** Pedido cancelado ou excluído/arquivado na plataforma vira "Desistiu"; se ainda não foi ao FenixCOD (sem `lead_number`, `status` `pending_operator`/`failed`), sai da fila (`cancelled`, "Não enviar") e o job de confirmação pendente é cancelado. Fluxo e envio ao FenixCOD ficam bloqueados para ele.
+  **Onde:** `lib/lightfunnels-order-service.ts:385-404`, `lib/shopify-confirmation-service.ts:421-470`, `lib/shopify-confirmation-service.ts:918-919`, `lib/fulfillment-service.ts:293-312`
 
-- **Regra:** Apenas 17 países têm mapeamento Shopify→FenixCOD (ES, PT, IT, PL, SK, CZ, RO, BG, GR, HU, SI, HR, AT, DE, FR, BE, NL). Pedido de país fora dessa lista fica preso sem integração de fulfillment correspondente.
-  **Onde:** `lib/fulfillment-countries.ts:9-27`
+- **Regra:** O valor cobrado pelo FenixCOD na entrega é zerado quando o pedido já foi pago na plataforma (`financial_status='paid'` — Shopify ou Lightfunnels).
+  **Onde:** `lib/fulfillment-service.ts:321-333`, `lib/order-platform.ts:55-58`
+  **Por quê:** COD de pedido já pago duplicaria a cobrança. O valor real continua no banco/UI; só o payload externo é zerado.
 
-- **Regra:** Um produto Shopify ocultado localmente (`hidden=true`) nunca é reexibido automaticamente por sincronizações futuras.
-  **Onde:** `migrations/006_shopify_products_catalog.sql:8-10`
-  **Por quê:** o FlashFlow só tem escopo OAuth `read_products` — não pode alterar a loja real, então a ocultação é puramente local e não há como uma sync "corrigir" isso na direção contrária.
+- **Regra:** Item Lightfunnels só vai ao FenixCOD com SKU real (o mesmo do FenixCOD) vindo do catálogo sincronizado ou do snapshot; o placeholder `LIGHTFUNNELS-n` é rejeitado com mensagem pedindo para cadastrar o SKU e sincronizar.
+  **Onde:** `lib/fulfillment-service.ts:526-539`
+
+- **Regra:** Quantidade "pacote" (SKU com sufixo `, N` ou título tipo "3 frascos"/"3 bottles") é multiplicada para a quantidade física antes de enviar ao FenixCOD — vale para as duas plataformas (`shopify_quantity` / `lightfunnels_quantity` guardam os pacotes vendidos).
+  **Onde:** `lib/shopify-pack-quantity.ts:35,82`, `lib/lightfunnels-order-service.ts:147-166`, `lib/fulfillment-service.ts:540-543`
+  **Contexto:** corrigido pelo commit `4bbc2cc` para a Shopify.
+
+- **Regra:** Um pedido só pode ser cancelado localmente sem contato com o FenixCOD se ainda não tiver `lead_number`; depois disso, cancelamento exige `deleteLead`. País e itens ficam travados para edição assim que `lead_number` existe.
+  **Onde:** `lib/fulfillment-service.ts:374-415`, `lib/shopify-confirmation-service.ts:1091,1150`
+
+- **Regra:** Apenas 17 países têm mapeamento ISO→nome FenixCOD (ES, PT, IT, PL, SK, CZ, RO, BG, GR, HU, SI, HR, AT, DE, FR, BE, NL); `fulfillment_integrations`, `fulfillment_products` e `accounts.country` usam o **nome** FenixCOD (`SPAIN`), não o ISO.
+  **Onde:** `lib/fulfillment-countries.ts:1-27`
+
+### Write-back e catálogo
+
+- **Regra:** O write-back no Lightfunnels é opt-in por integração e só mexe em tags com prefixo `ff:`; tags do lojista são preservadas, e falha no write-back nunca afeta o ciclo do pedido.
+  **Onde:** `migrations/027_lightfunnels_integration.sql:33-34`, `lib/lightfunnels-writeback.ts:9-17,56-61,91-97`
+
+- **Regra:** Um produto ocultado localmente (`hidden=true`) nunca é reexibido por sincronizações futuras; ocultar desliga a cópia local em `fulfillment_products`.
+  **Onde:** `migrations/006_shopify_products_catalog.sql:8-10`, `lib/lightfunnels-products-service.ts:133,225`
+  **Por quê (Shopify):** escopo OAuth `read_products` — a ocultação é puramente local.
+
+### Mensageria e fluxos
+
+- **Regra:** A janela de 24h só existe para contas WhatsApp Cloud API — contas Evolution nunca são bloqueadas por ela.
+  **Onde:** `lib/flow-engine.ts:1624`
+  **Por quê:** restrição da Meta na API oficial.
+
+- **Regra:** O envio manual pelo operador (`app/api/messages/route.ts`) não verifica a janela de 24h nem oferece fallback de template.
+  **Onde:** `app/api/messages/route.ts`, `lib/whatsapp-text.ts:71`
+
+- **Regra:** Timeout no envio manual não marca a mensagem como `failed`; fica em `sending` (HTTP 504).
+  **Onde:** `app/api/messages/route.ts:89-138`
+  **Por quê:** a Evolution pode ter aceitado o envio; um retry automático duplicaria a mensagem.
+
+- **Regra:** Se o `node_id` de um `flow_runs` pausado não existe mais (fluxo editado enquanto a conversa esperava), o `flow_runs` órfão é apagado e o fluxo reinicia do `start`.
+  **Onde:** `lib/flow-engine.ts:1487-1497`
+  **Contexto:** commit `00a67fa` — antes a conversa travava silenciosamente.
+
+- **Regra:** Um node `sendMessage` com `replyButtons` só pode se conectar diretamente a um único node `switchCase`; o save do fluxo bloqueia o resto.
+  **Onde:** `lib/flow-connection-validation.ts:15-19`, `lib/flow-validation.ts:227-231`
+
+- **Regra:** Se um humano assume a conversa (`requires_human`) enquanto a IA gera uma resposta, a resposta é descartada.
+  **Onde:** `lib/flow-engine.ts:1283-1298`
 
 ## Coisas não óbvias / armadilhas
 
-- **`proxy.ts` não é `middleware.ts`** — no Next.js 16 o mecanismo de gate global de request foi renomeado; procurar por `middleware.ts` neste projeto não encontra nada.
-- **Migrations `001`-`020` não são o schema completo.** A migration `001` já trata de OAuth/Shopify — as tabelas fundacionais (`conversations`, `messages`, `accounts`, `flows`, `triggers`) foram criadas antes do diretório `migrations/` existir e não têm `CREATE TABLE` versionado neste repositório. O mesmo vale para `ai_sessions`, `agent_memory_blocks`, `ai_provider_keys`, `instance_ai_config` — só há `ALTER TABLE`s incrementais, não os `CREATE TABLE` originais.
-- **`lib/sandbox.ts` é só duas constantes** (`SANDBOX_INSTANCE_NAME`, `SANDBOX_REMOTE_JID`) — a lógica real do modo sandbox (nunca enviar WhatsApp de verdade, a menos que um contato de teste tenha `sandbox_real_send_enabled`) está centralizada em `resolveRealSendTarget` (`lib/flow-engine.ts:72-77`), não em `sandbox.ts`.
-- **`lib/flow-transfer.ts` não tem relação com sandbox** apesar do nome sugerir teste — é o parser/serializador de export/import de fluxos entre contas.
-- **Resolução de `@lid` (WhatsApp) é assimétrica por direção**: inbound busca a conversa por `contact_name`, outbound busca por `contact_phone` — não há um campo comum reaproveitável, e essa assimetria já causou dois bugs de conversa duplicada (commits `d6a2343`, `579edf1`).
-- **Node types legados no flow builder** (`fulfillmentStock`, `fulfillmentStatus` em `FlowNodeType`, `types/index.ts:74-77`) existem só para fluxos salvos antigos continuarem carregando/executando — não devem ser oferecidos para novos fluxos.
-- **`switchCase` tem um handle `default` implícito**, mas `condition` só tem `true`/`false` — os dois blocos de bifurcação do flow builder não seguem a mesma convenção de handles.
+- **`proxy.ts` não é `middleware.ts`** — no Next.js 16 o mecanismo de gate global foi renomeado.
+- **Webhook Lightfunnels carrega integração e evento na query string**, porque o payload só traz `{ node }` e o `proxy.ts` libera só caminhos exatos (`lib/lightfunnels-webhook-setup.ts:31-36`). Mudar a URL pública do app exige recriar os webhooks ("Webhooks" na UI → `ensureLightfunnelsWebhooks` com `force`, `lib/lightfunnels-webhook-setup.ts:63-73`).
+- **O HMAC do Lightfunnels usa o client secret do app global**, não um segredo por integração (`app/api/webhook/lightfunnels/route.ts:39-40`) — trocar as credenciais do app em `app_settings` invalida a verificação de todos os webhooks de uma vez.
+- **Refresh token do Lightfunnels é rotativo** (cada refresh invalida o anterior): a renovação usa lock otimista em `refresh_token_iv`, e quem perde a corrida relê o token que o outro gravou. `invalid_grant` marca a integração como desconectada (`oauth_connected=false`) — `lib/lightfunnels-token.ts:12-17,77-124`.
+- **`runShopifyOrderTrigger` também roda pedidos Lightfunnels** (o nome é histórico; `runOrderTrigger` é o alias neutro) e o parâmetro `respectShopifyTriggerSetting` na verdade respeita a pausa da plataforma do pedido — `lib/shopify-confirmation-service.ts:1002,1033`, `lib/flow-job-worker.ts:85-92`.
+- **A "conta padrão de pedidos" mora numa chave com nome Shopify** (`shopify_default_order_instance`, `lib/shopify-order-settings.ts:5`) mas vale para as duas plataformas.
+- **`order_number` é chave interna** (`shopify-loja-123`, `lightfunnels-conta-456`); o número que o cliente reconhece é `getOrderDisplayNumber` (`lib/order-platform.ts:38-42`), usado em `{{pedido.numero}}` e na ferramenta de IA de consulta de pedido.
+- **País do Lightfunnels por nome em inglês nem sempre bate com o FenixCOD**: o mapeamento só converte ISO; um nome cai em `toUpperCase()` (`lib/lightfunnels-order-service.ts:109-112`). `Spain`/`France`/`Italy` batem, mas os nomes FenixCOD `HUNGRY`, `ESLOVAKIA`, `ESLOVENIA`, `CROACIA`, `CZECH REPUBLIC` (`lib/fulfillment-countries.ts`) não batem com `Hungary`/`Slovakia`/`Slovenia`/`Croatia`/`Czechia`. Nesses casos o pedido não casa conta por país nem integração FenixCOD.
+- **Cancelamento no Lightfunnels não dispara write-back** — `applyLightfunnelsCancellation` não chama `scheduleLightfunnelsWriteback` (`lib/lightfunnels-order-service.ts:385-404`), então `ff:desistiu` só é gravado na próxima mudança de estado feita no FlashFlow.
+- **Migrations `001`-`027` não são o schema completo.** As tabelas fundacionais (`conversations`, `messages`, `accounts`, `flows`, `triggers`, `ai_sessions`, `agent_memory_blocks`, `ai_provider_keys`, `instance_ai_config`) foram criadas antes do diretório `migrations/` e só têm `ALTER TABLE`s incrementais.
+- **`lib/sandbox.ts` é só duas constantes** — a lógica de "nunca enviar de verdade no sandbox" está em `resolveRealSendTarget` (`lib/flow-engine.ts:102`). Pedido simulado Lightfunnels usa a primeira integração ativa ou uma integração fictícia `id: null` (`app/api/fulfillment/sandbox/lightfunnels-order/route.ts:80-92`), e nunca é escrito de volta (`lib/lightfunnels-writeback.ts:71`).
+- **`lib/flow-transfer.ts` não tem relação com sandbox** — é o export/import de fluxos entre contas.
+- **Resolução de `@lid` é assimétrica por direção**: inbound busca por `contact_name`, outbound por `contact_phone` — já causou dois bugs de conversa duplicada (commits `d6a2343`, `579edf1`).
+- **Node types legados** (`fulfillmentStock`, `fulfillmentStatus`, `types/index.ts:77-78`) existem só para fluxos antigos continuarem carregando.
+- **`switchCase` tem um handle `default` implícito**, mas `condition` só tem `true`/`false`.
 
 ## Divergências entre documentação existente e o código
 
-Toda a documentação de projeto pré-existente (`CLAUDE.md`, `README.md`,
-`docs/ARCHITECTURE.md`, `docs/MVP.md`, `docs/FLOWS.md`,
-`docs/DATABASE.md`, `docs/API.md`) descreve o estado do "MVP semana 1":
-sem autenticação, só Evolution API, sem flow builder, sem IA, schema com
-apenas `conversations`/`messages`. Nenhuma dessas afirmações reflete o
-código atual (v1.11.0):
+O `CLAUDE.md` foi reescrito (commit `d0317e1`) e hoje bate com o código,
+inclusive com a integração Lightfunnels. `docs/DECISIONS.md` marca as
+decisões antigas do MVP como "SUPERADA". Divergências que restam nesta
+branch:
 
 | Documento diz | Código real |
 |---|---|
-| `CLAUDE.md`: "Auth: Nenhuma no MVP" | Auth administrativa via cookie HMAC + rate limit de login (`lib/server-auth.ts`, `proxy.ts`) |
-| `CLAUDE.md`/`docs/FLOWS.md`: "Flow Builder — Fase 3, não implementar agora" | Flow builder completo, com engine, validação, fila de jobs, IA e Shopify integrados |
-| `CLAUDE.md`/`docs/DECISIONS.md` [007]: "Gemini — Fase 3, não implementado" | IA multi-provider (Gemini/OpenAI/OpenRouter) implementada, com sessões, memória e credenciais cifradas |
-| `docs/API.md`: "Auth: nenhuma no MVP semana 1", só documenta 4 rotas | Dezenas de rotas sob `app/api/`, todas atrás do gate de `proxy.ts` exceto 4 webhooks públicos |
-| `docs/DATABASE.md`: schema só com `conversations`+`messages`, RLS desabilitada | Dezenas de tabelas (`fulfillment_orders`, `flows`, `flow_runs`, `flow_jobs`, `shopify_integrations`, `ai_sessions` etc.); `migrations/008_lockdown_anon_rls.sql` sugere que RLS foi endurecida, não deixada desabilitada |
-| `docs/MVP.md` "Fora do escopo (Fase 3+)": "WhatsApp Cloud API oficial" | Suporte dual Evolution + Cloud API implementado e em produção há várias fases (`Fase 1` a `Fase 4` do suporte dual, commits `4406a59`…`972956c`) |
-| `README.md`: "Backend: Node.js (NestJS) ou Python" (ainda indeciso) | Tudo em Next.js App Router — decisão já tomada e registrada em `docs/DECISIONS.md` [001], mas o próprio README não foi atualizado |
+| `docs/FLOWS.md:71-74`: `triggers.source` pode ser `message`, `shopify_order`, `delivery_status` ou `shopify_abandoned_checkout` | Também `lightfunnels_order` (`types/index.ts:47`, `lib/trigger-input.ts:4`) |
+| `docs/DATABASE.md:33-34`: tabelas Shopify e Fulfillment, sem Lightfunnels | Migration 027 cria `lightfunnels_integrations`, `lightfunnels_integration_accounts`, `lightfunnels_products` e colunas `lightfunnels_*` em `fulfillment_orders` |
+| `docs/LIGHTFUNNELS.md` "Ciclo de um pedido", passo 6: "cada mudança de estado grava tags" | Cancelamento/arquivamento vindo do próprio Lightfunnels não agenda write-back (ver Armadilhas) |
 
-**Exceção**: `docs/FULFILLMENT_API.md` está atualizado e consistente com
-o código (inclusive com datas de verificação recentes) — foi a única
-peça de documentação pré-existente tratada como confiável neste
-levantamento, e mesmo assim as afirmações de contrato externo foram
-conferidas contra `lib/fulfillment-client.ts`.
+`docs/FULFILLMENT_API.md` e `docs/LIGHTFUNNELS.md` seguem como as peças de
+documentação mais confiáveis; as afirmações deste documento foram
+conferidas contra o código, não contra eles.
 
 ## Perguntas em aberto
 
-- O `CLAUDE.md` e os docs desatualizados devem ser reescritos/arquivados
-  agora que o projeto está em v1.11.0? Do jeito que estão, um agente ou
-  desenvolvedor novo que confie neles vai operar com um modelo mental
-  completamente errado do produto.
-- As tabelas fundacionais sem migration versionada (`conversations`,
-  `messages`, `accounts`, `flows`, `triggers`, `ai_sessions`,
-  `agent_memory_blocks`, `ai_provider_keys`, `instance_ai_config`) —
-  existe um dump de schema em algum lugar (Supabase dashboard/backup) que
-  deveria ser versionado retroativamente como uma migration `000`?
-- Regra de "17 países atendidos" (`lib/fulfillment-countries.ts`) é um
-  limite de negócio real e estável, ou só reflete quem já foi configurado
-  manualmente em `fulfillment_integrations` até agora?
+- **Pendências do Lightfunnels que só um app real responde** (listadas em `docs/LIGHTFUNNELS.md`): pedido COD dispara `order/confirmed`? `financial_status` de COD é mesmo `pending`? `updateOrder` aceita só `tags` (a doc marca `items` como obrigatório)? Snapshots de item podem trazer `quantity`? Há retry/rate limit?
+- **O Lightfunnels manda o país como ISO ou como nome?** Se for nome, os 5 países com grafia FenixCOD diferente (ver Armadilhas) não roteiam nem enviam.
+- **Refresh concorrente com ambos bem-sucedidos** (`lib/lightfunnels-token.ts:120-122`): se a API aceitar o mesmo refresh token duas vezes e cada resposta invalidar a anterior, o refresh token que fica salvo pode já estar invalidado. Dá para confirmar com o Lightfunnels se refresh é estritamente de uso único?
+- As tabelas fundacionais sem migration versionada — existe um dump de schema que deveria virar uma migration `000`?
+- Os "17 países atendidos" (`lib/fulfillment-countries.ts`) são um limite estável ou só quem já foi configurado em `fulfillment_integrations`?

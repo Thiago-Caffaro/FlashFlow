@@ -1,7 +1,7 @@
 import 'server-only'
 import type { Conversation, FulfillmentOrder, ShopifyAbandonedCheckout, ShopifyProduct } from '@/types'
-import type { MessageTemplateContext } from './message-template'
-import { messageUsesCheckoutVariables, messageUsesOrderVariables, messageUsesProductVariables } from './message-template'
+import type { CatalogProductName, MessageTemplateContext } from './message-template'
+import { lightfunnelsCatalogKey, messageUsesCheckoutVariables, messageUsesOrderVariables, messageUsesProductVariables } from './message-template'
 import { normalizePhone } from './phone'
 import { supabaseAdmin } from './supabase-admin'
 
@@ -35,6 +35,7 @@ async function loadOrder(
       .select('*')
       .eq('id', orderId)
       .is('shopify_deleted_at', null)
+      .is('lightfunnels_archived_at', null)
       .maybeSingle()
     if (error) throw new Error(`Falha ao consultar pedido: ${error.message}`)
     if (!data) return null
@@ -50,6 +51,7 @@ async function loadOrder(
     .select('*')
     .eq('conversation_id', conversation.id)
     .is('shopify_deleted_at', null)
+    .is('lightfunnels_archived_at', null)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -65,6 +67,7 @@ async function loadOrder(
     .select('*')
     .eq('contact_phone', phone)
     .is('shopify_deleted_at', null)
+    .is('lightfunnels_archived_at', null)
     .order('created_at', { ascending: false })
     .limit(20)
   if (byPhone.error) {
@@ -130,22 +133,36 @@ export async function resolveFlowOrder(input: {
 async function loadProducts(
   order: FulfillmentOrder,
   required: boolean
-): Promise<Map<string, ShopifyProduct>> {
-  const result = new Map<string, ShopifyProduct>()
+): Promise<Map<string, CatalogProductName>> {
+  const result = new Map<string, CatalogProductName>()
   if (!required) return result
 
   const variantIds = [...new Set(order.items
     .map((item) => item.shopify_variant_id)
     .filter((id): id is string => Boolean(id)))]
-  if (variantIds.length === 0) return result
+  if (variantIds.length > 0) {
+    const { data, error } = await supabaseAdmin
+      .from('shopify_products')
+      .select('*')
+      .in('shopify_variant_id', variantIds)
+    if (error) throw new Error(`Falha ao consultar catalogo local: ${error.message}`)
+    for (const product of (data ?? []) as ShopifyProduct[]) {
+      if (product.shopify_variant_id) result.set(product.shopify_variant_id, product)
+    }
+  }
 
-  const { data, error } = await supabaseAdmin
-    .from('shopify_products')
-    .select('*')
-    .in('shopify_variant_id', variantIds)
-  if (error) throw new Error(`Falha ao consultar catalogo local: ${error.message}`)
-  for (const product of (data ?? []) as ShopifyProduct[]) {
-    if (product.shopify_variant_id) result.set(product.shopify_variant_id, product)
+  const lightfunnelsVariantIds = [...new Set(order.items
+    .map((item) => item.lightfunnels_variant_id)
+    .filter((id): id is string => Boolean(id)))]
+  if (lightfunnelsVariantIds.length > 0) {
+    const { data, error } = await supabaseAdmin
+      .from('lightfunnels_products')
+      .select('lf_variant_id, title')
+      .in('lf_variant_id', lightfunnelsVariantIds)
+    if (error) throw new Error(`Falha ao consultar catalogo local: ${error.message}`)
+    for (const product of data ?? []) {
+      if (product.lf_variant_id) result.set(lightfunnelsCatalogKey(String(product.lf_variant_id)), { title: String(product.title ?? '') })
+    }
   }
   return result
 }

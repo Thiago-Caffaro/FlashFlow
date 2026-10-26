@@ -1,6 +1,7 @@
 import 'server-only'
 import type { OrderStateField } from '@/types'
 import { supabaseAdmin } from './supabase-admin'
+import { scheduleLightfunnelsWriteback } from './lightfunnels-writeback'
 import {
   FulfillmentOrderSubmissionError,
   recordOrderEvent,
@@ -86,5 +87,6 @@ export async function updateFulfillmentOrderState(input: {
   })
 
   const autoSubmit = await maybeAutoSubmitConfirmedOrder(input.orderId)
+  scheduleLightfunnelsWriteback(data)
   return { order: autoSubmit.order ?? data, autoSubmit }
 }

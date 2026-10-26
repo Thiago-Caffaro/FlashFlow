@@ -44,7 +44,7 @@ export interface Message {
 
 export type TriggerTipo = 'contains' | 'exact'
 export type TriggerAction = 'send_message' | 'flow'
-export type TriggerSource = 'message' | 'shopify_order' | 'delivery_status' | 'shopify_abandoned_checkout'
+export type TriggerSource = 'message' | 'shopify_order' | 'delivery_status' | 'shopify_abandoned_checkout' | 'lightfunnels_order'
 
 export interface Trigger {
   id: string
@@ -225,6 +225,8 @@ export type ConfirmationTriggerState = 'pending' | 'sent' | 'failed'
 export const ABANDONED_CHECKOUT_STATUSES = ['Pendente', 'Enviado', 'Não enviar', 'Convertido'] as const
 export type AbandonedCheckoutStatus = typeof ABANDONED_CHECKOUT_STATUSES[number]
 
+export type OrderSource = 'manual' | 'shopify' | 'lightfunnels'
+
 export interface FulfillmentOrder {
   id: string
   order_number: string
@@ -245,6 +247,11 @@ export interface FulfillmentOrder {
     shopify_product_id?: string
     shopify_variant_id?: string
     shopify_quantity?: number
+    lightfunnels_product_id?: string
+    lightfunnels_variant_id?: string
+    // Quantidade vendida na plataforma (pacotes), antes de multiplicar por
+    // units_per_pack. Shopify continua usando shopify_quantity.
+    lightfunnels_quantity?: number
     units_per_pack?: number
     pack_quantity_source?: 'sku' | 'catalog' | 'title' | 'default'
     sku: string
@@ -259,7 +266,7 @@ export interface FulfillmentOrder {
   external_snapshot: Record<string, unknown> | null
   last_error: string | null
   submitted_at: string | null
-  source: 'manual' | 'shopify'
+  source: OrderSource
   shopify_integration_id: string | null
   shopify_order_id: string | null
   shopify_order_name: string | null
@@ -271,6 +278,19 @@ export interface FulfillmentOrder {
   shopify_cancel_reason?: string | null
   shopify_closed_at?: string | null
   raw_shopify_payload: Record<string, unknown> | null
+  // Lightfunnels (migration 027)
+  lightfunnels_integration_id?: string | null
+  lightfunnels_order_id?: string | null
+  lightfunnels_order_name?: string | null
+  lightfunnels_funnel_id?: string | null
+  lightfunnels_store_id?: string | null
+  lightfunnels_financial_status?: string | null
+  lightfunnels_fulfillment_status?: string | null
+  lightfunnels_cancelled_at?: string | null
+  lightfunnels_archived_at?: string | null
+  raw_lightfunnels_payload?: Record<string, unknown> | null
+  lightfunnels_writeback_tags?: string[] | null
+  lightfunnels_writeback_error?: string | null
   commercial_status: CommercialStatus
   send_status: SendStatus
   delivery_status: DeliveryStatus
@@ -314,6 +334,56 @@ export interface ShopifyStoreAccountLink {
   instance_name: string
   priority: number
   enabled: boolean
+}
+
+export interface LightfunnelsIntegration {
+  id: string
+  name: string
+  lf_account_id: string
+  scopes: string
+  default_country: string
+  active: boolean
+  oauth_connected: boolean
+  writeback_enabled: boolean
+  access_token_expires_at: string
+  last_webhook_at: string | null
+  last_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+// Conta WhatsApp vinculada a uma conta Lightfunnels
+// (lightfunnels_integration_accounts). funnel_ids vazio = todos os funis.
+export interface LightfunnelsStoreAccountLink {
+  instance_name: string
+  priority: number
+  enabled: boolean
+  funnel_ids: string[]
+}
+
+export interface LightfunnelsFunnel {
+  id: string
+  name: string
+  published: boolean
+}
+
+export interface LightfunnelsProduct {
+  id: string
+  lightfunnels_integration_id: string | null
+  lf_product_id: string | null
+  lf_variant_id: string | null
+  sku: string | null
+  title: string
+  variant_title: string | null
+  units_per_pack: number
+  price: number
+  currency: string
+  image_url: string | null
+  hidden: boolean
+  keep_local_copy: boolean
+  local_product_id: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface ShopifyProduct {

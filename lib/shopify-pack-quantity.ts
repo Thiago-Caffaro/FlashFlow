@@ -13,6 +13,8 @@ export interface PackAwareOrderItem {
   shopify_product_id?: string
   shopify_variant_id?: string
   shopify_quantity?: number
+  // Pacotes vendidos num pedido Lightfunnels (equivalente a shopify_quantity).
+  lightfunnels_quantity?: number
   units_per_pack?: number
   pack_quantity_source?: PackQuantitySource
   sku: string
@@ -123,7 +125,7 @@ export function normalizeOrderItemsForPackDisplay<T extends PackAwareOrderItem>(
     const rawItem = findRawLineItem(item, rawItems, index)
     const storedUnits = validUnits(item.units_per_pack)
     const rawShopifyQuantity = positiveInteger(rawItem.current_quantity ?? rawItem.quantity)
-    const storedShopifyQuantity = positiveInteger(item.shopify_quantity)
+    const storedShopifyQuantity = positiveInteger(item.shopify_quantity ?? item.lightfunnels_quantity)
     const pack = resolvePackQuantity({
       rawSku: rawItem.sku || item.sku,
       configuredUnits: storedUnits ?? undefined,
@@ -158,7 +160,7 @@ export function normalizeOrderItemsForPackDisplay<T extends PackAwareOrderItem>(
 
 export function getOrderItemPackBreakdown(item: PackAwareOrderItem): OrderItemPackBreakdown | null {
   const unitsPerPack = validUnits(item.units_per_pack)
-  const packQuantity = positiveInteger(item.shopify_quantity)
+  const packQuantity = positiveInteger(item.shopify_quantity ?? item.lightfunnels_quantity)
   if (!unitsPerPack || unitsPerPack <= 1 || !packQuantity) return null
   const expectedQuantity = packQuantity * unitsPerPack
   return {

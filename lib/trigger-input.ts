@@ -1,7 +1,7 @@
 import type { TriggerSource } from '@/types'
 import { isDeliveryStatus } from './order-state'
 
-const TRIGGER_SOURCES = new Set<TriggerSource>(['message', 'shopify_order', 'delivery_status', 'shopify_abandoned_checkout'])
+const TRIGGER_SOURCES = new Set<TriggerSource>(['message', 'shopify_order', 'delivery_status', 'shopify_abandoned_checkout', 'lightfunnels_order'])
 
 // Origens disparadas por evento do sistema (não por texto do lead) — só
 // fazem sentido executando um fluxo.

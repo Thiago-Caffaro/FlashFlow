@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { supabaseAdmin } from './supabase-admin'
 import { wakeFlowJobWorker } from './flow-job-signal'
 
-export type FlowJobType = 'shopify_order_flow' | 'flow_message_resume' | 'delivery_status_flow' | 'abandoned_checkout_flow'
+export type FlowJobType =
+  | 'shopify_order_flow'
+  | 'flow_message_resume'
+  | 'delivery_status_flow'
+  | 'abandoned_checkout_flow'
+  | 'lightfunnels_order_flow'
 export type FlowJobStatus = 'pending' | 'processing' | 'completed' | 'failed'
 
 export interface FlowJob {
@@ -53,6 +58,26 @@ export async function enqueueShopifyOrderFlowJob(input: {
   return insertJob({
     job_type: 'shopify_order_flow',
     dedupe_key: `shopify-order:${input.orderId}`,
+    instance_name: input.instanceName,
+    flow_id: input.flowId,
+    node_id: null,
+    order_id: input.orderId,
+    conversation_id: null,
+    remote_jid: null,
+    payload: {},
+    max_attempts: 20,
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  })
+}
+
+export async function enqueueLightfunnelsOrderFlowJob(input: {
+  orderId: string
+  instanceName: string
+  flowId: string
+}): Promise<FlowJob | null> {
+  return insertJob({
+    job_type: 'lightfunnels_order_flow',
+    dedupe_key: `lightfunnels-order:${input.orderId}`,
     instance_name: input.instanceName,
     flow_id: input.flowId,
     node_id: null,

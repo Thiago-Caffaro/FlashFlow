@@ -22,6 +22,8 @@ import {
   normalizeOrderItemsForPackDisplay,
 } from '@/lib/shopify-pack-quantity'
 import ConfirmationTriggerStatus, { getConfirmationTriggerState } from './confirmation-trigger-status'
+import { getOrderDisplayNumber, getPlatformLabel, isOrderCancelled, isOrderPaymentSettled, isOrderRemoved } from '@/lib/order-platform'
+import LightfunnelsOrderStatusBadges from './lightfunnels-order-status-badges'
 import ShopifyOrderStatusBadges from './shopify-order-status-badges'
 import ShopifyOrderTimeline from './shopify-order-timeline'
 import DeliveryStatusTimeline from './delivery-status-timeline'
@@ -122,8 +124,10 @@ export default function OrderEditModal({
   }, [order.id, normalizedOrderItems])
 
   const hasLead = Boolean(order.lead_number)
-  const shopifyCancelled = isShopifyOrderCancelled(order)
-  const alreadyPaidExternally = isShopifyPaymentSettled(getShopifyOrderStatus(order).financialStatus)
+  const shopifyCancelled = isShopifyOrderCancelled(order) || isOrderCancelled(order) || isOrderRemoved(order)
+  const alreadyPaidExternally = order.source === 'lightfunnels'
+    ? isOrderPaymentSettled(order)
+    : isShopifyPaymentSettled(getShopifyOrderStatus(order).financialStatus)
   const hasCountryIntegration = availableCountries.includes(order.country)
   const canSubmit = !hasLead &&
     !shopifyCancelled &&
@@ -138,7 +142,7 @@ export default function OrderEditModal({
   const isSandboxOrder = (order.assigned_instance_name || order.instance_name) === SANDBOX_INSTANCE_NAME
   // Sandbox test orders can re-run the confirmation trigger repeatedly; real
   // simulations (not tied to the sandbox) stay blocked from ever sending.
-  const canResend = !shopifyCancelled && order.source === 'shopify' && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
+  const canResend = !shopifyCancelled && (order.source === 'shopify' || order.source === 'lightfunnels') && (!order.confirmation_message_sent_at || (order.is_simulation && isSandboxOrder))
 
   async function handleUpdate(patch: Parameters<typeof onUpdateStatus>[1]) {
     setBusy(true)
@@ -229,11 +233,14 @@ export default function OrderEditModal({
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-bold dark:text-[#e9edef]">
-                {order.shopify_order_name || order.order_number}
+                {getOrderDisplayNumber(order)}
               </h2>
               <CommercialBadge status={order.commercial_status} />
               {order.source === 'shopify' && (
                 <span className="rounded-full bg-[#f0f2f5] px-2 py-0.5 text-xs font-semibold text-[#667781] dark:bg-[#2a3942]">shopify</span>
+              )}
+              {order.source === 'lightfunnels' && (
+                <span className="rounded-full bg-[#f0f2f5] px-2 py-0.5 text-xs font-semibold text-[#667781] dark:bg-[#2a3942]">lightfunnels</span>
               )}
               {order.source === 'manual' && (
                 <span className="rounded-full bg-[#f0f2f5] px-2 py-0.5 text-xs font-semibold text-[#667781] dark:bg-[#2a3942]">manual</span>
@@ -262,7 +269,7 @@ export default function OrderEditModal({
                 <Download size={11} />recebido {new Date(order.created_at).toLocaleString('pt-BR')}
               </span>
             </p>
-            <div className="mt-2"><ShopifyOrderStatusBadges order={order} /></div>
+            <div className="mt-2"><ShopifyOrderStatusBadges order={order} /><LightfunnelsOrderStatusBadges order={order} /></div>
           </div>
           <button onClick={onClose} className="shrink-0 rounded-lg p-1.5 text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]">
             <X size={18} />
@@ -272,12 +279,12 @@ export default function OrderEditModal({
         <div className="divide-y divide-[#f0f2f5] dark:divide-[#2a3942]">
           {shopifyCancelled && (
             <div className="border-l-4 border-red-500 bg-red-50 px-6 py-3 text-sm font-medium text-red-800 dark:bg-red-950/30 dark:text-red-300">
-              Este pedido foi cancelado no Shopify. O envio ao FenixCOD e o gatilho de confirmação estão bloqueados.
+              Este pedido foi cancelado no {getPlatformLabel(order.source === 'lightfunnels' ? 'lightfunnels' : 'shopify')}. O envio ao FenixCOD e o gatilho de confirmação estão bloqueados.
             </div>
           )}
           {!shopifyCancelled && alreadyPaidExternally && (
             <div className="border-l-4 border-emerald-500 bg-emerald-50 px-6 py-3 text-sm font-medium text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
-              Este pedido já foi pago pelo Shopify. O valor enviado ao FenixCOD é {order.currency} 0,00 — nada é cobrado do cliente na entrega.
+              Este pedido já foi pago pelo {getPlatformLabel(order.source === 'lightfunnels' ? 'lightfunnels' : 'shopify')}. O valor enviado ao FenixCOD é {order.currency} 0,00 — nada é cobrado do cliente na entrega.
             </div>
           )}
           {/* Customer + Status */}
@@ -542,7 +549,7 @@ export default function OrderEditModal({
                 <p className="mt-1 text-xs font-semibold text-amber-600">Pronto para envio automático</p>
               )}
             </div>
-            {order.source === 'shopify' && (
+            {(order.source === 'shopify' || order.source === 'lightfunnels') && (
               <div className="space-y-2">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781]">Gatilho de confirmação</p>
                 <ConfirmationTriggerStatus order={order} />
@@ -596,7 +603,7 @@ export default function OrderEditModal({
                 onClick={handleResend}
                 disabled={busy || (order.is_simulation && !isSandboxOrder)}
                 className={btnSecondary}
-                title="Roda o gatilho 'Pedido Shopify criado' novamente para este pedido"
+                title={`Roda o gatilho 'Pedido ${getPlatformLabel(order.source)} criado' novamente para este pedido`}
               >
                 <MessageCircle size={14} />Rodar gatilho
               </button>

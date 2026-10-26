@@ -179,6 +179,18 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
             </button>
             <button
               type="button"
+              onClick={() => onUpdate(trigger.id, { ...resetCheckoutDelay, source: 'lightfunnels_order', action: 'flow' })}
+              className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium border-2 transition-colors ${
+                trigger.source === 'lightfunnels_order'
+                  ? 'border-[#00a884] bg-[#e7f8f4] dark:bg-[#0d2e27] text-[#00a884]'
+                  : 'border-dashed border-[#d1d7db] dark:border-[#3d4f5a] text-[#aebac1] dark:text-[#667781]'
+              }`}
+            >
+              <ShoppingBag size={14} />
+              Pedido Lightfunnels criado
+            </button>
+            <button
+              type="button"
               onClick={() => onUpdate(trigger.id, {
                 ...resetCheckoutDelay,
                 source: 'delivery_status',
@@ -249,6 +261,13 @@ function TriggerPanel({ trigger, onUpdate, onDelete, onClose, instanceName }: Pa
             <ShoppingBag size={13} className="text-[#667781] mt-0.5 shrink-0" />
             <p className="text-xs text-[#667781] leading-relaxed">
               Este gatilho roda o fluxo abaixo assim que um pedido Shopify for criado para esta conta — em vez de uma mensagem de confirmação fixa. Se nenhum fluxo estiver vinculado, nenhuma mensagem automática é enviada.
+            </p>
+          </div>
+        ) : trigger.source === 'lightfunnels_order' ? (
+          <div className="flex items-start gap-2 p-3 rounded-xl bg-[#f0f2f5] dark:bg-[#2a3942]">
+            <ShoppingBag size={13} className="text-[#667781] mt-0.5 shrink-0" />
+            <p className="text-xs text-[#667781] leading-relaxed">
+              Este gatilho roda o fluxo abaixo quando um pedido Lightfunnels é confirmado (depois dos upsells) e cai nesta conta — pelos vínculos da integração Lightfunnels, que podem separar contas por funil. Se nenhum fluxo estiver vinculado, nenhuma mensagem automática é enviada.
             </p>
           </div>
         ) : trigger.source === 'delivery_status' ? (
@@ -671,6 +690,8 @@ export default function TriggersTab({ instanceName, focus = null }: TriggersTabP
                     <p className="text-xs text-[#aebac1] dark:text-[#667781] font-mono truncate mt-0.5">
                       {t.source === 'shopify_order'
                         ? <em className="not-italic font-sans">Pedido Shopify criado</em>
+                        : t.source === 'lightfunnels_order'
+                          ? <em className="not-italic font-sans">Pedido Lightfunnels criado</em>
                         : t.source === 'shopify_abandoned_checkout'
                           ? <em className="not-italic font-sans">Após {checkoutDelayMinutes(t.delay_ms)} min sem atividade</em>
                         : t.source === 'delivery_status'
@@ -681,10 +702,10 @@ export default function TriggersTab({ instanceName, focus = null }: TriggersTabP
                     </p>
                   </div>
                   <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-[#f0f2f5] dark:bg-[#2a3942] text-[#667781] dark:text-[#8696a0] shrink-0">
-                    {t.source === 'shopify_order' ? <ShoppingBag size={10} /> : null}
+                    {t.source === 'shopify_order' || t.source === 'lightfunnels_order' ? <ShoppingBag size={10} /> : null}
                     {t.source === 'delivery_status' ? <Truck size={10} /> : null}
                     {t.source === 'shopify_abandoned_checkout' ? <ShoppingCart size={10} /> : null}
-                    {t.source === 'shopify_order'
+                    {t.source === 'shopify_order' || t.source === 'lightfunnels_order'
                       ? 'Pedido'
                       : t.source === 'delivery_status'
                         ? 'Entrega'

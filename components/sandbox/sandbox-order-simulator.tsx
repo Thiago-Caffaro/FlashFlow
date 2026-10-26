@@ -15,6 +15,9 @@ interface SandboxOrderSimulatorProps {
 }
 
 type OrderItemForm = { productId: string; quantity: number }
+type OrderPlatform = 'shopify' | 'lightfunnels'
+
+const PLATFORM_LABEL: Record<OrderPlatform, string> = { shopify: 'Shopify', lightfunnels: 'Lightfunnels' }
 
 const emptyOrderForm = {
   customerName: '',
@@ -37,6 +40,7 @@ export default function SandboxOrderSimulator({
   const [orderItems, setOrderItems] = useState<OrderItemForm[]>([])
   const [orderContactId, setOrderContactId] = useState<string | null>(activeContactId)
   const [orderBusy, setOrderBusy] = useState(false)
+  const [platform, setPlatform] = useState<OrderPlatform>('shopify')
 
   // Acompanha o contato ativo do chat ao lado.
   useEffect(() => {
@@ -96,21 +100,23 @@ export default function SandboxOrderSimulator({
     setOrderItems(firstProduct ? [{ productId: firstProduct.id, quantity: 1 }] : [])
   }
 
-  async function submitShopifyOrder() {
+  async function submitOrder() {
     setOrderBusy(true)
     const items = orderItems.map((item) => {
       const product = products.find((p) => p.id === item.productId)
       return product ? { sku: product.sku, name: product.name, price: product.price, quantity: item.quantity } : null
     }).filter((item): item is NonNullable<typeof item> => item !== null)
 
-    const json = await fetch('/api/fulfillment/sandbox/shopify-order', {
+    const json = await fetch(`/api/fulfillment/sandbox/${platform}-order`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...orderForm, items, conversationId: orderContactId }),
     }).then(getJson)
     onMessage(
       json.ok
-        ? (orderContactId ? 'Pedido Shopify simulado criado — a confirmação aparece na conversa ao lado.' : 'Pedido Shopify simulado criado. Verifique a aba Pedidos.')
+        ? (orderContactId
+          ? `Pedido ${PLATFORM_LABEL[platform]} simulado criado — a confirmação aparece na conversa ao lado.`
+          : `Pedido ${PLATFORM_LABEL[platform]} simulado criado. Verifique a aba Pedidos.`)
         : (json.error ?? 'Erro ao simular pedido'),
       !json.ok,
     )
@@ -126,11 +132,24 @@ export default function SandboxOrderSimulator({
 
   return (
     <div className="max-w-2xl rounded-xl bg-white p-5 shadow-sm dark:bg-[#111b21]">
-      <h3 className="mb-1 text-sm font-bold dark:text-[#e9edef]">Simular pedido Shopify</h3>
+      <h3 className="mb-1 text-sm font-bold dark:text-[#e9edef]">Simular pedido {PLATFORM_LABEL[platform]}</h3>
       <p className="mb-4 text-xs text-[#667781]">
-        Monta um pedido no formato real de webhook do Shopify e roda o mesmo código de processamento — sem nunca chamar a loja real nem o FenixCOD.
+        Monta um pedido no formato real de webhook do {PLATFORM_LABEL[platform]} e roda o mesmo código de processamento — sem nunca chamar a loja real nem o FenixCOD.
+        Dispara o gatilho &quot;Pedido {PLATFORM_LABEL[platform]} criado&quot; da conta Sandbox.
       </p>
       <div className="space-y-3">
+        <div>
+          <label htmlFor="sandbox-order-platform" className="mb-1 block text-xs font-semibold text-[#667781]">Plataforma</label>
+          <select
+            id="sandbox-order-platform"
+            className={sandboxInputClass}
+            value={platform}
+            onChange={(e) => setPlatform(e.target.value === 'lightfunnels' ? 'lightfunnels' : 'shopify')}
+          >
+            <option value="shopify">Shopify</option>
+            <option value="lightfunnels">Lightfunnels</option>
+          </select>
+        </div>
         <div>
           <label htmlFor="sandbox-order-contact" className="mb-1 block text-xs font-semibold text-[#667781]">Atrelar ao contato de teste</label>
           <select id="sandbox-order-contact" className={sandboxInputClass} value={orderContactId ?? ''} onChange={(e) => selectOrderContact(e.target.value)}>
@@ -197,7 +216,7 @@ export default function SandboxOrderSimulator({
 
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={submitShopifyOrder}
+            onClick={submitOrder}
             disabled={orderBusy || !orderForm.customerName || !orderForm.phone || !orderForm.address || !orderForm.country || !orderItems.length}
             className={sandboxBtnPrimary}
           >

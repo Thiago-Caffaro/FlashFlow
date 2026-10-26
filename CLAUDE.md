@@ -28,7 +28,7 @@ compartilhadas entre agentes (não só Claude), veja também
 - **WhatsApp**: dual — Evolution API (self-hosted) **e** WhatsApp Cloud API (oficial, Meta), lado a lado por conta (`accounts.provider`)
 - **IA**: multi-provider — Gemini, OpenAI e OpenRouter (não só Gemini), configurável por node do flow builder
 - **Flow Builder**: `@xyflow/react`, com motor de execução próprio (`lib/flow-engine.ts`) — já implementado, não é mais item de roadmap
-- **Fulfillment**: integração com Shopify (pedidos, catálogo, checkout abandonado) e com a API externa European Fulfillment/FenixCOD (contrato documentado em `docs/FULFILLMENT_API.md`)
+- **Fulfillment**: integração com Shopify (pedidos, catálogo, checkout abandonado), com Lightfunnels (pedidos por funil, catálogo, write-back opt-in — `docs/LIGHTFUNNELS.md`) e com a API externa European Fulfillment/FenixCOD (contrato documentado em `docs/FULFILLMENT_API.md`)
 
 ## Infraestrutura
 
@@ -41,10 +41,10 @@ compartilhadas entre agentes (não só Claude), veja também
 ```
 app/
   api/            Toda lógica de banco/integração vive aqui — nunca no componente
-    webhook/      Rotas públicas server-a-servidor (Evolution, WhatsApp Cloud, Shopify, interatividade do Slack) — únicas fora do gate de auth em proxy.ts
+    webhook/      Rotas públicas server-a-servidor (Evolution, WhatsApp Cloud, Shopify, Lightfunnels, interatividade do Slack) — únicas fora do gate de auth em proxy.ts
     flows/        CRUD de fluxos
     accounts/     Contas/instâncias WhatsApp (QR, pairing, reconexão)
-    shopify/, fulfillment/   Integrações de e-commerce e envio
+    shopify/, lightfunnels/, fulfillment/   Integrações de e-commerce (Shopify e Lightfunnels lado a lado — guia em docs/LIGHTFUNNELS.md) e envio
     integrations/ Slack (conexão, canais, encaminhamentos por conta) — guia em docs/SLACK.md
     ai-keys/, ai-sessions/, memory-blocks/   Config e estado de IA
   fulfillment/, order-preview/, catalog-preview/, diagnostics/   Rotas de UI fora do chat principal

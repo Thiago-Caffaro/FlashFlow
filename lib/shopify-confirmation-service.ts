@@ -27,9 +27,18 @@ import {
   enqueueShopifyOrderFlowJob,
 } from './flow-jobs'
 import { getShopifyTriggersEnabled } from './shopify-trigger-settings'
-import { getDefaultShopifyOrderInstance } from './shopify-order-settings'
-import { pickShopifyStoreAccount } from './shopify-store-accounts'
+import { assignConfirmationAccount } from './order-account-routing'
 import { createLogger } from './logger'
+import { getOrderTriggersEnabled } from './lightfunnels-trigger-settings'
+import { scheduleLightfunnelsWriteback } from './lightfunnels-writeback'
+import {
+  getPlatformCancelledMessage,
+  getPlatformLabel,
+  getPlatformRemovedMessage,
+  isOrderCancelled,
+  isOrderRemoved,
+  orderTriggerSourceFor,
+} from './order-platform'
 
 const checkoutLog = createLogger('shopify-checkout')
 import {
@@ -51,6 +60,7 @@ import {
   ABANDONED_CHECKOUT_STATUSES,
   type AbandonedCheckoutStatus,
   type FulfillmentOrder,
+  type OrderSource,
 } from '@/types'
 
 export {
@@ -237,32 +247,8 @@ function mapLineItems(value: unknown): ShopifyOrderMappedFields['items'] {
   })
 }
 
-// Ordem: contas vinculadas à loja (quando `integrationId` vem e a loja tem
-// alguma) → conta padrão global → país + prioridade entre todas as contas.
-export async function assignConfirmationAccount(country: string, integrationId?: string): Promise<string | null> {
-  if (integrationId) {
-    const storeInstanceName = await pickShopifyStoreAccount(integrationId, country)
-    if (storeInstanceName) return storeInstanceName
-  }
-
-  const defaultInstanceName = await getDefaultShopifyOrderInstance()
-  if (defaultInstanceName) return defaultInstanceName
-
-  const normalizedCountry = country.trim().toUpperCase()
-  if (!normalizedCountry) return null
-  const { data, error } = await supabaseAdmin
-    .from('accounts')
-    .select('instance_name')
-    .eq('country', normalizedCountry)
-    .eq('confirmation_enabled', true)
-    .order('confirmation_priority', { ascending: true })
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle()
-
-  if (error) throw new Error(`Falha ao selecionar conta WhatsApp: ${error.message}`)
-  return typeof data?.instance_name === 'string' ? data.instance_name : null
-}
+// A escolha da conta é comum a todas as plataformas (lib/order-account-routing.ts).
+export { assignConfirmationAccount }
 
 export async function mapShopifyOrderPayload(
   payload: unknown,
@@ -903,8 +889,12 @@ async function resolveConversationForOrder(instanceName: string, phone: string, 
   return { conversationId: created.id as string, remoteJid, realSendInstanceName: undefined }
 }
 
+const ORDER_FLOW_SELECT =
+  'id, source, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at, shopify_cancelled_at, lightfunnels_archived_at, lightfunnels_cancelled_at'
+
 type OrderFlowOrder = {
   id: string
+  source?: OrderSource | null
   customer_name: string | null
   contact_phone: string | null
   assigned_instance_name: string | null
@@ -912,6 +902,8 @@ type OrderFlowOrder = {
   is_simulation: boolean
   shopify_deleted_at: string | null
   shopify_cancelled_at: string | null
+  lightfunnels_archived_at?: string | null
+  lightfunnels_cancelled_at?: string | null
 }
 
 async function executeOrderFlowForOrder(
@@ -923,8 +915,8 @@ async function executeOrderFlowForOrder(
   const instanceName = String(order.assigned_instance_name || order.instance_name || '')
   const phone = String(order.contact_phone || '')
   const isSandboxOrder = instanceName === SANDBOX_INSTANCE_NAME
-  if (order.shopify_cancelled_at) throw new Error('Pedido foi cancelado no Shopify; fluxo bloqueado')
-  if (order.shopify_deleted_at) throw new Error('Pedido foi excluído no Shopify; fluxo bloqueado')
+  if (isOrderCancelled(order)) throw new Error(`${getPlatformCancelledMessage(order)}; fluxo bloqueado`)
+  if (isOrderRemoved(order)) throw new Error(`${getPlatformRemovedMessage(order)}; fluxo bloqueado`)
   if (order.is_simulation && !isSandboxOrder) throw new Error('Pedido de simulação não envia WhatsApp real')
   if (!instanceName) throw new Error('Pedido sem conta WhatsApp atribuída')
   if (!phone) throw new Error('Pedido sem telefone para executar o fluxo')
@@ -963,16 +955,17 @@ export async function runOrderFlow(
 ) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at, shopify_cancelled_at')
+    .select(ORDER_FLOW_SELECT)
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
   return executeOrderFlowForOrder(orderId, flowId, order as OrderFlowOrder, options)
 }
 
-// Runs the "Pedido Shopify criado" flow trigger configured for the order's
-// account. Replaces the old fixed-template confirmation message — there is
-// no static fallback: if no trigger is configured, nothing is sent, by design.
+// Runs the "Pedido criado" flow trigger of the order's platform (Shopify ou
+// Lightfunnels) configured for the order's account. Replaces the old
+// fixed-template confirmation message — there is no static fallback: if no
+// trigger is configured, nothing is sent, by design.
 export async function runShopifyOrderTrigger(
   orderId: string,
   flowIdOverride?: string,
@@ -980,7 +973,7 @@ export async function runShopifyOrderTrigger(
 ) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, customer_name, contact_phone, assigned_instance_name, instance_name, is_simulation, shopify_deleted_at, shopify_cancelled_at')
+    .select(ORDER_FLOW_SELECT)
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
@@ -998,15 +991,15 @@ export async function runShopifyOrderTrigger(
         .from('triggers')
         .select('action_payload')
         .eq('instance_name', instanceName)
-        .eq('source', 'shopify_order')
+        .eq('source', orderTriggerSourceFor(order.source))
         .eq('action', 'flow')
         .limit(1)
         .maybeSingle()
       flowId = trigger?.action_payload?.flow_id as string | undefined
     }
-    if (!flowId) throw new Error('Nenhum gatilho "Pedido Shopify criado" configurado para esta conta')
+    if (!flowId) throw new Error(`Nenhum gatilho "Pedido ${getPlatformLabel(order.source ?? 'shopify')} criado" configurado para esta conta`)
 
-    if (options.respectShopifyTriggerSetting && !(await getShopifyTriggersEnabled())) {
+    if (options.respectShopifyTriggerSetting && !(await getOrderTriggersEnabled(order.source))) {
       return { order, skipped: true }
     }
     await executeOrderFlowForOrder(orderId, flowId, order as OrderFlowOrder)
@@ -1036,6 +1029,9 @@ export async function runShopifyOrderTrigger(
   }
 }
 
+// Nome neutro de plataforma para o mesmo gatilho.
+export const runOrderTrigger = runShopifyOrderTrigger
+
 export { maybeAutoSubmitConfirmedOrder }
 
 function normalizeAndValidateItems(value: unknown, allowMissingSku = false): FulfillmentOrder['items'] {
@@ -1053,6 +1049,7 @@ function normalizeAndValidateItems(value: unknown, allowMissingSku = false): Ful
     if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Preço unitário do item inválido')
     const normalizedQuantity = Math.max(1, Math.trunc(quantity))
     const shopifyQuantity = Number(record.shopify_quantity)
+    const lightfunnelsQuantity = Number(record.lightfunnels_quantity)
     const unitsPerPack = Number(record.units_per_pack)
     const packQuantitySource = String(record.pack_quantity_source ?? '')
     return {
@@ -1060,6 +1057,9 @@ function normalizeAndValidateItems(value: unknown, allowMissingSku = false): Ful
       shopify_product_id: record.shopify_product_id ? String(record.shopify_product_id) : undefined,
       shopify_variant_id: record.shopify_variant_id ? String(record.shopify_variant_id) : undefined,
       shopify_quantity: Number.isInteger(shopifyQuantity) && shopifyQuantity > 0 ? shopifyQuantity : undefined,
+      lightfunnels_product_id: record.lightfunnels_product_id ? String(record.lightfunnels_product_id) : undefined,
+      lightfunnels_variant_id: record.lightfunnels_variant_id ? String(record.lightfunnels_variant_id) : undefined,
+      lightfunnels_quantity: Number.isInteger(lightfunnelsQuantity) && lightfunnelsQuantity > 0 ? lightfunnelsQuantity : undefined,
       units_per_pack: Number.isInteger(unitsPerPack) && unitsPerPack > 0 ? unitsPerPack : undefined,
       pack_quantity_source: ['sku', 'catalog', 'title', 'default'].includes(packQuantitySource)
         ? packQuantitySource as PackQuantitySource
@@ -1149,7 +1149,7 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
     if (existingError || !existing) throw new Error('Pedido não encontrado')
     if (existing.lead_number) throw new Error('Pedido já foi enviado para o FenixCOD — itens não podem mais ser alterados')
 
-    const items = normalizeAndValidateItems(body.items, existing.source === 'shopify')
+    const items = normalizeAndValidateItems(body.items, existing.source === 'shopify' || existing.source === 'lightfunnels')
     previousTotal = Number(existing.total)
     patch.items = items
     patch.total = items.reduce((sum, item) => sum + item.total, 0)
@@ -1191,6 +1191,7 @@ export async function updateConfirmationOrder(orderId: string, body: Record<stri
   const autoSubmit = body.commercial_status !== undefined
     ? await maybeAutoSubmitConfirmedOrder(orderId)
     : { submitted: false, order: data }
+  scheduleLightfunnelsWriteback(data)
   return { order: autoSubmit.order ?? data, autoSubmit }
 }
 
