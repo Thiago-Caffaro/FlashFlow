@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { normalizeShopDomain } from '@/lib/shopify-client'
 import { getSetting } from '@/lib/app-settings'
+import { DEFAULT_SHOPIFY_SCOPES, withRequiredShopifyScopes } from '@/lib/shopify-scopes'
 import { getShopifyAppCredentials, loadShopifyAppFieldsByDomain } from '@/lib/shopify-integration-store'
 import { SHOPIFY_OAUTH_STATE_COOKIE, encodeShopifyOAuthState } from '@/lib/shopify-oauth-state'
 
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
       getSetting('shopify_app_base_url'),
     ])
     const appBaseUrl = appBaseUrlDb ?? process.env.APP_BASE_URL ?? ''
-    const scopes = scopesDb ?? process.env.SHOPIFY_SCOPES ?? 'read_orders,read_products,read_checkouts,read_inventory'
+    const scopes = withRequiredShopifyScopes(scopesDb ?? process.env.SHOPIFY_SCOPES ?? DEFAULT_SHOPIFY_SCOPES)
 
     const newApp = clientId ? { clientId, clientSecret } : undefined
     const effectiveClientId = newApp

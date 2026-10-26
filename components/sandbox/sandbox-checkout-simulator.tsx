@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Loader2, ShoppingBasket } from 'lucide-react'
-import { FulfillmentProduct, SandboxContact } from '@/types'
+import { FulfillmentProduct, SandboxContact, ShopifyCheckoutSource } from '@/types'
 import { getJson, sandboxBtnPrimary, sandboxInputClass } from './sandbox-styles'
 
 interface SandboxCheckoutSimulatorProps {
@@ -26,6 +26,7 @@ export default function SandboxCheckoutSimulator({
   const [checkoutUrl, setCheckoutUrl] = useState('')
   const [items, setItems] = useState<ItemForm[]>([])
   const [runNow, setRunNow] = useState(true)
+  const [source, setSource] = useState<ShopifyCheckoutSource>('draft_order')
   const [busy, setBusy] = useState(false)
   const [noTriggerHint, setNoTriggerHint] = useState(false)
 
@@ -61,7 +62,7 @@ export default function SandboxCheckoutSimulator({
     const json = await fetch('/api/fulfillment/sandbox/abandoned-checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversationId: contactId, customerName, email, country, checkoutUrl, immediate: runNow, items: payloadItems }),
+      body: JSON.stringify({ conversationId: contactId, customerName, email, country, checkoutUrl, immediate: runNow, source, items: payloadItems }),
     }).then(getJson)
 
     if (!json.ok) {
@@ -149,6 +150,18 @@ export default function SandboxCheckoutSimulator({
             </div>
           )}
         </div>
+
+        <fieldset className="space-y-1.5">
+          <legend className="mb-1 text-xs font-semibold text-[#667781]">Origem</legend>
+          <label className="flex items-start gap-2 text-sm dark:text-[#e9edef]">
+            <input type="radio" name="sandbox-checkout-source" checked={source === 'draft_order'} onChange={() => setSource('draft_order')} className="mt-1 accent-[#00a884]" />
+            <span>Rascunho <span className="text-xs text-[#667781]">— formulário COD que o cliente não confirmou (draft order)</span></span>
+          </label>
+          <label className="flex items-start gap-2 text-sm dark:text-[#e9edef]">
+            <input type="radio" name="sandbox-checkout-source" checked={source === 'checkout'} onChange={() => setSource('checkout')} className="mt-1 accent-[#00a884]" />
+            <span>Checkout da Shopify <span className="text-xs text-[#667781]">— cliente saiu do checkout padrão</span></span>
+          </label>
+        </fieldset>
 
         <fieldset className="space-y-1.5">
           <legend className="mb-1 text-xs font-semibold text-[#667781]">Quando disparar</legend>

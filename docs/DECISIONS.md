@@ -288,3 +288,39 @@ organização Plus), então uma loja de outro cliente não conseguia conectar.
 **Descartado**: OAuth público ("Adicionar ao Shopify" com app listado) —
 exige revisão da Shopify e não é necessário para poucas lojas operadas
 pelo mesmo dono.
+
+---
+
+## [014] Rascunhos (draft orders) da Shopify como carrinho abandonado
+**Status**: Aceita e implementada (2026-10-20, v1.19.0, migration 028)
+
+**Contexto**: lojas que usam app de formulário COD não passam pelo checkout
+da Shopify: o app cria o pedido como **rascunho** (draft order) e só o
+converte em pedido quando o cliente confirma. Nelas os webhooks
+`checkouts/*` nunca chegam — o "carrinho abandonado" é o rascunho que fica
+aberto. Na aba Pedidos também não havia distinção visual entre o que é
+pedido de verdade e o que ainda não foi confirmado.
+
+**Decisão**:
+- Rascunhos ficam na mesma tabela dos checkouts abandonados
+  (`shopify_abandoned_checkouts`), com `source = 'draft_order'`,
+  `shopify_name` (ex: `#D12`) e `shopify_checkout_id = 'draft:<id>'` (espaço
+  de ids próprio). Mesmo gatilho "Carrinho abandonado", mesmo tempo
+  configurável (contado do `updated_at` do rascunho), mesma recuperação;
+  `{{carrinho.link}}` é a fatura do rascunho (`invoice_url`).
+- Webhooks `draft_orders/create|update|delete` em
+  `/api/webhook/shopify/draft-orders`. Rascunho concluído (`status:
+  completed` ou `order_id`) = Convertido; rascunho excluído = "Não enviar"
+  e lembretes cancelados.
+- O escopo `read_draft_orders` passa a ser sempre pedido na autorização
+  (`withRequiredShopifyScopes`, mesmo que o valor salvo seja antigo). O
+  registro de webhooks é feito tópico a tópico: loja sem o escopo continua
+  recebendo pedidos e checkouts e o erro diz para reconectar.
+- Pedidos → "Carrinhos abandonados e rascunhos": selo **Rascunho #D12** ou
+  **Checkout** por linha, contadores separados e filtro. A lista de pedidos
+  só contém pedidos reais (o rascunho só vira pedido via `orders/create`).
+
+**Consequência operacional**: lojas já conectadas precisam do escopo
+`read_draft_orders` no app (Dev Dashboard/Partners → nova versão) e de
+**reconectar** a loja no FlashFlow.
+

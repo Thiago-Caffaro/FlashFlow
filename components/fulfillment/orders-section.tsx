@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from 'react'
 import {
-  Calendar, ChevronDown, ChevronUp, Download, Loader2, MessageCircle,
-  Package, RefreshCw, Search, Send, Truck, Users, X,
+  Calendar, ChevronDown, ChevronUp, Download, FilePen, Loader2, MessageCircle,
+  Package, RefreshCw, Search, Send, ShoppingCart, Truck, Users, X,
 } from 'lucide-react'
 import {
   Account,
@@ -13,6 +13,7 @@ import {
   FulfillmentOrder,
   ShopifyAbandonedCheckout,
   ShopifyProduct,
+  type ShopifyCheckoutSource,
   type AbandonedCheckoutStatus,
   type CommercialStatus,
   type ConfirmationTriggerState,
@@ -261,6 +262,12 @@ export default function OrdersSection({
   const [instanceFilter, setInstanceFilter] = useState('')
   const [openOrderId, setOpenOrderId] = useState<string | null>(null)
   const [showCheckouts, setShowCheckouts] = useState(false)
+  const [checkoutSourceFilter, setCheckoutSourceFilter] = useState<'' | ShopifyCheckoutSource>('')
+  // Linhas antigas (antes da migration 028) não têm `source`: são checkouts.
+  const draftCount = abandonedCheckouts.filter((checkout) => checkout.source === 'draft_order').length
+  const visibleCheckouts = checkoutSourceFilter
+    ? abandonedCheckouts.filter((checkout) => (checkout.source ?? 'checkout') === checkoutSourceFilter)
+    : abandonedCheckouts
 
   const [showFenix, setShowFenix] = useState(false)
   const activeIntegrations = integrations.filter((i) => i.active)
@@ -387,10 +394,18 @@ export default function OrdersSection({
           className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-[#f8f9fa] dark:hover:bg-[#1a2730]"
         >
           <Truck size={17} className="shrink-0 text-[#00a884]" />
-          <span className="flex-1 font-semibold dark:text-[#e9edef]">Carrinhos abandonados</span>
-          {abandonedCheckouts.length > 0 && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-              {abandonedCheckouts.length}
+          <span className="flex-1">
+            <span className="block font-semibold dark:text-[#e9edef]">Carrinhos abandonados e rascunhos</span>
+            <span className="block text-xs text-[#667781]">Ainda não são pedidos — o cliente não concluiu a compra</span>
+          </span>
+          {draftCount > 0 && (
+            <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700 dark:bg-sky-900/30 dark:text-sky-400" title="Rascunhos (draft orders) não confirmados">
+              {draftCount} rascunho(s)
+            </span>
+          )}
+          {abandonedCheckouts.length - draftCount > 0 && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" title="Checkouts da Shopify abandonados">
+              {abandonedCheckouts.length - draftCount} checkout(s)
             </span>
           )}
           {showCheckouts ? <ChevronUp size={16} className="text-[#667781]" /> : <ChevronDown size={16} className="text-[#667781]" />}
@@ -398,21 +413,58 @@ export default function OrdersSection({
 
         {showCheckouts && (
           <div>
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-[#f0f2f5] px-5 py-3 dark:border-[#2a3942]">
+              {([
+                ['', 'Todos'],
+                ['draft_order', 'Rascunhos'],
+                ['checkout', 'Checkouts'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={label}
+                  onClick={() => setCheckoutSourceFilter(value)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                    checkoutSourceFilter === value
+                      ? 'bg-[#00a884] text-white'
+                      : 'bg-[#f0f2f5] text-[#667781] hover:bg-[#e6e9ec] dark:bg-[#2a3942] dark:text-[#e9edef]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+              <span className="ml-auto text-xs text-[#667781]">
+                Rascunho: pedido do formulário que o cliente não confirmou. Checkout: saiu do checkout da Shopify.
+              </span>
+            </div>
             <div className="hidden border-t border-[#f0f2f5] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#667781] dark:border-[#2a3942] sm:grid sm:grid-cols-[1.5fr_1fr_1fr_auto]">
               <span>Cliente</span>
               <span>Total / Loja</span>
               <span>Recuperação</span>
               <span>Ação</span>
             </div>
-            {abandonedCheckouts.length === 0 && (
-              <p className="p-6 text-center text-sm text-[#667781]">Nenhum carrinho abandonado.</p>
+            {visibleCheckouts.length === 0 && (
+              <p className="p-6 text-center text-sm text-[#667781]">
+                {checkoutSourceFilter === 'draft_order' ? 'Nenhum rascunho aberto.' : 'Nenhum carrinho abandonado.'}
+              </p>
             )}
-            {abandonedCheckouts.map((checkout) => (
+            {visibleCheckouts.map((checkout) => (
               <div
                 key={checkout.id}
                 className="grid items-center gap-3 border-t border-[#f0f2f5] px-5 py-4 text-sm dark:border-[#2a3942] sm:grid-cols-[1.5fr_1fr_1fr_auto]"
               >
                 <div>
+                  <div className="mb-1">
+                    {checkout.source === 'draft_order' ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:border-sky-800 dark:bg-sky-900/20 dark:text-sky-400" title="Rascunho (draft order) — ainda não é um pedido">
+                        <FilePen size={11} />
+                        Rascunho{checkout.shopify_name ? ` ${checkout.shopify_name}` : ''}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400" title="Checkout da Shopify abandonado">
+                        <ShoppingCart size={11} />
+                        Checkout
+                      </span>
+                    )}
+                  </div>
                   <span className="font-semibold dark:text-[#e9edef]">{checkout.customer_name || checkout.email || 'Sem nome'}</span>
                   {checkout.is_simulation && <span className="ml-2 text-xs text-purple-600 dark:text-purple-400">simulação</span>}
                   <p className="text-xs text-[#667781]">{checkout.contact_phone || 'Sem tel.'} · {checkout.country}</p>

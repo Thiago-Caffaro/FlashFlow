@@ -50,6 +50,7 @@ import {
 import {
   ABANDONED_CHECKOUT_STATUSES,
   type AbandonedCheckoutStatus,
+  type ShopifyCheckoutSource,
   type FulfillmentOrder,
 } from '@/types'
 
@@ -521,7 +522,7 @@ export function mapShopifyAbandonedCheckoutPayload(
     contact_phone: phone || null,
     customer_name: name || null,
     email: nullableString(checkout.email, customer.email),
-    abandoned_checkout_url: nullableString(checkout.abandoned_checkout_url, checkout.web_url),
+    abandoned_checkout_url: nullableString(checkout.abandoned_checkout_url, checkout.web_url, checkout.invoice_url),
     total: numberValue(checkout.total_price, numberValue(checkout.current_total_price, 0)),
     currency: stringValue(checkout.currency, checkout.presentment_currency, 'EUR').toUpperCase(),
     shopify_completed_at: nullableDateString(checkout.completed_at),
@@ -655,7 +656,7 @@ export async function markAbandonedCheckoutsConvertedByOrder(
 export async function upsertShopifyAbandonedCheckout(
   integrationRow: ShopifyIntegrationCredentialRow,
   payload: unknown,
-  options: { scheduleTriggers?: boolean } = {}
+  options: { scheduleTriggers?: boolean; source?: ShopifyCheckoutSource; shopifyName?: string | null } = {}
 ) {
   const integration = {
     id: integrationRow.id,
@@ -691,6 +692,9 @@ export async function upsertShopifyAbandonedCheckout(
   const patch = {
     ...mapped,
     assigned_instance_name: existingAssigned,
+    // Só rascunhos gravam source/shopify_name: checkouts usam o padrão da
+    // coluna, e assim continuam funcionando mesmo antes da migration 028.
+    ...(options.source === 'draft_order' ? { source: 'draft_order', shopify_name: options.shopifyName ?? null } : {}),
     ...(completedNow ? { recovery_status: 'Convertido', recovered_at: now } : {}),
     updated_at: now,
   }
@@ -725,6 +729,69 @@ export async function upsertShopifyAbandonedCheckout(
   return result.data
 }
 
+export const DRAFT_ORDER_CHECKOUT_PREFIX = 'draft:'
+
+// Rascunho (draft order) no formato que o mapeamento de checkout entende.
+// Concluído na Shopify (status completed / order_id preenchido) = convertido
+// em pedido; o link de retomada é a fatura do rascunho (invoice_url).
+export function normalizeDraftOrderPayload(payload: unknown): Record<string, unknown> {
+  const draft = asRecord(payload)
+  const draftId = nullableString(draft.id)
+  const completed = String(draft.status ?? '').toLowerCase() === 'completed' || Boolean(draft.order_id)
+  return {
+    ...draft,
+    id: draftId ? `${DRAFT_ORDER_CHECKOUT_PREFIX}${draftId}` : null,
+    token: null,
+    abandoned_checkout_url: nullableString(draft.invoice_url),
+    completed_at: nullableDateString(draft.completed_at) ?? (completed ? nullableDateString(draft.updated_at) ?? new Date().toISOString() : null),
+  }
+}
+
+// draft_orders/create e draft_orders/update: o rascunho aberto é tratado como
+// carrinho abandonado (mesmo gatilho e mesmo tempo configurável).
+export async function upsertShopifyDraftOrder(
+  integrationRow: ShopifyIntegrationCredentialRow,
+  payload: unknown,
+  options: { scheduleTriggers?: boolean } = {}
+) {
+  const draft = asRecord(payload)
+  if (!nullableString(draft.id)) throw new Error('Payload de rascunho Shopify sem id')
+  return upsertShopifyAbandonedCheckout(integrationRow, normalizeDraftOrderPayload(draft), {
+    ...options,
+    source: 'draft_order',
+    shopifyName: nullableString(draft.name),
+  })
+}
+
+// draft_orders/delete: o link da fatura deixa de existir, então não há o que
+// recuperar — cancela os lembretes pendentes e marca "Não enviar". Um rascunho
+// já convertido em pedido fica como está.
+export async function removeShopifyDraftOrder(
+  integrationRow: ShopifyIntegrationCredentialRow,
+  payload: unknown
+): Promise<{ id: string } | null> {
+  const draftId = nullableString(asRecord(payload).id)
+  if (!draftId) return null
+  const { data, error } = await supabaseAdmin
+    .from('shopify_abandoned_checkouts')
+    .select('id, recovery_status')
+    .eq('shopify_integration_id', integrationRow.id)
+    .eq('shopify_checkout_id', `${DRAFT_ORDER_CHECKOUT_PREFIX}${draftId}`)
+    .maybeSingle()
+  if (error) throw new Error(`Falha ao consultar rascunho Shopify: ${error.message}`)
+  if (!data) return null
+  if (data.recovery_status !== 'Convertido') {
+    const now = new Date().toISOString()
+    const { error: updateError } = await supabaseAdmin
+      .from('shopify_abandoned_checkouts')
+      .update({ recovery_status: 'Não enviar', last_error: 'Rascunho excluído na Shopify', updated_at: now })
+      .eq('id', data.id)
+    if (updateError) throw new Error(`Falha ao atualizar rascunho Shopify: ${updateError.message}`)
+    await cancelPendingAbandonedCheckoutJobs([String(data.id)], 'Rascunho excluído na Shopify')
+  }
+  return { id: String(data.id) }
+}
+
 // Carrinho abandonado simulado pelo Sandbox: mesmo mapeamento do webhook
 // real, mas preso à conta sandbox e ao contato de teste escolhido
 // (is_simulation=true). Nunca toca a Shopify; o fluxo só manda WhatsApp de
@@ -736,8 +803,11 @@ export async function createSandboxAbandonedCheckout(input: {
   payload: unknown
   contactPhone: string
   immediate: boolean
+  source?: ShopifyCheckoutSource
 }): Promise<{ checkout: Record<string, unknown>; scheduled: number }> {
-  const mapped = mapShopifyAbandonedCheckoutPayload(input.payload, {
+  const isDraft = input.source === 'draft_order'
+  const draftName = isDraft ? nullableString(asRecord(input.payload).name) : null
+  const mapped = mapShopifyAbandonedCheckoutPayload(isDraft ? normalizeDraftOrderPayload(input.payload) : input.payload, {
     id: input.integrationId ?? '',
     shopDomain: normalizeShopDomain(input.shopDomain),
     defaultCountry: input.defaultCountry,
@@ -753,6 +823,7 @@ export async function createSandboxAbandonedCheckout(input: {
       contact_phone: input.contactPhone,
       recovery_status: 'Pendente',
       is_simulation: true,
+      ...(isDraft ? { source: 'draft_order', shopify_name: draftName } : {}),
       updated_at: now,
     })
     .select()
@@ -1373,6 +1444,22 @@ export async function syncShopifyData(options: {
       errors.push({
         shopDomain: integration.shop_domain,
         error: `checkouts: ${error instanceof Error ? error.message : 'Erro inesperado'}`,
+      })
+    }
+    try {
+      // Rascunhos abertos (apps de formulário COD). Loja conectada antes do
+      // escopo read_draft_orders responde 403 — vira aviso, não derruba o sync.
+      const draftsResponse = await client.getOpenDraftOrders({ limit: options.limit ?? 50 })
+      for (const draft of draftsResponse.draft_orders ?? []) {
+        await upsertShopifyDraftOrder(integration, draft, {
+          scheduleTriggers: options.sendConfirmation === true,
+        })
+        importedCheckouts += 1
+      }
+    } catch (error) {
+      errors.push({
+        shopDomain: integration.shop_domain,
+        error: `rascunhos: ${error instanceof Error ? error.message : 'Erro inesperado'}`,
       })
     }
     if (options.syncProducts ?? true) {

@@ -14,6 +14,11 @@ const WEBHOOK_SUBSCRIPTIONS = [
   // ainda preenche, e que traz completed_at quando o checkout vira pedido.
   { topic: 'checkouts/create', path: '/api/webhook/shopify/abandoned-checkouts' },
   { topic: 'checkouts/update', path: '/api/webhook/shopify/abandoned-checkouts' },
+  // Rascunhos de apps de formulário COD (migration 028). Exigem o escopo
+  // read_draft_orders — loja conectada antes dele precisa reconectar.
+  { topic: 'draft_orders/create', path: '/api/webhook/shopify/draft-orders' },
+  { topic: 'draft_orders/update', path: '/api/webhook/shopify/draft-orders' },
+  { topic: 'draft_orders/delete', path: '/api/webhook/shopify/draft-orders' },
 ] as const
 
 export interface WebhookRegistrationResult {
@@ -40,20 +45,34 @@ async function ensureForClient(client: ShopifyClient, shopDomain: string): Promi
     }
   }
 
-  try {
-    let alreadyRegistered = true
-    for (const { topic, path } of WEBHOOK_SUBSCRIPTIONS) {
+  // Cada tópico é independente: um tópico recusado (ex: rascunhos sem o
+  // escopo read_draft_orders) não impede o registro dos outros.
+  let alreadyRegistered = true
+  const failures: string[] = []
+  for (const { topic, path } of WEBHOOK_SUBSCRIPTIONS) {
+    try {
       const address = `${baseUrl}${path}`
       const existing = await client.listWebhooks({ topic })
       const already = (existing.webhooks ?? []).some((webhook) => webhook.address === address)
       if (already) continue
       alreadyRegistered = false
       await client.createWebhook(topic, address)
+    } catch (error) {
+      failures.push(`${topic}: ${describeRegistrationError(topic, error)}`)
     }
-    return { shopDomain, ok: true, alreadyRegistered }
-  } catch (error) {
-    return { shopDomain, ok: false, alreadyRegistered: false, error: error instanceof Error ? error.message : 'Erro inesperado' }
   }
+  if (failures.length > 0) {
+    return { shopDomain, ok: false, alreadyRegistered: false, error: failures.join('; ') }
+  }
+  return { shopDomain, ok: true, alreadyRegistered }
+}
+
+function describeRegistrationError(topic: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : 'Erro inesperado'
+  if (topic.startsWith('draft_orders/') && /(401|403)|access|scope|permission/i.test(message)) {
+    return 'a loja não autorizou rascunhos (escopo read_draft_orders) — adicione o escopo no app e reconecte a loja'
+  }
+  return message
 }
 
 // Registers the order lifecycle (and checkout) subscriptions directly with Shopify via

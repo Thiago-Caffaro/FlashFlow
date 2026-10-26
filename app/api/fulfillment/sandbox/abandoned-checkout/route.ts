@@ -27,6 +27,8 @@ export async function POST(req: NextRequest) {
     const country = String(body.country ?? '').trim().toUpperCase()
     const checkoutUrl = String(body.checkoutUrl ?? '').trim()
     const immediate = body.immediate !== false
+    // Rascunho (draft order) = o carrinho abandonado das lojas com formulário COD.
+    const source = body.source === 'draft_order' ? 'draft_order' : 'checkout'
     const items = Array.isArray(body.items) ? body.items as SandboxCheckoutItem[] : []
 
     if (!conversationId) {
@@ -68,16 +70,19 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
     const shopDomain = realIntegration?.shop_domain ?? 'sandbox.local'
 
+    const isDraft = source === 'draft_order'
     const payload = {
-      id: `sandbox-checkout-${stamp}`,
-      token: `sandbox-${stamp}`,
+      id: isDraft ? `sandbox-${stamp}` : `sandbox-checkout-${stamp}`,
+      ...(isDraft
+        ? { name: `#DSANDBOX${String(stamp).slice(-4)}`, status: 'open', invoice_url: checkoutUrl || `https://${shopDomain}/invoices/sandbox-${stamp}` }
+        : { token: `sandbox-${stamp}` }),
       created_at: nowIso,
       updated_at: nowIso,
       currency: 'EUR',
       total_price: total.toFixed(2),
       email: email || undefined,
       phone: contactPhone,
-      abandoned_checkout_url: checkoutUrl || `https://${shopDomain}/checkouts/sandbox-${stamp}`,
+      ...(isDraft ? {} : { abandoned_checkout_url: checkoutUrl || `https://${shopDomain}/checkouts/sandbox-${stamp}` }),
       shipping_address: { name, phone: contactPhone, country_code: country },
       line_items: lineItems,
     }
@@ -89,6 +94,7 @@ export async function POST(req: NextRequest) {
       payload,
       contactPhone,
       immediate,
+      source,
     })
     return NextResponse.json({ ok: true, ...result })
   } catch (error) {
