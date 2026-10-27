@@ -112,13 +112,17 @@ export default function FulfillmentPage() {
     })
       .then(getJson)
       .then((json) => {
-        const failed = Array.isArray(json.results)
-          ? json.results.filter((result: { ok?: boolean }) => !result.ok).length
-          : 0
+        const failures = Array.isArray(json.results)
+          ? (json.results as Array<{ ok?: boolean; shopDomain?: string; error?: string }>).filter((result) => !result.ok)
+          : []
         if (!json.ok) {
+          // Mostra o motivo por loja — "verifique a configuração" sozinho não
+          // diz o que fazer (ex: falta o escopo de rascunhos e é preciso reconectar).
           setMessage({
-            text: failed > 0
-              ? `Webhook Shopify não pôde ser ativado em ${failed} loja(s). Verifique a configuração do Shopify.`
+            text: failures.length > 0
+              ? `Webhook Shopify com problema em ${failures.length} loja(s): ${failures
+                .map((result) => `${result.shopDomain ?? 'loja'} — ${result.error ?? 'erro desconhecido'}`)
+                .join(' | ')}`
               : (json.error ?? 'Não foi possível verificar o webhook Shopify.'),
             error: true,
           })

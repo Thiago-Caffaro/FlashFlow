@@ -77,4 +77,36 @@ describe('shopify webhook setup', () => {
     expect(result.error).toContain('read_draft_orders')
     expect(result.error).toContain('reconecte a loja')
   })
+
+  it('explains a 422 on the draft topics as the missing read_draft_orders scope, in one line', async () => {
+    mockCreateWebhook.mockImplementation(async (topic: string) => {
+      if (topic.startsWith('draft_orders/')) {
+        throw Object.assign(new Error('Shopify respondeu HTTP 422'), {
+          status: 422,
+          response: { errors: { topic: ['Invalid topic specified'] } },
+        })
+      }
+      return { webhook: { id: 1 } }
+    })
+
+    const result = await ensureOrderCreateWebhookRegisteredWithToken('loja.myshopify.com', 'token')
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe(
+      'rascunhos (draft_orders/*): a loja não autorizou rascunhos — adicione o escopo read_draft_orders no app e reconecte a loja (Shopify: topic: Invalid topic specified)'
+    )
+  })
+
+  it('keeps the Shopify detail for other failures', async () => {
+    mockCreateWebhook.mockImplementation(async (topic: string) => {
+      if (topic === 'orders/create') {
+        throw Object.assign(new Error('Shopify respondeu HTTP 422'), { status: 422, response: { errors: { address: ['is invalid'] } } })
+      }
+      return { webhook: { id: 1 } }
+    })
+
+    const result = await ensureOrderCreateWebhookRegisteredWithToken('loja.myshopify.com', 'token')
+
+    expect(result.error).toBe('orders/create: Shopify respondeu HTTP 422: address: is invalid')
+  })
 })

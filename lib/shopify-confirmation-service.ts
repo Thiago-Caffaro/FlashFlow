@@ -51,6 +51,7 @@ import {
   decodeShopifyAdminToken,
   decodeShopifyWebhookSecret,
   resolveShopifyWebhookSecret,
+  resolveShopifyWebhookSecrets,
   shopifyClientFromIntegration,
   loadShopifyIntegrationForWebhook,
   listActiveShopifyIntegrations,
@@ -69,6 +70,7 @@ export {
   decodeShopifyAdminToken,
   decodeShopifyWebhookSecret,
   resolveShopifyWebhookSecret,
+  resolveShopifyWebhookSecrets,
   shopifyClientFromIntegration,
   loadShopifyIntegrationForWebhook,
   listActiveShopifyIntegrations,
@@ -311,8 +313,15 @@ export async function mapShopifyOrderPayload(
 export async function upsertShopifyOrder(
   integrationRow: ShopifyIntegrationCredentialRow,
   payload: unknown,
-  options: { sendConfirmation?: boolean; isSimulation?: boolean; forceInstanceName?: string; forceConversationId?: string } = {}
-) {
+  options: {
+    sendConfirmation?: boolean
+    isSimulation?: boolean
+    forceInstanceName?: string
+    forceConversationId?: string
+    // Interno: segunda tentativa depois de perder a corrida do insert.
+    afterInsertConflict?: boolean
+  } = {}
+): Promise<FulfillmentOrder> {
   const integration = {
     id: integrationRow.id,
     shopDomain: normalizeShopDomain(integrationRow.shop_domain),
@@ -370,6 +379,15 @@ export async function upsertShopifyOrder(
       .select()
       .single()
 
+  // A Shopify manda orders/create e orders/updated do mesmo pedido quase ao
+  // mesmo tempo: os dois veem "pedido novo" e os dois inserem — o segundo
+  // bate na chave única. Refaz uma vez: agora o pedido existe e vira update,
+  // e a confirmação do orders/create não se perde (o job é deduplicado por
+  // pedido).
+  if (isNewOrder && result.error?.code === '23505' && !options.afterInsertConflict) {
+    return upsertShopifyOrder(integrationRow, payload, { ...options, afterInsertConflict: true })
+  }
+
   if (result.error || !result.data) {
     throw new Error(result.error?.message ?? 'Falha ao gravar pedido Shopify')
   }
@@ -387,7 +405,7 @@ export async function upsertShopifyOrder(
     })
   }
 
-  if (isNewOrder && options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
+  if ((isNewOrder || options.afterInsertConflict) && options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
     const instanceName = String(result.data.assigned_instance_name || result.data.instance_name || '')
     const { data: trigger, error: triggerError } = await supabaseAdmin
       .from('triggers')

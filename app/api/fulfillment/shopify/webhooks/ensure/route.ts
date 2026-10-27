@@ -15,6 +15,10 @@ export async function POST(req: NextRequest) {
     const results = await Promise.all(integrations.map((integration) => ensureOrderCreateWebhookRegistered(integration)))
     const ok = results.every((result) => result.ok)
     console.log(`[shopify-webhook] registration checked=${results.length} ok=${results.filter((result) => result.ok).length}`)
+    // Uma linha por loja com falha: sem o motivo, "ok=0" não diz o que corrigir.
+    for (const result of results) {
+      if (!result.ok) console.warn(`[shopify-webhook] registration failed shop=${result.shopDomain} reason=${result.error ?? 'desconhecido'}`)
+    }
 
     return NextResponse.json({ ok, results })
   } catch (error) {

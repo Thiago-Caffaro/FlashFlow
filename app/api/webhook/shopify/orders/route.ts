@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   archiveShopifyOrder,
-  resolveShopifyWebhookSecret,
+  resolveShopifyWebhookSecrets,
   loadShopifyIntegrationForWebhook,
   upsertShopifyOrder,
 } from '@/lib/shopify-confirmation-service'
@@ -25,11 +25,12 @@ export async function POST(req: NextRequest) {
     }
 
     // App próprio da loja quando configurado, senão o app global.
-    const secret = await resolveShopifyWebhookSecret(integration)
-    if (!secret) return NextResponse.json({ ok: false, error: 'Client secret not configured' }, { status: 500 })
+    // Qualquer app nosso que tenha registrado webhooks nesta loja.
+    const secrets = await resolveShopifyWebhookSecrets(integration)
+    if (secrets.length === 0) return NextResponse.json({ ok: false, error: 'Client secret not configured' }, { status: 500 })
 
-    if (!verifyShopifyWebhookHmac(rawBody, hmac, secret)) {
-      console.warn(`[shopify-webhook] ${topic} rejected: invalid HMAC`)
+    if (!secrets.some((secret) => verifyShopifyWebhookHmac(rawBody, hmac, secret))) {
+      console.warn(`[shopify-webhook] ${topic} rejected: invalid HMAC shop=${shopDomain} secretsTried=${secrets.length}`)
       return NextResponse.json({ ok: false, error: 'Invalid Shopify HMAC' }, { status: 401 })
     }
 
