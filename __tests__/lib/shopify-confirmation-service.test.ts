@@ -91,7 +91,7 @@ jest.mock('@/lib/ai-crypto', () => ({
   decryptSecret: mockDecryptSecret,
 }))
 
-type QueryResult = { data: unknown; error: { message: string } | null }
+type QueryResult = { data: unknown; error: { message: string; code?: string } | null }
 type QueryBuilder = {
   inserts: unknown[]
   updates: unknown[]
@@ -652,6 +652,28 @@ describe('shopify-confirmation-service', () => {
       assigned_instance_name: 'wa-country',
       recovery_status: 'Pendente',
     })
+  })
+
+  it('recovers from the create/updated insert race and still queues the confirmation', async () => {
+    // orders/updated ganhou a corrida e inseriu o pedido; o orders/create
+    // bate na chave única, refaz como update e mantém a confirmação.
+    const accounts = () => queryBuilder({ data: { instance_name: 'wa-1' }, error: null })
+    setTableQueues({
+      accounts: [accounts(), accounts()],
+      fulfillment_orders: [
+        queryBuilder({ data: null, error: null }),
+        queryBuilder({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "fulfillment_orders_order_number_key"' } }),
+        queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-1', confirmation_message_sent_at: null, shopify_financial_status: 'pending', shopify_cancelled_at: null }, error: null }),
+        queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-1', instance_name: 'wa-1' }, error: null }),
+      ],
+      triggers: [queryBuilder({ data: { action_payload: { flow_id: 'flow-1' } }, error: null })],
+      shopify_abandoned_checkouts: [queryBuilder({ data: [], error: null }), queryBuilder({ data: [], error: null })],
+    })
+
+    const order = await upsertShopifyOrder(integrationRow(), shopifyOrder(), { sendConfirmation: true })
+
+    expect(order).toMatchObject({ id: 'order-1' })
+    expect(mockEnqueueShopifyOrderFlowJob).toHaveBeenCalledWith(expect.objectContaining({ orderId: 'order-1', flowId: 'flow-1' }))
   })
 
   describe('rascunhos (draft orders)', () => {

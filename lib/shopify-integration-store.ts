@@ -85,6 +85,28 @@ export async function resolveShopifyWebhookSecret(row: ShopifyIntegrationCredent
   return decodeShopifyWebhookSecret(row)
 }
 
+// Todas as chaves que podem ter assinado um webhook desta loja. Uma loja que
+// foi conectada pelo app global e depois pelo app próprio (ou o contrário)
+// continua com webhooks registrados pelos dois apps na Shopify, cada um
+// assinado com o segredo do app que o criou. A primeira é a preferida.
+export async function resolveShopifyWebhookSecrets(row: ShopifyIntegrationCredentialRow): Promise<string[]> {
+  const candidates: string[] = []
+  try {
+    candidates.push(await resolveShopifyWebhookSecret(row))
+  } catch {
+    // Segredo legado ilegível: segue com os segredos dos apps.
+  }
+  if (hasOwnShopifyApp(row)) candidates.push((await getShopifyAppCredentials(null)).clientSecret)
+  if (row.encrypted_webhook_secret && row.webhook_secret_iv && row.webhook_secret_auth_tag) {
+    try {
+      candidates.push(decryptSecret(row.encrypted_webhook_secret, row.webhook_secret_iv, row.webhook_secret_auth_tag))
+    } catch {
+      // ignora
+    }
+  }
+  return [...new Set(candidates.filter(Boolean))]
+}
+
 export function decodeShopifyAdminToken(row: ShopifyIntegrationCredentialRow): string {
   return decryptSecret(row.encrypted_admin_token, row.admin_token_iv, row.admin_token_auth_tag)
 }

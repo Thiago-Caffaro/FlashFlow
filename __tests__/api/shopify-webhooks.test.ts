@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto'
 import { NextRequest } from 'next/server'
 
 const mockLoadShopifyIntegrationForWebhook = jest.fn()
-const mockResolveShopifyWebhookSecret = jest.fn(async () => 'webhook-secret')
+const mockResolveShopifyWebhookSecrets = jest.fn(async () => ['webhook-secret'])
 const mockArchiveShopifyOrder = jest.fn()
 const mockUpsertShopifyOrder = jest.fn()
 const mockUpsertShopifyAbandonedCheckout = jest.fn()
@@ -12,7 +12,7 @@ const mockGetShopifyTriggersEnabled = jest.fn(async () => true)
 
 jest.mock('@/lib/shopify-confirmation-service', () => ({
   archiveShopifyOrder: mockArchiveShopifyOrder,
-  resolveShopifyWebhookSecret: mockResolveShopifyWebhookSecret,
+  resolveShopifyWebhookSecrets: mockResolveShopifyWebhookSecrets,
   loadShopifyIntegrationForWebhook: mockLoadShopifyIntegrationForWebhook,
   upsertShopifyOrder: mockUpsertShopifyOrder,
   upsertShopifyAbandonedCheckout: mockUpsertShopifyAbandonedCheckout,
@@ -159,16 +159,28 @@ describe('Shopify webhooks', () => {
   })
 
   it('verifies the HMAC with the secret resolved for the store (per-store app)', async () => {
-    mockResolveShopifyWebhookSecret.mockResolvedValueOnce('store-own-secret')
+    mockResolveShopifyWebhookSecrets.mockResolvedValueOnce(['store-own-secret'])
     const rawBody = JSON.stringify({ id: 123 })
 
     const rejected = await orderWebhook.POST(request(rawBody, hmac(rawBody), 'orders/create'))
     expect(rejected.status).toBe(401)
 
-    mockResolveShopifyWebhookSecret.mockResolvedValueOnce('store-own-secret')
+    mockResolveShopifyWebhookSecrets.mockResolvedValueOnce(['store-own-secret'])
     const accepted = await orderWebhook.POST(request(rawBody, hmac(rawBody, 'store-own-secret'), 'orders/create'))
     expect(accepted.status).toBe(200)
-    expect(mockResolveShopifyWebhookSecret).toHaveBeenCalledWith(expect.objectContaining({ id: 'shopify-1' }))
+    expect(mockResolveShopifyWebhookSecrets).toHaveBeenCalledWith(expect.objectContaining({ id: 'shopify-1' }))
+  })
+
+  it('accepts a webhook signed by another of our apps registered on the same store', async () => {
+    // Loja conectada antes pelo app global e depois pelo app próprio: os
+    // webhooks antigos continuam chegando assinados pelo app global.
+    mockResolveShopifyWebhookSecrets.mockResolvedValue(['store-own-secret', 'global-secret'])
+    const rawBody = JSON.stringify({ id: 987, token: 'cart-token' })
+
+    const response = await checkoutWebhook.POST(request(rawBody, hmac(rawBody, 'global-secret'), 'checkouts/create'))
+
+    expect(response.status).toBe(200)
+    mockResolveShopifyWebhookSecrets.mockResolvedValue(['webhook-secret'])
   })
 
   it('accepts valid abandoned checkout webhooks', async () => {

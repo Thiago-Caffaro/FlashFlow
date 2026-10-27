@@ -62,17 +62,51 @@ async function ensureForClient(client: ShopifyClient, shopDomain: string): Promi
     }
   }
   if (failures.length > 0) {
-    return { shopDomain, ok: false, alreadyRegistered: false, error: failures.join('; ') }
+    return { shopDomain, ok: false, alreadyRegistered: false, error: summarizeFailures(failures) }
   }
   return { shopDomain, ok: true, alreadyRegistered }
 }
 
+// Os três tópicos de rascunho costumam falhar pelo mesmo motivo — vira uma
+// linha só em vez de três repetidas.
+function summarizeFailures(failures: string[]): string {
+  const draftFailures = failures.filter((failure) => failure.startsWith('draft_orders/'))
+  const draftReasons = new Set(draftFailures.map((failure) => failure.slice(failure.indexOf(': ') + 2)))
+  if (draftFailures.length > 1 && draftReasons.size === 1) {
+    const others = failures.filter((failure) => !failure.startsWith('draft_orders/'))
+    return [...others, `rascunhos (draft_orders/*): ${[...draftReasons][0]}`].join('; ')
+  }
+  return failures.join('; ')
+}
+
+// Texto de erro que a Shopify devolve no corpo: `errors` pode ser string,
+// lista ou objeto { campo: [mensagens] }.
+function shopifyErrorDetail(response: unknown): string {
+  const errors = (response as { errors?: unknown } | null | undefined)?.errors
+  if (typeof errors === 'string') return errors
+  if (Array.isArray(errors)) return errors.map(String).join(', ')
+  if (errors && typeof errors === 'object') {
+    return Object.entries(errors as Record<string, unknown>)
+      .map(([field, value]) => `${field}: ${Array.isArray(value) ? value.join(', ') : String(value)}`)
+      .join('; ')
+  }
+  return ''
+}
+
 function describeRegistrationError(topic: string, error: unknown): string {
   const message = error instanceof Error ? error.message : 'Erro inesperado'
-  if (topic.startsWith('draft_orders/') && /(401|403)|access|scope|permission/i.test(message)) {
-    return 'a loja não autorizou rascunhos (escopo read_draft_orders) — adicione o escopo no app e reconecte a loja'
+  // Duck typing em vez de instanceof: ShopifyApiError carrega status e corpo.
+  const status = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : null
+  const detail = shopifyErrorDetail((error as { response?: unknown })?.response)
+  // A Shopify recusa com 422 (às vezes 401/403) criar webhook de um tópico que
+  // o app não tem permissão de ler.
+  const deniedByScope = (status !== null && [401, 403, 422].includes(status))
+    || /access|scope|permission/i.test(`${message} ${detail}`)
+  if (topic.startsWith('draft_orders/') && deniedByScope) {
+    const suffix = detail ? ` (Shopify: ${detail})` : ''
+    return `a loja não autorizou rascunhos — adicione o escopo read_draft_orders no app e reconecte a loja${suffix}`
   }
-  return message
+  return detail ? `${message}: ${detail}` : message
 }
 
 // Registers the order lifecycle (and checkout) subscriptions directly with Shopify via
