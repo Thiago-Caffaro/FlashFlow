@@ -102,11 +102,20 @@ function describeRegistrationError(topic: string, error: unknown): string {
   // o app não tem permissão de ler.
   const deniedByScope = (status !== null && [401, 403, 422].includes(status))
     || /access|scope|permission/i.test(`${message} ${detail}`)
+  // Motivo já conhecido: sem o detalhe da Shopify, as três linhas de
+  // rascunho ficam idênticas e viram uma só (summarizeFailures).
   if (topic.startsWith('draft_orders/') && deniedByScope) {
-    const suffix = detail ? ` (Shopify: ${detail})` : ''
-    return `a loja não autorizou rascunhos — adicione o escopo read_draft_orders no app e reconecte a loja${suffix}`
+    return 'a loja não autorizou rascunhos — adicione o escopo read_draft_orders no app e reconecte a loja'
   }
-  return detail ? `${message}: ${detail}` : message
+  const shortDetail = trimShopifyDetail(detail)
+  return shortDetail ? `${message}: ${shortDetail}` : message
+}
+
+// A Shopify anexa a lista inteira de tópicos permitidos ao erro de tópico
+// inválido — corta a partir dela e limita o tamanho.
+function trimShopifyDetail(detail: string): string {
+  const cut = detail.split(/\s*Topics allowed:/i)[0].trim()
+  return cut.length > 200 ? `${cut.slice(0, 200)}…` : cut
 }
 
 // Registers the order lifecycle (and checkout) subscriptions directly with Shopify via
