@@ -13,6 +13,11 @@ import {
 } from '@/types'
 import OrderEditModal from './order-edit-modal'
 import CustomerOrderGroup from './customer-order-group'
+import OrderFilterBar from './order-filter-bar'
+import PaginationControls from './pagination-controls'
+import {
+  createOrderFilters, filterOrders, paginate, sortOrders, uniqueCountries, type OrderFilters,
+} from '@/lib/fulfillment-order-filters'
 import { groupOrdersByCustomer, type CustomerGroup } from '@/lib/fulfillment-grouping'
 import ConfirmationTriggerStatus from './confirmation-trigger-status'
 import { isOrderCancelled, isOrderRemoved } from '@/lib/order-platform'
@@ -237,16 +242,44 @@ export default function QueuePanel({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
 
-  const queueOrders = useMemo(() => {
+  const [filters, setFilters] = useState<OrderFilters>(() => createOrderFilters('received_asc'))
+  const [page, setPage] = useState(1)
+
+  const baseQueueOrders = useMemo(() => {
     return orders
       .filter((o) => o.commercial_status === 'Não responde' && !o.is_simulation)
       .filter((o) => !isShopifyOrderCancelled(o) && !isOrderCancelled(o) && !isOrderRemoved(o))
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
   }, [orders])
 
+  // Padrão: do mais antigo para o mais novo (quem espera há mais tempo primeiro).
+  const queueOrders = useMemo(
+    () => sortOrders(filterOrders(baseQueueOrders, filters), filters.sort),
+    [baseQueueOrders, filters],
+  )
+
+  // Paginação por linha da lista (cliente ou grupo de cliente), não por pedido.
   const groups = useMemo(() => groupOrdersByCustomer(queueOrders), [queueOrders])
+  const groupsPage = paginate(groups, page)
+  const countries = useMemo(() => uniqueCountries(baseQueueOrders), [baseQueueOrders])
+
+  // A seleção só vale para o que o filtro atual mostra: pedidos filtrados para
+  // fora não podem receber uma ação em massa escondida.
+  const selectedVisibleIds = useMemo(
+    () => queueOrders.filter((o) => selectedIds.has(o.id)).map((o) => o.id),
+    [queueOrders, selectedIds],
+  )
 
   const openOrder = openOrderId ? orders.find((o) => o.id === openOrderId) ?? null : null
+
+  function updateFilters(patch: Partial<OrderFilters>) {
+    setFilters((prev) => ({ ...prev, ...patch }))
+    setPage(1)
+  }
+
+  function clearFilters() {
+    setFilters((prev) => createOrderFilters(prev.sort))
+    setPage(1)
+  }
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
@@ -268,14 +301,15 @@ export default function QueuePanel({
 
   function toggleSelectAllVisible() {
     setSelectedIds((prev) => {
-      if (prev.size === queueOrders.length) return new Set()
+      const allSelected = queueOrders.length > 0 && queueOrders.every((o) => prev.has(o.id))
+      if (allSelected) return new Set()
       return new Set(queueOrders.map((o) => o.id))
     })
   }
 
   async function handleBulkStatus(status: CommercialStatus) {
     setBulkBusy(true)
-    await onBulkUpdateStatus([...selectedIds], status)
+    await onBulkUpdateStatus(selectedVisibleIds, status)
     setSelectedIds(new Set())
     setBulkBusy(false)
   }
@@ -294,19 +328,28 @@ export default function QueuePanel({
             <label className="flex shrink-0 items-center gap-2 text-xs font-semibold text-[#667781]">
               <input
                 type="checkbox"
-                checked={selectedIds.size > 0 && selectedIds.size === queueOrders.length}
+                checked={selectedVisibleIds.length > 0 && selectedVisibleIds.length === queueOrders.length}
                 onChange={toggleSelectAllVisible}
                 className="h-4 w-4 accent-[#00a884]"
               />
-              Selecionar todos ({queueOrders.length})
+              Selecionar todos ({queueOrders.length}, todas as páginas)
             </label>
           )}
         </div>
       </div>
 
-      {selectedIds.size > 0 && (
+      <OrderFilterBar
+        filters={filters}
+        onChange={updateFilters}
+        onClear={clearFilters}
+        accounts={accounts}
+        countries={countries}
+        showStatusFilters={false}
+      />
+
+      {selectedVisibleIds.length > 0 && (
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-xl bg-[#111b21] px-4 py-3 text-sm text-white shadow-sm dark:bg-[#1a2730]">
-          <span className="font-semibold">{selectedIds.size} selecionado(s)</span>
+          <span className="font-semibold">{selectedVisibleIds.length} selecionado(s)</span>
           <div className="ml-auto flex flex-wrap gap-2">
             <button
               onClick={() => handleBulkStatus('Confirmado')}
@@ -338,12 +381,16 @@ export default function QueuePanel({
 
       {queueOrders.length === 0 && (
         <div className="rounded-xl bg-white p-8 text-center shadow-sm dark:bg-[#111b21]">
-          <p className="text-sm text-[#667781]">Fila vazia — nenhum pedido aguardando confirmação.</p>
+          <p className="text-sm text-[#667781]">
+            {baseQueueOrders.length === 0
+              ? 'Fila vazia — nenhum pedido aguardando confirmação.'
+              : 'Nenhum pedido da fila corresponde aos filtros.'}
+          </p>
         </div>
       )}
 
       <div className="space-y-3">
-        {groups.map((group) => {
+        {groupsPage.items.map((group) => {
           const groupIds = group.orders.map((o) => o.id)
           const allSelected = groupIds.every((id) => selectedIds.has(id))
           return (
@@ -396,6 +443,13 @@ export default function QueuePanel({
           )
         })}
       </div>
+      <PaginationControls
+        page={groupsPage.page}
+        totalPages={groupsPage.totalPages}
+        totalItems={groupsPage.totalItems}
+        itemLabel={`cliente(s) · ${queueOrders.length} pedido(s)`}
+        onPageChange={setPage}
+      />
 
       {openOrder && (
         <OrderEditModal
