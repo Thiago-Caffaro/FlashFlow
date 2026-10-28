@@ -8,7 +8,6 @@ import {
 import {
   Account,
   ABANDONED_CHECKOUT_STATUSES,
-  COMMERCIAL_STATUSES,
   ExternalFulfillmentLead,
   FulfillmentOrder,
   ShopifyAbandonedCheckout,
@@ -25,6 +24,11 @@ import CustomerOrderGroup from './customer-order-group'
 import { groupOrdersByCustomer, type CustomerGroup } from '@/lib/fulfillment-grouping'
 import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 import ConfirmationTriggerStatus from './confirmation-trigger-status'
+import OrderFilterBar from './order-filter-bar'
+import PaginationControls from './pagination-controls'
+import {
+  createOrderFilters, filterOrders, paginate, sortOrders, uniqueCountries, type OrderFilters,
+} from '@/lib/fulfillment-order-filters'
 import { getOrderDisplayNumber, isOrderCancelled, isOrderPaymentSettled, isOrderRemoved } from '@/lib/order-platform'
 import LightfunnelsOrderStatusBadges from './lightfunnels-order-status-badges'
 import ShopifyOrderStatusBadges from './shopify-order-status-badges'
@@ -261,17 +265,19 @@ export default function OrdersSection({
   onSyncShopify, onUpdateOrderStatus, onUpdateItems, onOrderAction,
   onResendConfirmation, onUpdateCheckout, onRecoverCheckout, onOpenShopifyProducts,
 }: OrdersSectionProps) {
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [instanceFilter, setInstanceFilter] = useState('')
+  const [filters, setFilters] = useState<OrderFilters>(() => createOrderFilters('received_desc'))
+  const [page, setPage] = useState(1)
   const [openOrderId, setOpenOrderId] = useState<string | null>(null)
   const [showCheckouts, setShowCheckouts] = useState(false)
   const [checkoutSourceFilter, setCheckoutSourceFilter] = useState<'' | ShopifyCheckoutSource>('')
+  const [checkoutPage, setCheckoutPage] = useState(1)
   // Linhas antigas (antes da migration 028) não têm `source`: são checkouts.
   const draftCount = abandonedCheckouts.filter((checkout) => checkout.source === 'draft_order').length
-  const visibleCheckouts = checkoutSourceFilter
+  const filteredCheckouts = checkoutSourceFilter
     ? abandonedCheckouts.filter((checkout) => (checkout.source ?? 'checkout') === checkoutSourceFilter)
     : abandonedCheckouts
+  const checkoutsPage = paginate(filteredCheckouts, checkoutPage)
+  const visibleCheckouts = checkoutsPage.items
 
   const [showFenix, setShowFenix] = useState(false)
   const activeIntegrations = integrations.filter((i) => i.active)
@@ -285,23 +291,26 @@ export default function OrdersSection({
     [orders]
   )
 
-  const filteredOrders = useMemo(() => {
-    return orders.filter((o) => {
-      if (search) {
-        const q = search.toLowerCase()
-        if (
-          !o.customer_name?.toLowerCase().includes(q) &&
-          !o.contact_phone?.includes(q) &&
-          !getOrderDisplayNumber(o).toLowerCase().includes(q)
-        ) return false
-      }
-      if (statusFilter && o.commercial_status !== statusFilter) return false
-      if (instanceFilter && o.instance_name !== instanceFilter && o.assigned_instance_name !== instanceFilter) return false
-      return true
-    })
-  }, [orders, search, statusFilter, instanceFilter])
+  const filteredOrders = useMemo(
+    () => sortOrders(filterOrders(orders, filters), filters.sort),
+    [orders, filters],
+  )
 
+  // A paginação é por linha da lista (cliente ou grupo de cliente), não por pedido:
+  // um cliente com vários pedidos ocupa uma linha e expande no lugar.
   const groups = useMemo(() => groupOrdersByCustomer(filteredOrders), [filteredOrders])
+  const groupsPage = paginate(groups, page)
+  const countries = useMemo(() => uniqueCountries(orders), [orders])
+
+  function updateFilters(patch: Partial<OrderFilters>) {
+    setFilters((prev) => ({ ...prev, ...patch }))
+    setPage(1)
+  }
+
+  function clearFilters() {
+    setFilters((prev) => createOrderFilters(prev.sort))
+    setPage(1)
+  }
 
   const openOrder = openOrderId ? orders.find((o) => o.id === openOrderId) ?? null : null
 
@@ -318,25 +327,8 @@ export default function OrdersSection({
 
   return (
     <div className="space-y-4">
-      {/* Filter + actions bar */}
+      {/* Actions bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-48 flex-1">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#667781]" />
-          <input
-            className={`${inputClass} w-full pl-8`}
-            placeholder="Pesquisar cliente, telefone, pedido..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={inputClass}>
-          <option value="">Todos os status</option>
-          {COMMERCIAL_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select value={instanceFilter} onChange={(e) => setInstanceFilter(e.target.value)} className={inputClass}>
-          <option value="">Todas as contas</option>
-          {accounts.map((a) => <option key={a.instanceName} value={a.instanceName}>{a.label || a.instanceName}</option>)}
-        </select>
         <div className="flex gap-2 ml-auto">
           <button onClick={onOpenShopifyProducts} className={btnSecondary}>
             <Package size={14} />Produtos reais
@@ -359,6 +351,14 @@ export default function OrdersSection({
         </div>
       </div>
 
+      <OrderFilterBar
+        filters={filters}
+        onChange={updateFilters}
+        onClear={clearFilters}
+        accounts={accounts}
+        countries={countries}
+      />
+
       {/* Orders table */}
       <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
         <div className="hidden border-b border-[#f0f2f5] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#667781] dark:border-[#2a3942] lg:grid lg:grid-cols-[1.5fr_1fr_1.1fr_0.65fr_0.65fr_auto]">
@@ -372,7 +372,7 @@ export default function OrdersSection({
         {filteredOrders.length === 0 && (
           <p className="p-8 text-center text-sm text-[#667781]">Nenhum pedido encontrado.</p>
         )}
-        {groups.map((group) => (
+        {groupsPage.items.map((group) => (
           <CustomerOrderGroup
             key={group.key}
             group={group}
@@ -390,6 +390,13 @@ export default function OrdersSection({
           />
         ))}
       </div>
+      <PaginationControls
+        page={groupsPage.page}
+        totalPages={groupsPage.totalPages}
+        totalItems={groupsPage.totalItems}
+        itemLabel={`cliente(s) · ${filteredOrders.length} pedido(s)`}
+        onPageChange={setPage}
+      />
 
       {/* Abandoned checkouts (collapsible) */}
       <div className="overflow-hidden rounded-xl bg-white shadow-sm dark:bg-[#111b21]">
@@ -425,7 +432,7 @@ export default function OrdersSection({
               ] as const).map(([value, label]) => (
                 <button
                   key={label}
-                  onClick={() => setCheckoutSourceFilter(value)}
+                  onClick={() => { setCheckoutSourceFilter(value); setCheckoutPage(1) }}
                   className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
                     checkoutSourceFilter === value
                       ? 'bg-[#00a884] text-white'
@@ -502,6 +509,15 @@ export default function OrdersSection({
                 </div>
               </div>
             ))}
+            <div className="border-t border-[#f0f2f5] px-4 py-3 empty:hidden dark:border-[#2a3942]">
+              <PaginationControls
+                page={checkoutsPage.page}
+                totalPages={checkoutsPage.totalPages}
+                totalItems={checkoutsPage.totalItems}
+                itemLabel="carrinho(s)"
+                onPageChange={setCheckoutPage}
+              />
+            </div>
           </div>
         )}
       </div>
