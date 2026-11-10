@@ -14,6 +14,7 @@ const PUBLIC_API_PATHS = new Set([
   '/api/webhook/evolution',
   '/api/webhook/shopify/orders',
   '/api/webhook/shopify/abandoned-checkouts',
+  '/api/webhook/shopify/draft-orders',
   '/api/webhook/lightfunnels',
   '/api/webhook/whatsapp-cloud',
   '/api/webhook/slack/interactivity',

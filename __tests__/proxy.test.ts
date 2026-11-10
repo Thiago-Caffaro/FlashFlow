@@ -44,6 +44,11 @@ describe('proxy — webhooks servidor-a-servidor (sem cookie)', () => {
     expect(isPassthrough(res)).toBe(true)
   })
 
+  it('libera POST /api/webhook/shopify/draft-orders sem cookie', () => {
+    const res = proxy(requestFor('/api/webhook/shopify/draft-orders'))
+    expect(isPassthrough(res)).toBe(true)
+  })
+
   it('libera POST /api/webhook/evolution sem cookie', () => {
     const res = proxy(requestFor('/api/webhook/evolution'))
     expect(isPassthrough(res)).toBe(true)
