@@ -72,12 +72,19 @@ async function failOrRetryJob(job: FlowJob, error: unknown) {
   }
 }
 
+// Job enfileirado por automação simples (lib/automation-runtime.ts).
+function jobAutomationId(job: FlowJob): string | undefined {
+  return typeof job.payload?.automationId === 'string' ? job.payload.automationId : undefined
+}
+
 async function processJob(job: FlowJob) {
+  const automationId = jobAutomationId(job)
   if (job.job_type === 'shopify_order_flow') {
     if (!job.order_id) throw new Error('Job Shopify sem order_id')
     if (!(await getShopifyTriggersEnabled())) return
     await runShopifyOrderTrigger(job.order_id, job.flow_id, {
       respectShopifyTriggerSetting: true,
+      ...(automationId ? { automationId } : {}),
     })
     return
   }
@@ -87,6 +94,7 @@ async function processJob(job: FlowJob) {
     if (!(await getLightfunnelsTriggersEnabled())) return
     await runShopifyOrderTrigger(job.order_id, job.flow_id, {
       respectShopifyTriggerSetting: true,
+      ...(automationId ? { automationId } : {}),
     })
     return
   }
@@ -113,14 +121,14 @@ async function processJob(job: FlowJob) {
 
   if (job.job_type === 'delivery_status_flow') {
     if (!job.order_id) throw new Error('Job de entrega sem order_id')
-    await runOrderFlow(job.order_id, job.flow_id)
+    if (automationId) await runOrderFlow(job.order_id, job.flow_id, { automationId })
+    else await runOrderFlow(job.order_id, job.flow_id)
     return
   }
 
   if (job.job_type === 'abandoned_checkout_flow') {
     if (!job.checkout_id) throw new Error('Job de carrinho sem checkout_id')
     if (!(await getShopifyTriggersEnabled())) return
-    const automationId = typeof job.payload.automationId === 'string' ? job.payload.automationId : null
     if (automationId) await runAbandonedCheckoutTrigger(job.checkout_id, job.flow_id, { automationId })
     else await runAbandonedCheckoutTrigger(job.checkout_id, job.flow_id)
     return

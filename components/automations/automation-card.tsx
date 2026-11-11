@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Clock, Loader2, Pencil, Phone, ShoppingCart, Trash2 } from 'lucide-react'
+import { Clock, Loader2, Pencil, Phone, Trash2 } from 'lucide-react'
+import AutomationKindIcon from './automation-kind-icon'
 import type { Account, AutomationWithSteps, ProductLine } from '@/types'
 import { AUTOMATION_PRESETS } from '@/lib/automation-presets'
 import { countryLabel, formatDelay } from '@/lib/automation-display'
@@ -21,6 +22,16 @@ export default function AutomationCard({ automation, line, account, onToggle, on
   const [busy, setBusy] = useState(false)
   const preset = AUTOMATION_PRESETS[automation.kind]
   const disconnected = account ? account.state !== 'open' : true
+  const chips: string[] = []
+  if (automation.country) chips.push(countryLabel(automation.country))
+  if (preset?.usesOrderScope) chips.push(line ? line.code : 'Qualquer linha')
+  if (automation.kind === 'delivery_status') {
+    const statuses = automation.config?.statuses ?? []
+    chips.push(statuses.includes('*') ? 'Qualquer mudança' : statuses.join(', '))
+  }
+  if (automation.kind === 'message_keyword') {
+    chips.push(`${automation.config?.match === 'exact' ? '=' : '∋'} ${automation.config?.keywords ?? ''}`)
+  }
 
   async function toggle() {
     setBusy(true)
@@ -40,12 +51,13 @@ export default function AutomationCard({ automation, line, account, onToggle, on
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#00a884]/10">
-            <ShoppingCart size={18} className="text-[#00a884]" />
+            <AutomationKindIcon kind={automation.kind} className="text-[#00a884]" />
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-[#111b21] dark:text-[#e9edef]">{automation.name}</p>
             <p className="text-xs text-[#667781] dark:text-[#8696a0]">
-              {preset?.label ?? automation.kind} · {PLATFORM_LABELS[automation.platform] ?? automation.platform}
+              {preset?.label ?? automation.kind}
+              {automation.platform ? ` · ${PLATFORM_LABELS[automation.platform] ?? automation.platform}` : ''}
             </p>
           </div>
         </div>
@@ -65,12 +77,11 @@ export default function AutomationCard({ automation, line, account, onToggle, on
       </div>
 
       <div className="flex flex-wrap gap-1.5 text-xs">
-        <span className="rounded-full bg-[#f0f2f5] px-2.5 py-1 text-[#54656f] dark:bg-[#202c33] dark:text-[#aebac1]">
-          {countryLabel(automation.country)}
-        </span>
-        <span className="rounded-full bg-[#f0f2f5] px-2.5 py-1 text-[#54656f] dark:bg-[#202c33] dark:text-[#aebac1]">
-          {line ? line.code : 'Qualquer linha'}
-        </span>
+        {chips.map((chip) => (
+          <span key={chip} className="rounded-full bg-[#f0f2f5] px-2.5 py-1 text-[#54656f] dark:bg-[#202c33] dark:text-[#aebac1]">
+            {chip}
+          </span>
+        ))}
       </div>
 
       <div className="flex flex-col gap-1.5 text-xs text-[#667781] dark:text-[#8696a0]">
@@ -84,8 +95,10 @@ export default function AutomationCard({ automation, line, account, onToggle, on
         <span className="flex items-center gap-1.5">
           <Clock size={13} className="shrink-0" />
           {automation.steps.length === 0
-            ? 'Sem lembretes'
-            : automation.steps.map((step) => formatDelay(step.delay_minutes)).join(' → ')}
+            ? 'Sem mensagem'
+            : preset?.delayLabel === null
+              ? 'Envia na hora'
+              : automation.steps.map((step) => formatDelay(step.delay_minutes)).join(' → ')}
         </span>
       </div>
 

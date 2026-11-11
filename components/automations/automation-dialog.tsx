@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertCircle, Check, Loader2, Plus, ShoppingCart, X } from 'lucide-react'
+import { AlertCircle, Check, Loader2, Plus, X } from 'lucide-react'
 import type {
   Account,
   AutomationInput,
@@ -11,7 +11,9 @@ import type {
   CatalogPlatform,
   ProductLineWithProducts,
 } from '@/types'
-import { AUTOMATION_PRESETS } from '@/lib/automation-presets'
+import { DELIVERY_STATUSES } from '@/types'
+import { AUTOMATION_KIND_ORDER, AUTOMATION_PRESETS } from '@/lib/automation-presets'
+import AutomationKindIcon from './automation-kind-icon'
 import { AUTOMATION_COUNTRIES } from '@/lib/automation-display'
 import type { FallbackTemplateOption } from '@/components/flows/template-fallback-picker'
 import AutomationStepEditor from './automation-step-editor'
@@ -30,7 +32,7 @@ type WizardStep = 'modelo' | 'publico' | 'lembretes'
 const WIZARD_STEPS: { id: WizardStep; label: string }[] = [
   { id: 'modelo', label: 'Modelo' },
   { id: 'publico', label: 'Para quem' },
-  { id: 'lembretes', label: 'Lembretes' },
+  { id: 'lembretes', label: 'Mensagem' },
 ]
 
 const PLATFORM_LABELS: Record<CatalogPlatform, string> = { shopify: 'Shopify', lightfunnels: 'Lightfunnels' }
@@ -48,6 +50,7 @@ function initialForm(automation: AutomationWithSteps | null): AutomationInput {
       product_line_id: automation.product_line_id,
       instance_name: automation.instance_name,
       enabled: automation.enabled,
+      config: automation.config ?? {},
       steps: automation.steps.map((step) => ({
         delay_minutes: step.delay_minutes,
         message: step.message,
@@ -56,15 +59,21 @@ function initialForm(automation: AutomationWithSteps | null): AutomationInput {
       })),
     }
   }
-  const preset = AUTOMATION_PRESETS.abandoned_cart
+  return formForKind('abandoned_cart', '')
+}
+
+// Formulário novo de um modelo, mantendo o número já escolhido.
+function formForKind(kind: AutomationKind, instanceName: string): AutomationInput {
+  const preset = AUTOMATION_PRESETS[kind]
   return {
     name: '',
-    kind: preset.kind,
-    platform: preset.platforms[0],
-    country: '',
+    kind,
+    platform: preset.platforms[0] ?? null,
+    country: preset.usesOrderScope ? '' : null,
     product_line_id: null,
-    instance_name: '',
+    instance_name: instanceName,
     enabled: false,
+    config: { ...preset.defaultConfig },
     steps: preset.defaultSteps.map((step) => ({ ...step })),
   }
 }
@@ -136,19 +145,28 @@ export default function AutomationDialog({ automation, lines, accounts, onSaved,
   }, [form.instance_name])
 
   function stepProblem(step: WizardStep): string | null {
-    if (step === 'modelo') return preset.platforms.includes(form.platform) ? null : 'Escolha a plataforma'
+    if (step === 'modelo') {
+      if (!preset.usesOrderScope) return null
+      return form.platform && preset.platforms.includes(form.platform) ? null : 'Escolha a plataforma'
+    }
     if (step === 'publico') {
-      if (!form.country) return 'Escolha o país'
+      if (preset.usesOrderScope && !form.country) return 'Escolha o país'
+      if (form.kind === 'delivery_status' && !(form.config.statuses ?? []).length) return 'Escolha pelo menos um status de entrega'
+      if (form.kind === 'message_keyword' && !(form.config.keywords ?? '').trim()) return 'Informe pelo menos uma palavra-chave'
       if (!form.instance_name) return 'Escolha o número de WhatsApp'
       return null
     }
     for (const [index, item] of form.steps.entries()) {
       if (!item.message.trim()) return `Lembrete ${index + 1}: escreva a mensagem`
-      if (item.delay_minutes < 1) return `Lembrete ${index + 1}: informe o tempo de espera`
-      if (index > 0 && item.delay_minutes <= form.steps[index - 1].delay_minutes) {
-        return `Lembrete ${index + 1}: o tempo deve ser maior que o do lembrete anterior`
+      if (preset.delayLabel !== null) {
+        if (item.delay_minutes < 1) return `Lembrete ${index + 1}: informe o tempo de espera`
+        if (index > 0 && item.delay_minutes <= form.steps[index - 1].delay_minutes) {
+          return `Lembrete ${index + 1}: o tempo deve ser maior que o do lembrete anterior`
+        }
       }
-      if (isCloudApi && !item.fallback_template_id) return `Lembrete ${index + 1}: escolha um template aprovado`
+      if (isCloudApi && preset.requiresTemplateOnCloudApi && !item.fallback_template_id) {
+        return `Lembrete ${index + 1}: escolha um template aprovado`
+      }
     }
     return null
   }
@@ -211,7 +229,18 @@ export default function AutomationDialog({ automation, lines, accounts, onSaved,
     }
   }
 
-  const presetEntries = Object.values(AUTOMATION_PRESETS)
+  const presetEntries = AUTOMATION_KIND_ORDER.map((kind) => AUTOMATION_PRESETS[kind])
+
+  function chooseKind(kind: AutomationKind) {
+    if (kind === form.kind) return
+    setForm(formForKind(kind, form.instance_name))
+  }
+
+  function toggleStatus(status: string) {
+    const current = form.config.statuses ?? []
+    const statuses = current.includes(status) ? current.filter((item) => item !== status) : [...current, status]
+    update({ config: { ...form.config, statuses } })
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4" onClick={onClose}>
@@ -264,14 +293,14 @@ export default function AutomationDialog({ automation, lines, accounts, onSaved,
                     key={entry.kind}
                     type="button"
                     disabled={Boolean(automation) && entry.kind !== form.kind}
-                    onClick={() => update({ kind: entry.kind as AutomationKind })}
+                    onClick={() => chooseKind(entry.kind)}
                     className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition-colors disabled:opacity-50 ${
                       form.kind === entry.kind
                         ? 'border-[#00a884] bg-[#00a884]/5'
                         : 'border-[#e9edef] hover:border-[#00a884]/50 dark:border-[#2a3942]'
                     }`}
                   >
-                    <ShoppingCart size={20} className="mt-0.5 shrink-0 text-[#00a884]" />
+                    <AutomationKindIcon kind={entry.kind} size={20} className="mt-0.5 shrink-0 text-[#00a884]" />
                     <span>
                       <span className="block text-sm font-semibold text-[#111b21] dark:text-[#e9edef]">{entry.label}</span>
                       <span className="mt-0.5 block text-xs text-[#667781] dark:text-[#8696a0]">{entry.description}</span>
@@ -280,7 +309,7 @@ export default function AutomationDialog({ automation, lines, accounts, onSaved,
                 ))}
               </div>
 
-              <div className="flex flex-col gap-2">
+              {preset.usesOrderScope && <div className="flex flex-col gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wide text-[#667781]">Plataforma</span>
                 <div className="flex flex-wrap gap-2">
                   {(Object.keys(PLATFORM_LABELS) as CatalogPlatform[]).map((platform) => {
@@ -302,15 +331,15 @@ export default function AutomationDialog({ automation, lines, accounts, onSaved,
                     )
                   })}
                 </div>
-              </div>
+              </div>}
             </div>
           )}
 
           {wizardStep === 'publico' && (
             <div className="flex flex-col gap-5">
-              <label className="flex flex-col gap-1.5">
+              {preset.usesOrderScope && <><label className="flex flex-col gap-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wide text-[#667781]">País</span>
-                <select value={form.country} onChange={(event) => update({ country: event.target.value })} className={inputClass}>
+                <select value={form.country ?? ''} onChange={(event) => update({ country: event.target.value })} className={inputClass}>
                   <option value="">Escolha o país…</option>
                   {AUTOMATION_COUNTRIES.map((country) => (
                     <option key={country.code} value={country.code}>{country.name} ({country.code})</option>
@@ -336,7 +365,59 @@ export default function AutomationDialog({ automation, lines, accounts, onSaved,
                   A linha é reconhecida pelos produtos vinculados em &quot;Linhas e produtos&quot;. Uma automação de linha
                   específica vence a de &quot;Qualquer linha&quot; do mesmo país.
                 </span>
-              </label>
+              </label></>}
+
+              {form.kind === 'delivery_status' && (
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-[#667781]">Enviar quando a entrega mudar para</span>
+                  <div className="flex flex-wrap gap-2">
+                    {['*', ...DELIVERY_STATUSES].map((status) => {
+                      const checked = (form.config.statuses ?? []).includes(status)
+                      return (
+                        <button
+                          key={status}
+                          type="button"
+                          aria-pressed={checked}
+                          onClick={() => toggleStatus(status)}
+                          className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                            checked
+                              ? 'bg-[#00a884] text-white'
+                              : 'bg-[#f0f2f5] text-[#54656f] hover:bg-[#e9edef] dark:bg-[#202c33] dark:text-[#aebac1]'
+                          }`}
+                        >
+                          {status === '*' ? 'Qualquer mudança' : status}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {form.kind === 'message_keyword' && (
+                <div className="flex flex-col gap-3">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-[#667781]">Palavras-chave</span>
+                    <input
+                      value={form.config.keywords ?? ''}
+                      onChange={(event) => update({ config: { ...form.config, keywords: event.target.value } })}
+                      placeholder="preço, valor, quanto custa"
+                      className={inputClass}
+                    />
+                    <span className="text-xs text-[#8696a0]">Separe por vírgula. Use * para responder qualquer mensagem.</span>
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-[#667781]">Como comparar</span>
+                    <select
+                      value={form.config.match ?? 'contains'}
+                      onChange={(event) => update({ config: { ...form.config, match: event.target.value === 'exact' ? 'exact' : 'contains' } })}
+                      className={inputClass}
+                    >
+                      <option value="contains">A mensagem contém a palavra</option>
+                      <option value="exact">A mensagem é exatamente a palavra</option>
+                    </select>
+                  </label>
+                </div>
+              )}
 
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wide text-[#667781]">Número de WhatsApp</span>
@@ -364,11 +445,14 @@ export default function AutomationDialog({ automation, lines, accounts, onSaved,
                     <AlertCircle size={13} /> Este número está desconectado: os lembretes vão falhar até reconectar.
                   </span>
                 )}
-                {isCloudApi && (
+                {isCloudApi && preset.requiresTemplateOnCloudApi && (
                   <span className="text-xs text-[#8696a0]">
-                    Número oficial: cada lembrete precisa de um template aprovado, usado quando o cliente não escreveu nas
+                    Número oficial: cada mensagem precisa de um template aprovado, usado quando o cliente não escreveu nas
                     últimas 24h.
                   </span>
+                )}
+                {preset.platforms.length === 0 && (
+                  <span className="text-xs text-[#8696a0]">Responde as mensagens recebidas neste número.</span>
                 )}
               </label>
 
@@ -389,7 +473,7 @@ export default function AutomationDialog({ automation, lines, accounts, onSaved,
               {form.steps.map((step, index) => (
                 <AutomationStepEditor
                   key={index}
-                  position={index + 1}
+                  title={preset.maxSteps > 1 ? `Lembrete ${index + 1}` : 'Mensagem'}
                   step={step}
                   delayLabel={preset.delayLabel}
                   variableGroups={preset.variableGroups}

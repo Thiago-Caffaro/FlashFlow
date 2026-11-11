@@ -6,6 +6,7 @@ import {
   buildAutomationStepFlowJson,
   DUPLICATE_AUTOMATION_ERROR,
 } from './automation-rules'
+import { AUTOMATION_PRESETS } from './automation-presets'
 import type { Automation, AutomationInput, AutomationStep, AutomationStepInput, AutomationWithSteps } from '@/types'
 
 // Erro de regra de negócio, com o status HTTP que a rota deve devolver.
@@ -18,8 +19,9 @@ export class AutomationError extends Error {
 
 // Confere o que depende do banco e devolve as etapas normalizadas:
 // linha existente; número existente e fora do sandbox; em conta Cloud API,
-// todo lembrete com template aprovado da própria conta (carrinho é sempre a
-// empresa iniciando a conversa). Em conta Evolution o template é descartado.
+// todo lembrete com template aprovado da própria conta quando a empresa é
+// quem inicia a conversa (carrinho, pedido, entrega — não na resposta por
+// palavra-chave). Em conta Evolution o template é descartado.
 async function validateReferences(input: AutomationInput): Promise<AutomationStepInput[]> {
   if (input.product_line_id) {
     const { data, error } = await supabaseAdmin
@@ -55,14 +57,18 @@ async function validateReferences(input: AutomationInput): Promise<AutomationSte
   if (account.provider !== 'cloud_api') {
     return input.steps.map((step) => ({ ...step, fallback_template_id: null, fallback_template_variable_map: {} }))
   }
-
+  // Resposta por palavra-chave: o cliente acabou de escrever (janela de 24h
+  // aberta), então o template é opcional — só os escolhidos são conferidos.
+  const templateRequired = AUTOMATION_PRESETS[input.kind].requiresTemplateOnCloudApi
   const missing = input.steps.findIndex((step) => !step.fallback_template_id)
-  if (missing >= 0) {
+  if (templateRequired && missing >= 0) {
     throw new AutomationError(
       `Lembrete ${missing + 1}: escolha um template aprovado — no número oficial a primeira mensagem para o cliente precisa ser template`,
       400
     )
   }
+  const withTemplate = input.steps.filter((step) => step.fallback_template_id)
+  if (withTemplate.length === 0) return input.steps
   const templateIds = [...new Set(input.steps.map((step) => String(step.fallback_template_id)))]
   const { data: templates, error: templateError } = await supabaseAdmin
     .from('whatsapp_message_templates')
@@ -74,7 +80,7 @@ async function validateReferences(input: AutomationInput): Promise<AutomationSte
       .filter((template) => template.instance_name === input.instance_name && template.status === 'approved')
       .map((template) => String(template.id))
   )
-  const invalid = input.steps.findIndex((step) => !usable.has(String(step.fallback_template_id)))
+  const invalid = input.steps.findIndex((step) => step.fallback_template_id && !usable.has(String(step.fallback_template_id)))
   if (invalid >= 0) {
     throw new AutomationError(`Lembrete ${invalid + 1}: o template precisa ser aprovado e deste número`, 400)
   }
@@ -163,6 +169,7 @@ function automationRow(input: AutomationInput) {
     product_line_id: input.product_line_id,
     instance_name: input.instance_name,
     enabled: input.enabled,
+    config: input.config,
   }
 }
 

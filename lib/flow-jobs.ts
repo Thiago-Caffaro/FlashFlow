@@ -50,10 +50,13 @@ async function insertJob(
   return data as FlowJob | null
 }
 
+// `automationId`: o pedido é atendido por uma automação simples — o worker
+// confere se ela segue ligada e usa o número atual dela.
 export async function enqueueShopifyOrderFlowJob(input: {
   orderId: string
   instanceName: string
   flowId: string
+  automationId?: string
 }): Promise<FlowJob | null> {
   return insertJob({
     job_type: 'shopify_order_flow',
@@ -64,7 +67,7 @@ export async function enqueueShopifyOrderFlowJob(input: {
     order_id: input.orderId,
     conversation_id: null,
     remote_jid: null,
-    payload: {},
+    payload: input.automationId ? { automationId: input.automationId } : {},
     max_attempts: 20,
     expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   })
@@ -74,6 +77,7 @@ export async function enqueueLightfunnelsOrderFlowJob(input: {
   orderId: string
   instanceName: string
   flowId: string
+  automationId?: string
 }): Promise<FlowJob | null> {
   return insertJob({
     job_type: 'lightfunnels_order_flow',
@@ -84,7 +88,7 @@ export async function enqueueLightfunnelsOrderFlowJob(input: {
     order_id: input.orderId,
     conversation_id: null,
     remote_jid: null,
-    payload: {},
+    payload: input.automationId ? { automationId: input.automationId } : {},
     max_attempts: 20,
     expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   })
@@ -181,6 +185,43 @@ export async function cancelStaleAbandonedCheckoutJobs(
     .eq('status', 'pending')
   if (updateError) throw new Error(`Falha ao cancelar lembretes de carrinho: ${updateError.message}`)
   return stale.length
+}
+
+// Status de entrega atendido por automação simples. Os jobs dos gatilhos da
+// conta para o mesmo evento são enfileirados pela RPC
+// apply_fulfillment_delivery_status (dedupe `delivery-status:{evento}:{gatilho}`)
+// e cancelados aqui: a automação tem precedência.
+export async function enqueueDeliveryStatusAutomationJob(input: {
+  orderId: string
+  eventId: string
+  automationId: string
+  instanceName: string
+  flowId: string
+  deliveryStatus: string
+}): Promise<FlowJob | null> {
+  const dedupeKey = `delivery-status:${input.eventId}:automation:${input.automationId}`
+  const job = await insertJob({
+    job_type: 'delivery_status_flow',
+    dedupe_key: dedupeKey,
+    instance_name: input.instanceName,
+    flow_id: input.flowId,
+    node_id: null,
+    order_id: input.orderId,
+    conversation_id: null,
+    remote_jid: null,
+    payload: { automationId: input.automationId, eventId: input.eventId, deliveryStatus: input.deliveryStatus },
+    max_attempts: 10,
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  })
+  const { error } = await supabaseAdmin
+    .from('flow_jobs')
+    .update({ status: 'failed', last_error: 'Substituído por automação de status de entrega', updated_at: new Date().toISOString() })
+    .eq('job_type', 'delivery_status_flow')
+    .eq('status', 'pending')
+    .like('dedupe_key', `delivery-status:${input.eventId}:%`)
+    .neq('dedupe_key', dedupeKey)
+  if (error) throw new Error(`Falha ao cancelar fluxos de entrega do gatilho: ${error.message}`)
+  return job
 }
 
 export async function enqueueFlowMessageResumeJob(input: {

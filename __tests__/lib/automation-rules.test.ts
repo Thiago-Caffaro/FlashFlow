@@ -1,8 +1,10 @@
 import {
   automationMatchesCountry,
   buildAutomationStepFlowJson,
+  messageMatchesKeywords,
   parseAutomationInput,
   pickCartAutomation,
+  pickScopedAutomation,
 } from '@/lib/automation-rules'
 import { validateFlowJson } from '@/lib/flow-validation'
 import { AUTOMATION_PRESETS } from '@/lib/automation-presets'
@@ -28,6 +30,7 @@ describe('parseAutomationInput', () => {
         product_line_id: 'line-ema',
         instance_name: 'conta-es',
         enabled: false,
+        config: {},
         steps: [{
           delay_minutes: 60,
           message: 'Oi {{contato.primeiro_nome}} {{carrinho.link}}',
@@ -159,5 +162,68 @@ describe('pickCartAutomation', () => {
       automation('pt', { country: 'PT' }),
       automation('lf', { platform: 'lightfunnels' }),
     ], cart)).toBeNull()
+  })
+})
+
+describe('modelos além do carrinho', () => {
+  const step = { message: 'Olá {{contato.primeiro_nome}}' }
+
+  it('pedido criado envia na hora e aceita Lightfunnels', () => {
+    const parsed = parseAutomationInput({ ...base, kind: 'order_created', platform: 'lightfunnels', steps: [{ ...step, delay_minutes: 999 }] })
+    expect('value' in parsed && parsed.value).toMatchObject({
+      name: 'Pedido criado ES',
+      platform: 'lightfunnels',
+      config: {},
+      steps: [{ delay_minutes: 0 }],
+    })
+    expect(parseAutomationInput({ ...base, kind: 'order_created', steps: [step, step] })).toEqual({ error: 'No máximo 1 lembretes' })
+  })
+
+  it('status de entrega exige estados válidos', () => {
+    expect(parseAutomationInput({ ...base, kind: 'delivery_status', steps: [step] })).toEqual({ error: 'Escolha pelo menos um status de entrega' })
+    expect(parseAutomationInput({ ...base, kind: 'delivery_status', config: { statuses: ['Voando'] }, steps: [step] }))
+      .toEqual({ error: 'Status de entrega inválido' })
+    const parsed = parseAutomationInput({ ...base, kind: 'delivery_status', config: { statuses: ['Entregue', 'Entregue'] }, steps: [step] })
+    expect('value' in parsed && parsed.value.config).toEqual({ statuses: ['Entregue'] })
+  })
+
+  it('palavra-chave ignora plataforma, país e linha e normaliza as palavras', () => {
+    const parsed = parseAutomationInput({
+      ...base,
+      kind: 'message_keyword',
+      config: { keywords: ' preço , ,valor ', match: 'exact' },
+      steps: [step],
+    })
+    expect('value' in parsed && parsed.value).toMatchObject({
+      name: 'Resposta por palavra-chave',
+      platform: null,
+      country: null,
+      product_line_id: null,
+      config: { keywords: 'preço, valor', match: 'exact' },
+      steps: [{ delay_minutes: 0 }],
+    })
+    expect(parseAutomationInput({ ...base, kind: 'message_keyword', config: { keywords: ' , ' }, steps: [step] }))
+      .toEqual({ error: 'Informe pelo menos uma palavra-chave' })
+  })
+
+  it('casa palavras-chave como os gatilhos de mensagem', () => {
+    expect(messageMatchesKeywords({ keywords: 'preço, valor' }, 'Qual o VALOR?')).toBe(true)
+    expect(messageMatchesKeywords({ keywords: 'preço', match: 'exact' }, 'qual o preço')).toBe(false)
+    expect(messageMatchesKeywords({ keywords: 'preço', match: 'exact' }, ' Preço ')).toBe(true)
+    expect(messageMatchesKeywords({ keywords: '*' }, 'qualquer coisa')).toBe(true)
+    expect(messageMatchesKeywords({ keywords: '' }, 'oi')).toBe(false)
+  })
+
+  it('entrega casa pelo novo status; Colômbia casa pelo código ou nome', () => {
+    const automation = (id: string, statuses: string[]) => ({
+      id, kind: 'delivery_status' as const, platform: 'shopify' as const, country: 'CO',
+      product_line_id: null, enabled: true, config: { statuses },
+    })
+    const scope = { kind: 'delivery_status' as const, platform: 'shopify' as const, country: 'COLOMBIA', productLineId: null }
+    const list = [automation('caminho', ['A caminho']), automation('qualquer', ['*'])]
+    expect(pickScopedAutomation(list, { ...scope, deliveryStatus: 'A caminho' })?.id).toBe('caminho')
+    expect(pickScopedAutomation(list, { ...scope, deliveryStatus: 'Entregue' })?.id).toBe('qualquer')
+    expect(automationMatchesCountry('CO', 'CO')).toBe(true)
+    expect(automationMatchesCountry('CO', 'SPAIN')).toBe(false)
   })
 })

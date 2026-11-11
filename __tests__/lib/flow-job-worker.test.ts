@@ -121,6 +121,25 @@ describe('flow job worker', () => {
     })
   })
 
+  it('passes the automation of order and delivery jobs', async () => {
+    mockRpc.mockResolvedValueOnce({ data: [job({ payload: { automationId: 'auto-1' } })], error: null })
+    mockRunShopifyOrderTrigger.mockResolvedValue({ order: { id: 'order-1' } })
+    mockFrom.mockReturnValue(updateBuilder().chain)
+    await runFlowJobWorkerOnce('worker-1')
+    expect(mockRunShopifyOrderTrigger).toHaveBeenCalledWith('order-1', 'flow-1', {
+      respectShopifyTriggerSetting: true,
+      automationId: 'auto-1',
+    })
+
+    mockRpc.mockResolvedValueOnce({
+      data: [job({ job_type: 'delivery_status_flow', payload: { automationId: 'auto-2' } })],
+      error: null,
+    })
+    mockRunOrderFlow.mockResolvedValue({})
+    await runFlowJobWorkerOnce('worker-1')
+    expect(mockRunOrderFlow).toHaveBeenCalledWith('order-1', 'flow-1', { automationId: 'auto-2' })
+  })
+
   it('returns failed work to the durable queue with backoff', async () => {
     mockRpc.mockResolvedValue({ data: [job({ attempts: 2 })], error: null })
     mockRunShopifyOrderTrigger.mockRejectedValue(new Error('Evolution indisponivel'))

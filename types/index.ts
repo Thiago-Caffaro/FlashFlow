@@ -680,18 +680,31 @@ export interface CatalogProductOption {
 
 // ─── Automações ───────────────────────────────────────────────────────────────
 
-export type AutomationKind = 'abandoned_cart'
+export type AutomationKind = 'abandoned_cart' | 'order_created' | 'delivery_status' | 'message_keyword'
+
+export type AutomationKeywordMatch = 'contains' | 'exact'
+
+// Parâmetros próprios de cada modelo (migration 031).
+export interface AutomationConfig {
+  // delivery_status: estados que disparam ('*' = qualquer mudança)
+  statuses?: string[]
+  // message_keyword: palavras separadas por vírgula ('*' = qualquer texto)
+  keywords?: string
+  match?: AutomationKeywordMatch
+}
 
 export interface Automation {
   id: string
   name: string
   kind: AutomationKind
-  platform: CatalogPlatform
-  country: string
+  // null nos modelos que não dependem de pedido (palavra-chave)
+  platform: CatalogPlatform | null
+  country: string | null
   // null = qualquer linha de produto
   product_line_id: string | null
   instance_name: string
   enabled: boolean
+  config: AutomationConfig
   created_at: string
   updated_at: string
 }
@@ -724,10 +737,11 @@ export interface AutomationStepInput {
 export interface AutomationInput {
   name: string
   kind: AutomationKind
-  platform: CatalogPlatform
-  country: string
+  platform: CatalogPlatform | null
+  country: string | null
   product_line_id: string | null
   instance_name: string
   enabled: boolean
+  config: AutomationConfig
   steps: AutomationStepInput[]
 }

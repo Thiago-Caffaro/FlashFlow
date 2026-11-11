@@ -8,9 +8,11 @@ import { DELAY_UNIT_LABELS, DELAY_UNIT_MINUTES, splitDelay, type DelayUnit } fro
 import TemplateFallbackPicker, { type FallbackTemplateOption } from '@/components/flows/template-fallback-picker'
 
 interface AutomationStepEditorProps {
-  position: number
   step: AutomationStepInput
-  delayLabel: string
+  // null = envia na hora (sem campo de espera)
+  delayLabel: string | null
+  // Título do bloco (ex: "Lembrete 1" ou "Mensagem")
+  title: string
   variableGroups: string[]
   customVariableKeys: string[]
   isCloudApi: boolean
@@ -27,9 +29,9 @@ const inputClass =
   'rounded-xl border border-[#d1d7db] bg-[#f0f2f5] px-3 py-2 text-sm text-[#111b21] outline-none transition-colors focus:border-[#00a884] dark:border-[#3d4f5a] dark:bg-[#2a3942] dark:text-[#e9edef]'
 
 export default function AutomationStepEditor({
-  position,
   step,
   delayLabel,
+  title,
   variableGroups,
   customVariableKeys,
   isCloudApi,
@@ -71,7 +73,7 @@ export default function AutomationStepEditor({
   return (
     <div className="flex flex-col gap-4 rounded-2xl border border-[#e9edef] p-4 dark:border-[#2a3942]">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-semibold text-[#111b21] dark:text-[#e9edef]">Lembrete {position}</span>
+        <span className="text-sm font-semibold text-[#111b21] dark:text-[#e9edef]">{title}</span>
         {canRemove && (
           <button
             type="button"
@@ -84,7 +86,7 @@ export default function AutomationStepEditor({
         )}
       </div>
 
-      <label className="flex flex-col gap-1.5">
+      {delayLabel !== null && <label className="flex flex-col gap-1.5">
         <span className="text-xs font-semibold uppercase tracking-wide text-[#667781]">{delayLabel}</span>
         <div className="flex gap-2">
           <input
@@ -104,7 +106,7 @@ export default function AutomationStepEditor({
             ))}
           </select>
         </div>
-      </label>
+      </label>}
 
       <label className="flex flex-col gap-1.5">
         <span className="text-xs font-semibold uppercase tracking-wide text-[#667781]">Mensagem</span>

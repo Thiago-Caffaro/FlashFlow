@@ -15,6 +15,11 @@ jest.mock('@/lib/fulfillment-service', () => ({
   getFulfillmentClient: mockGetFulfillmentClient,
 }))
 
+const mockScheduleDeliveryStatusAutomation = jest.fn()
+jest.mock('@/lib/automation-runtime', () => ({
+  scheduleDeliveryStatusAutomation: (...args: unknown[]) => mockScheduleDeliveryStatusAutomation(...args),
+}))
+
 type Result = { data: unknown; error: { message: string } | null }
 
 function builder(result: Result) {
@@ -70,6 +75,7 @@ const {
 describe('fulfillment delivery sync', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockScheduleDeliveryStatusAutomation.mockResolvedValue(false)
     mockGetFulfillmentClient.mockResolvedValue({
       getLeadDetails: mockGetLeadDetails,
       getLeadHistory: mockGetLeadHistory,
@@ -107,6 +113,26 @@ describe('fulfillment delivery sync', () => {
     }))
     const applyCall = mockRpc.mock.calls.find(([name]) => name === 'apply_fulfillment_delivery_status')
     expect(JSON.stringify(applyCall?.[1].p_external_snapshot)).not.toContain('+000000000')
+    // Sem event_id na resposta da RPC não há automação para agendar.
+    expect(mockScheduleDeliveryStatusAutomation).not.toHaveBeenCalled()
+  })
+
+  it('agenda a automação de status de entrega com o evento criado pela RPC', async () => {
+    mockFrom
+      .mockReturnValueOnce(builder({ data: order(), error: null }))
+      .mockReturnValueOnce(builder({
+        data: [{ external_status_key: 'delivered', external_label: 'delivered', delivery_status: 'Entregue' }],
+        error: null,
+      }))
+      .mockReturnValueOnce(builder({ data: order({ delivery_status: 'Entregue' }), error: null }))
+    mockGetLeadDetails.mockResolvedValue({ lead: { status_livrison: 'delivered' }, history: [] })
+    mockRpc.mockResolvedValue({ data: [{ changed: true, event_id: 'event-9' }], error: null })
+    mockScheduleDeliveryStatusAutomation.mockRejectedValue(new Error('falhou'))
+    jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    // Falha da automação não derruba a sincronização (o status já foi aplicado).
+    await expect(syncFulfillmentDeliveryOrder('order-1')).resolves.toMatchObject({ delivery_status: 'Entregue' })
+    expect(mockScheduleDeliveryStatusAutomation).toHaveBeenCalledWith('order-1', 'event-9', 'Entregue')
   })
 
   it('records an unknown external state without changing delivery_status', async () => {

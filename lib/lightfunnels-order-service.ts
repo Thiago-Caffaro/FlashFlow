@@ -4,6 +4,7 @@ import { normalizePhone } from './phone'
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
 import { recordOrderEvent } from './fulfillment-service'
 import { enqueueLightfunnelsOrderFlowJob } from './flow-jobs'
+import { findOrderAutomation } from './automation-runtime'
 import { assignConfirmationAccount } from './order-account-routing'
 import { calculatePhysicalUnitPrice, resolvePackQuantity, type PackQuantitySource } from './shopify-pack-quantity'
 import type { LightfunnelsIntegrationCredentialRow } from './lightfunnels-integration-store'
@@ -314,7 +315,7 @@ export async function upsertLightfunnelsOrder(
 
   const alreadyTriggered = Boolean(existing?.confirmation_message_sent_at || saved.confirmation_message_sent_at)
   if (options.sendConfirmation && !alreadyTriggered && !mapped.lightfunnels_cancelled_at) {
-    await enqueueOrderTrigger(orderId, String(saved.assigned_instance_name || saved.instance_name || ''))
+    await enqueueOrderTrigger(orderId, String(saved.assigned_instance_name || saved.instance_name || ''), saved)
   }
 
   log.debug('order upserted', { orderId, isNewOrder, instance: saved.assigned_instance_name })
@@ -353,7 +354,19 @@ async function updateOrder(id: string, patch: Record<string, unknown>): Promise<
   return data as Record<string, unknown>
 }
 
-async function enqueueOrderTrigger(orderId: string, instanceName: string): Promise<void> {
+async function enqueueOrderTrigger(orderId: string, instanceName: string, saved: Record<string, unknown>): Promise<void> {
+  // Automação simples "Pedido criado" do país/linha tem precedência sobre o
+  // gatilho da conta e sai pelo número dela.
+  const automationMatch = saved.is_simulation ? null : await findOrderAutomation('order_created', saved)
+  if (automationMatch) {
+    await enqueueLightfunnelsOrderFlowJob({
+      orderId,
+      instanceName: automationMatch.automation.instance_name,
+      flowId: automationMatch.step.flow_id,
+      automationId: automationMatch.automation.id,
+    })
+    return
+  }
   const { data: trigger, error } = await supabaseAdmin
     .from('triggers')
     .select('action_payload')

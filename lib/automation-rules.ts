@@ -3,7 +3,18 @@
 
 import { AUTOMATION_PRESETS, isAutomationKind } from './automation-presets'
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
-import type { Automation, AutomationInput, AutomationStepInput, CatalogPlatform, FlowEdge, FlowNode } from '@/types'
+import { AUTOMATION_COUNTRY_ALIASES } from './automation-display'
+import { DELIVERY_STATUSES } from '@/types'
+import type {
+  Automation,
+  AutomationConfig,
+  AutomationInput,
+  AutomationKind,
+  AutomationStepInput,
+  CatalogPlatform,
+  FlowEdge,
+  FlowNode,
+} from '@/types'
 
 export const AUTOMATION_NAME_MAX = 120
 export const AUTOMATION_MESSAGE_MAX = 4096
@@ -26,10 +37,11 @@ function parseVariableMap(value: unknown): Record<string, string> | null {
   return map
 }
 
-function parseStep(raw: unknown, position: number): Parsed<AutomationStepInput> {
+function parseStep(raw: unknown, position: number, immediate: boolean): Parsed<AutomationStepInput> {
   const step = asRecord(raw)
-  const delay = Number(step.delay_minutes)
-  if (!Number.isInteger(delay) || delay < 1 || delay > AUTOMATION_MAX_DELAY_MINUTES) {
+  // Modelos sem espera (pedido, entrega, palavra-chave) enviam na hora.
+  const delay = immediate ? 0 : Number(step.delay_minutes)
+  if (!immediate && (!Number.isInteger(delay) || delay < 1 || delay > AUTOMATION_MAX_DELAY_MINUTES)) {
     return { error: `Lembrete ${position}: tempo de espera deve ser entre 1 minuto e 7 dias` }
   }
   const message = typeof step.message === 'string' ? step.message.trim() : ''
@@ -52,6 +64,30 @@ function parseStep(raw: unknown, position: number): Parsed<AutomationStepInput> 
   }
 }
 
+export const AUTOMATION_KEYWORDS_MAX = 500
+
+function parseConfig(kind: AutomationKind, raw: unknown): Parsed<AutomationConfig> {
+  const config = asRecord(raw)
+  if (kind === 'delivery_status') {
+    const statuses = Array.isArray(config.statuses) ? config.statuses : []
+    const valid = new Set<string>([...DELIVERY_STATUSES, '*'])
+    if (statuses.length === 0) return { error: 'Escolha pelo menos um status de entrega' }
+    if (statuses.some((status) => typeof status !== 'string' || !valid.has(status))) {
+      return { error: 'Status de entrega inválido' }
+    }
+    return { value: { statuses: [...new Set(statuses as string[])] } }
+  }
+  if (kind === 'message_keyword') {
+    const keywords = typeof config.keywords === 'string'
+      ? config.keywords.split(',').map((word) => word.trim()).filter(Boolean).join(', ')
+      : ''
+    if (!keywords) return { error: 'Informe pelo menos uma palavra-chave' }
+    if (keywords.length > AUTOMATION_KEYWORDS_MAX) return { error: `Palavras-chave com no máximo ${AUTOMATION_KEYWORDS_MAX} caracteres` }
+    return { value: { keywords, match: config.match === 'exact' ? 'exact' : 'contains' } }
+  }
+  return { value: {} }
+}
+
 // Valida e normaliza o corpo de criação/edição de uma automação. Regras que
 // dependem do banco (linha, conta, templates) ficam em lib/automations.ts.
 export function parseAutomationInput(body: unknown): Parsed<AutomationInput> {
@@ -59,17 +95,24 @@ export function parseAutomationInput(body: unknown): Parsed<AutomationInput> {
   if (!isAutomationKind(input.kind)) return { error: 'Modelo de automação inválido' }
   const preset = AUTOMATION_PRESETS[input.kind]
 
-  if (input.platform !== 'shopify' && input.platform !== 'lightfunnels') return { error: 'Plataforma inválida' }
-  if (!preset.platforms.includes(input.platform)) {
-    return { error: `${preset.label} ainda não está disponível para ${input.platform === 'shopify' ? 'Shopify' : 'Lightfunnels'}` }
+  let platform: CatalogPlatform | null = null
+  let country: string | null = null
+  let productLineId: string | null = null
+  if (preset.usesOrderScope) {
+    if (input.platform !== 'shopify' && input.platform !== 'lightfunnels') return { error: 'Plataforma inválida' }
+    if (!preset.platforms.includes(input.platform)) {
+      return { error: `${preset.label} ainda não está disponível para ${input.platform === 'shopify' ? 'Shopify' : 'Lightfunnels'}` }
+    }
+    platform = input.platform
+    country = String(input.country ?? '').trim().toUpperCase()
+    if (!/^[A-Z]{2}$/.test(country)) return { error: 'País inválido — use o código de 2 letras (ex: ES)' }
+    productLineId = typeof input.product_line_id === 'string' && input.product_line_id.trim()
+      ? input.product_line_id.trim()
+      : null
   }
 
-  const country = String(input.country ?? '').trim().toUpperCase()
-  if (!/^[A-Z]{2}$/.test(country)) return { error: 'País inválido — use o código de 2 letras (ex: ES)' }
-
-  const productLineId = typeof input.product_line_id === 'string' && input.product_line_id.trim()
-    ? input.product_line_id.trim()
-    : null
+  const config = parseConfig(input.kind, input.config)
+  if ('error' in config) return config
 
   const instanceName = String(input.instance_name ?? '').trim()
   if (!instanceName) return { error: 'Número de WhatsApp obrigatório' }
@@ -81,7 +124,7 @@ export function parseAutomationInput(body: unknown): Parsed<AutomationInput> {
   if (rawSteps.length > preset.maxSteps) return { error: `No máximo ${preset.maxSteps} lembretes` }
   const steps: AutomationStepInput[] = []
   for (const [index, raw] of rawSteps.entries()) {
-    const parsed = parseStep(raw, index + 1)
+    const parsed = parseStep(raw, index + 1, preset.delayLabel === null)
     if ('error' in parsed) return parsed
     const previous = steps[steps.length - 1]
     if (previous && parsed.value.delay_minutes <= previous.delay_minutes) {
@@ -90,18 +133,19 @@ export function parseAutomationInput(body: unknown): Parsed<AutomationInput> {
     steps.push(parsed.value)
   }
 
-  const name = String(input.name ?? '').trim() || `${preset.label} ${country}`
+  const name = String(input.name ?? '').trim() || (country ? `${preset.label} ${country}` : preset.label)
   if (name.length > AUTOMATION_NAME_MAX) return { error: `Nome com no máximo ${AUTOMATION_NAME_MAX} caracteres` }
 
   return {
     value: {
       name,
       kind: input.kind,
-      platform: input.platform,
+      platform,
       country,
       product_line_id: productLineId,
       instance_name: instanceName,
       enabled: input.enabled === true,
+      config: config.value,
       steps,
     },
   }
@@ -148,31 +192,67 @@ export function automationStepFlowName(automationName: string, position: number,
 export const DUPLICATE_AUTOMATION_ERROR =
   'Já existe uma automação deste modelo para essa plataforma, país e linha'
 
-// O carrinho guarda o país no formato do fulfillment ("SPAIN"); a automação
-// guarda o código ISO ("ES"). País sem mapeamento fica no código mesmo.
-export function automationMatchesCountry(automationCountry: string, cartCountry: string | null | undefined): boolean {
-  if (!cartCountry) return false
+// O carrinho/pedido guarda o país no formato do fulfillment ("SPAIN"); a
+// automação guarda o código ISO ("ES"). País sem mapeamento no fulfillment
+// fica no código mesmo ou no nome em inglês (ex: Colombia → "CO"/"COLOMBIA").
+export function automationMatchesCountry(automationCountry: string | null, orderCountry: string | null | undefined): boolean {
+  if (!orderCountry || !automationCountry) return false
   const iso = automationCountry.toUpperCase()
-  const cart = cartCountry.toUpperCase()
-  return cart === iso || cart === (ISO_TO_FULFILLMENT_COUNTRY[iso] ?? iso)
+  const order = orderCountry.toUpperCase()
+  return order === iso
+    || order === (ISO_TO_FULFILLMENT_COUNTRY[iso] ?? iso)
+    || (AUTOMATION_COUNTRY_ALIASES[iso] ?? []).includes(order)
 }
 
-// Automação ligada que atende o carrinho: mesma plataforma e país; a da
-// linha do carrinho vence a de "qualquer linha".
-export function pickCartAutomation<T extends Pick<Automation, 'kind' | 'platform' | 'country' | 'product_line_id' | 'enabled'>>(
+type ScopedAutomation = Pick<Automation, 'kind' | 'platform' | 'country' | 'product_line_id' | 'enabled'> & {
+  config?: AutomationConfig | null
+}
+
+// Automação ligada do modelo que atende o carrinho/pedido: mesma plataforma
+// e país (e, na entrega, o novo status); a da linha vence a de "qualquer
+// linha". Empate (entrega com vários estados) fica com a primeira da lista,
+// que vem ordenada por criação.
+export function pickScopedAutomation<T extends ScopedAutomation>(
   automations: T[],
-  cart: { platform: CatalogPlatform; country: string | null | undefined; productLineId: string | null }
+  scope: {
+    kind: AutomationKind
+    platform: CatalogPlatform
+    country: string | null | undefined
+    productLineId: string | null
+    deliveryStatus?: string
+  }
 ): T | null {
-  const candidates = automations.filter((automation) =>
-    automation.enabled
-    && automation.kind === 'abandoned_cart'
-    && automation.platform === cart.platform
-    && automationMatchesCountry(automation.country, cart.country)
-    && (automation.product_line_id === null || automation.product_line_id === cart.productLineId)
-  )
+  const candidates = automations.filter((automation) => {
+    if (!automation.enabled || automation.kind !== scope.kind || automation.platform !== scope.platform) return false
+    if (!automationMatchesCountry(automation.country, scope.country)) return false
+    if (automation.product_line_id !== null && automation.product_line_id !== scope.productLineId) return false
+    if (scope.kind === 'delivery_status') {
+      const statuses = automation.config?.statuses ?? []
+      return statuses.includes('*') || (scope.deliveryStatus !== undefined && statuses.includes(scope.deliveryStatus))
+    }
+    return true
+  })
   return candidates.find((automation) => automation.product_line_id !== null)
     ?? candidates.find((automation) => automation.product_line_id === null)
     ?? null
+}
+
+export function pickCartAutomation<T extends ScopedAutomation>(
+  automations: T[],
+  cart: { platform: CatalogPlatform; country: string | null | undefined; productLineId: string | null }
+): T | null {
+  return pickScopedAutomation(automations, { kind: 'abandoned_cart', ...cart })
+}
+
+// Mesma regra dos gatilhos de mensagem (lib/message-triggers.ts): lista
+// separada por vírgula, '*' casa qualquer texto, 'exact' compara a mensagem
+// inteira, sem diferenciar maiúsculas.
+export function messageMatchesKeywords(config: AutomationConfig | null | undefined, message: string): boolean {
+  const words = (config?.keywords ?? '').split(',').map((word) => word.trim().toLowerCase()).filter(Boolean)
+  if (words.length === 0) return false
+  if (words.includes('*')) return true
+  const content = message.trim().toLowerCase()
+  return words.some((word) => (config?.match === 'exact' ? content === word : content.includes(word)))
 }
 
 // Gatilho (dedupe) do job de um lembrete: estável enquanto a automação e a
