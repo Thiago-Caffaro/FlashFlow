@@ -49,10 +49,20 @@ jest.mock('@/lib/whatsapp-dispatch', () => ({
 
 const mockEnqueueAbandonedCheckoutFlowJob = jest.fn()
 const mockCancelPendingAbandonedCheckoutJobs = jest.fn()
+const mockCancelStaleAbandonedCheckoutJobs = jest.fn()
 jest.mock('@/lib/flow-jobs', () => ({
   enqueueShopifyOrderFlowJob: mockEnqueueShopifyOrderFlowJob,
   enqueueAbandonedCheckoutFlowJob: (...args: unknown[]) => mockEnqueueAbandonedCheckoutFlowJob(...args),
   cancelPendingAbandonedCheckoutJobs: (...args: unknown[]) => mockCancelPendingAbandonedCheckoutJobs(...args),
+  cancelStaleAbandonedCheckoutJobs: (...args: unknown[]) => mockCancelStaleAbandonedCheckoutJobs(...args),
+  abandonedCheckoutDedupeKey: (checkoutId: string, triggerId: string) => `abandoned-checkout:${checkoutId}:${triggerId}`,
+}))
+
+const mockFindShopifyCartAutomation = jest.fn()
+const mockGetEnabledAutomationInstance = jest.fn()
+jest.mock('@/lib/automation-runtime', () => ({
+  findShopifyCartAutomation: (...args: unknown[]) => mockFindShopifyCartAutomation(...args),
+  getEnabledAutomationInstance: (...args: unknown[]) => mockGetEnabledAutomationInstance(...args),
 }))
 
 const mockGetShopifyTriggersEnabled = jest.fn()
@@ -224,6 +234,7 @@ const {
 describe('shopify-confirmation-service', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockFindShopifyCartAutomation.mockResolvedValue(null)
     _resetConfirmationSendPacingForTests()
     mockEnqueueShopifyOrderFlowJob.mockResolvedValue({ id: 'job-1' })
     mockSubmitFulfillmentOrder.mockResolvedValue({ id: 'order-1', status: 'created', send_status: 'Enviado' })
@@ -1330,6 +1341,160 @@ describe('shopify-confirmation-service', () => {
       expect(converted.updates[0]).toMatchObject({ recovery_status: 'Convertido', recovered_at: expect.any(String) })
       expect(converted.in).toHaveBeenCalledWith('id', ['checkout-1'])
       expect(mockCancelPendingAbandonedCheckoutJobs).toHaveBeenCalledWith(['checkout-1'], 'Carrinho convertido em pedido')
+    })
+
+    describe('automação simples de carrinho', () => {
+      function cartAutomation(overrides: Record<string, unknown> = {}) {
+        return {
+          automation: {
+            id: 'auto-1',
+            name: 'Carrinho PT',
+            kind: 'abandoned_cart',
+            platform: 'shopify',
+            country: 'PT',
+            product_line_id: 'line-ema',
+            instance_name: 'wa-auto',
+            enabled: true,
+            steps: [
+              { id: 'step-1', position: 1, delay_minutes: 30, flow_id: 'flow-auto-1' },
+              { id: 'step-2', position: 2, delay_minutes: 24 * 60, flow_id: 'flow-auto-2' },
+            ],
+            ...overrides,
+          },
+          productLineId: 'line-ema',
+        }
+      }
+
+      it('agenda os lembretes da automação pelo número dela, no lugar dos gatilhos da conta', async () => {
+        jest.useFakeTimers({ now: NOW })
+        mockFindShopifyCartAutomation.mockResolvedValue(cartAutomation())
+        setTableQueues({
+          accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+          shopify_abandoned_checkouts: [
+            queryBuilder({ data: null, error: null }),
+            queryBuilder({ data: savedCheckout({ country: 'PORTUGAL' }), error: null }),
+          ],
+          // sem fila de triggers: consultar os gatilhos da conta quebraria o teste
+        })
+
+        await upsertShopifyAbandonedCheckout(integrationRow(), checkoutPayload())
+
+        expect(mockFindShopifyCartAutomation).toHaveBeenCalledWith(expect.objectContaining({
+          integrationId: 'shopify-1',
+          country: 'PORTUGAL',
+        }))
+        expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledTimes(2)
+        expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledWith({
+          checkoutId: 'checkout-1',
+          triggerId: 'automation:auto-1:1',
+          instanceName: 'wa-auto',
+          flowId: 'flow-auto-1',
+          runAt: new Date(NOW + 20 * MINUTE),
+          automationId: 'auto-1',
+        })
+        expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledWith(expect.objectContaining({
+          triggerId: 'automation:auto-1:2',
+          runAt: new Date(NOW - 10 * MINUTE + 24 * 60 * MINUTE),
+        }))
+        // Jobs pendentes de gatilho da conta são cancelados; os da automação ficam.
+        const [checkoutId, keep] = mockCancelStaleAbandonedCheckoutJobs.mock.calls[0]
+        expect(checkoutId).toBe('checkout-1')
+        expect(keep('abandoned-checkout:checkout-1:automation:auto-1:1')).toBe(true)
+        expect(keep('abandoned-checkout:checkout-1:trigger-1h')).toBe(false)
+      })
+
+      it('vale mesmo sem conta atribuída ao carrinho', async () => {
+        jest.useFakeTimers({ now: NOW })
+        mockFindShopifyCartAutomation.mockResolvedValue(cartAutomation())
+        setTableQueues({
+          accounts: [queryBuilder({ data: null, error: null })],
+          shopify_abandoned_checkouts: [
+            queryBuilder({ data: null, error: null }),
+            queryBuilder({ data: savedCheckout({ assigned_instance_name: null }), error: null }),
+          ],
+        })
+
+        await upsertShopifyAbandonedCheckout(integrationRow(), checkoutPayload())
+
+        expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledWith(expect.objectContaining({ instanceName: 'wa-auto' }))
+      })
+
+      it('sem automação, segue nos gatilhos da conta e cancela lembretes de automação antigos', async () => {
+        jest.useFakeTimers({ now: NOW })
+        setTableQueues({
+          accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+          shopify_abandoned_checkouts: [
+            queryBuilder({ data: null, error: null }),
+            queryBuilder({ data: savedCheckout(), error: null }),
+          ],
+          triggers: [queryBuilder({ data: [{ id: 'trigger-1h', delay_ms: 0, action_payload: { flow_id: 'flow-1' } }], error: null })],
+        })
+
+        await upsertShopifyAbandonedCheckout(integrationRow(), checkoutPayload())
+
+        expect(mockEnqueueAbandonedCheckoutFlowJob).toHaveBeenCalledWith(expect.objectContaining({ triggerId: 'trigger-1h', instanceName: 'wa-1' }))
+        const [, keep] = mockCancelStaleAbandonedCheckoutJobs.mock.calls[0]
+        expect(keep('abandoned-checkout:checkout-1:automation:auto-1:1')).toBe(false)
+        expect(keep('abandoned-checkout:checkout-1:trigger-1h')).toBe(true)
+      })
+
+      it('carrinho simulado no sandbox não procura automação', async () => {
+        jest.useFakeTimers({ now: NOW })
+        setTableQueues({
+          shopify_abandoned_checkouts: [queryBuilder({
+            data: savedCheckout({ assigned_instance_name: '__sandbox__', is_simulation: true }),
+            error: null,
+          })],
+          triggers: [queryBuilder({ data: [], error: null })],
+        })
+
+        await createSandboxAbandonedCheckout({
+          integrationId: 'shopify-1',
+          shopDomain: 'loja.myshopify.com',
+          defaultCountry: 'SPAIN',
+          payload: checkoutPayload(),
+          contactPhone: '000000000',
+          immediate: true,
+        })
+
+        expect(mockFindShopifyCartAutomation).not.toHaveBeenCalled()
+        expect(mockCancelStaleAbandonedCheckoutJobs).not.toHaveBeenCalled()
+      })
+
+      it('não envia lembrete de automação desligada depois do agendamento', async () => {
+        mockGetEnabledAutomationInstance.mockResolvedValue(null)
+        setTableQueues({
+          shopify_abandoned_checkouts: [queryBuilder({ data: savedCheckout(), error: null })],
+        })
+
+        const result = await runAbandonedCheckoutTrigger('checkout-1', 'flow-auto-1', { automationId: 'auto-1' })
+
+        expect(result).toEqual({ skipped: 'Automação desligada ou apagada' })
+        expect(mockExecuteFlow).not.toHaveBeenCalled()
+      })
+
+      it('envia o lembrete pelo número atual da automação', async () => {
+        mockRpc.mockResolvedValue({ data: '2000-01-01T00:00:00.000Z', error: null })
+        mockExecuteFlow.mockResolvedValue(undefined)
+        mockGetEnabledAutomationInstance.mockResolvedValue('wa-auto')
+        const conversation = queryBuilder({
+          data: { id: 'conv-9', wa_id: '351900000001@s.whatsapp.net', sandbox_source_instance: null, sandbox_real_send_enabled: false },
+          error: null,
+        })
+        setTableQueues({
+          shopify_abandoned_checkouts: [
+            queryBuilder({ data: savedCheckout(), error: null }),
+            queryBuilder({ data: savedCheckout({ recovery_status: 'Enviado' }), error: null }),
+          ],
+          fulfillment_orders: [queryBuilder({ data: null, error: null }), queryBuilder({ data: null, error: null })],
+          conversations: [conversation],
+        })
+
+        await runAbandonedCheckoutTrigger('checkout-1', 'flow-auto-1', { automationId: 'auto-1' })
+
+        expect(conversation.eq).toHaveBeenCalledWith('instance_name', 'wa-auto')
+        expect(mockExecuteFlow).toHaveBeenCalledWith('flow-auto-1', expect.objectContaining({ instanceName: 'wa-auto' }))
+      })
     })
 
     describe('runAbandonedCheckoutTrigger', () => {

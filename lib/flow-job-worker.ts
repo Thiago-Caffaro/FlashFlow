@@ -120,7 +120,9 @@ async function processJob(job: FlowJob) {
   if (job.job_type === 'abandoned_checkout_flow') {
     if (!job.checkout_id) throw new Error('Job de carrinho sem checkout_id')
     if (!(await getShopifyTriggersEnabled())) return
-    await runAbandonedCheckoutTrigger(job.checkout_id, job.flow_id)
+    const automationId = typeof job.payload.automationId === 'string' ? job.payload.automationId : null
+    if (automationId) await runAbandonedCheckoutTrigger(job.checkout_id, job.flow_id, { automationId })
+    else await runAbandonedCheckoutTrigger(job.checkout_id, job.flow_id)
     return
   }
 

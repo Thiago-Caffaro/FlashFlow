@@ -28,7 +28,8 @@ testes dedicados em `__tests__/api/*-isolation.test.ts`.
 |---|---|
 | Chat | `conversations`, `messages` |
 | Contas WhatsApp | `accounts` (coluna `provider`: `evolution` \| `cloud_api`) |
-| Automação | `triggers`, `flows`, `flow_runs`, `flow_jobs`, `flow_media`, `message_variables` |
+| Automação | `triggers`, `flows` (coluna `managed_by_automation_id`, migration 030), `flow_runs`, `flow_jobs`, `flow_media`, `message_variables` |
+| Automações simples | `automations`, `automation_steps` (030); `product_lines`, `line_products`, `product_catalog_links` (029) — ver `docs/AUTOMATIONS.md` |
 | IA | `ai_sessions`, `agent_memory_blocks`, `ai_provider_keys`, `instance_ai_config` |
 | Shopify | `shopify_integrations` (com app próprio opcional por loja, migration 026), `shopify_integration_accounts` (contas WhatsApp de cada loja, 026), `shopify_products`, `shopify_abandoned_checkouts` (checkouts e rascunhos/draft orders, coluna `source`, migration 028) |
 | Fulfillment | `fulfillment_orders`, `fulfillment_products`, `fulfillment_integrations`, `fulfillment_order_events`, `fulfillment_delivery_status_mappings` |

@@ -1,5 +1,9 @@
 # Contexto do Projeto — FlashFlow
 
+> Complemento manual em 2026-11-11 (branch `feat/product-lines`,
+> `APP_VERSION` 1.21.0): automações simples e linhas de produto — fluxo 7,
+> regras e armadilhas marcadas com "Automações". Guia: `docs/AUTOMATIONS.md`.
+>
 > Atualizado por `explore-project` em 2026-10-19, sobre o commit `f09c11a`
 > **mais a árvore de trabalho não commitada da branch
 > `feat/lightfunnels-integration`** (integração Lightfunnels, migration 027,
@@ -62,6 +66,8 @@ app/
     fulfillment/  Pedidos, envio/cancelamento ao FenixCOD, sync de entrega; fulfillment/lightfunnels/ = integrações (vínculos de conta, funis, sync, webhooks) e catálogo LF; fulfillment/sandbox/ = simuladores (inclui lightfunnels-order)
     settings/     Configurações globais em app_settings (conta padrão de pedidos, pausa de gatilhos Shopify/Lightfunnels, credenciais do app Lightfunnels)
     integrations/ Slack
+    automations/  Automações simples (CRUD; PATCH liga/desliga) — docs/AUTOMATIONS.md
+    product-lines/ Linhas de produto, produtos, catálogo das lojas e vínculos
     ai-keys/, ai-sessions/, instance-ai-config/, memory-blocks/   Config e estado de IA
   fulfillment/, order-preview/, catalog-preview/, diagnostics/   Rotas de UI fora do chat principal
 components/
@@ -71,12 +77,13 @@ components/
   fulfillment/    UI de pedidos/checkouts abandonados/entrega + config das plataformas (lightfunnels-config, lightfunnels-store-accounts-editor, lightfunnels-products-panel, lightfunnels-order-status-badges)
   sandbox/        Simulador de pedidos (Shopify ou Lightfunnels) e carrinhos
   auth/           Formulário de login único (não há cadastro/multi-usuário)
+  automations/    Aba Automações: cards com filtro por país/linha, assistente (modelo → público → lembretes), linhas e produtos
   sidebar-right/  Gatilhos (triggers) por instância — inclui "Pedido Shopify criado" e "Pedido Lightfunnels criado"
   memory/, gallery/, notifications/, ai-sessions/, nav/   Painéis secundários
 contexts/         account-context, auth-context, theme-context (estado client-side global)
 lib/              Um módulo por domínio/integração (prefixos shopify-*, lightfunnels-*, fulfillment-*, whatsapp-cloud-*, flow-*), mais a camada comum de pedido (order-*.ts, store-account-links.ts)
 types/index.ts     Único arquivo de tipos do projeto — fonte de verdade do modelo de dados
-migrations/       SQL numerado 001→027, mas **não é o schema completo** (ver Armadilhas)
+migrations/       SQL numerado 001→030, mas **não é o schema completo** (ver Armadilhas)
 docs/             Documentação de referência; LIGHTFUNNELS.md, SLACK.md, FULFILLMENT_API.md são guias específicos
 __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de "isolation" e de roteamento por loja/funil
 ```
@@ -94,6 +101,7 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 - **Fetches de saída para URLs de terceiros passam por SSRF guard** (`lib/ssrf-guard.ts`).
 - **Feature flags via env var** (`lib/features.ts`): `gallery`, `aiSessions`, `switchCase`.
 - **`APP_VERSION` (`lib/version.ts`) é incrementado a cada update relevante** e exibido em Configurações Gerais.
+- **Automações simples são globais, não por instância**: cada uma escolhe o próprio número (`automations.instance_name`), por isso `/api/automations` não filtra por instância. Cada lembrete é executado por um fluxo gerado e escondido (`flows.managed_by_automation_id`) — `lib/automations.ts`, `lib/automation-rules.ts`.
 - **Integrações que escrevem para fora nascem desligadas** (encaminhamento ao Slack, write-back no Lightfunnels — `writeback_enabled DEFAULT false`, `migrations/027_lightfunnels_integration.sql:33-34`).
 
 ## Fluxos críticos
@@ -195,7 +203,8 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
    - Exige o escopo `read_draft_orders`; loja conectada antes dele precisa reconectar (o registro avisa por tópico — `lib/shopify-webhook-setup.ts:96-112`)
 4. Registro dos webhooks: `ensureOrderCreateWebhookRegistered` cria via Admin REST (`POST /webhooks.json`) os 10 tópicos de pedido/checkout/rascunho, sem depender da aba Notificações → Webhooks do admin (onde eles não aparecem) — `lib/shopify-webhook-setup.ts:6-22,37-69`. Roda após o OAuth e a cada abertura de `/fulfillment` (`components/fulfillment/fulfillment-page.tsx:105-134`); só cria o que falta.
 5. "Sincronizar" (`syncShopifyData`) importa até 50 pedidos, checkouts e rascunhos abertos; só agenda gatilhos se `sendConfirmation` for pedido explicitamente — `lib/shopify-confirmation-service.ts:1426-1480`.
-6. Disparo **manual** lado a lado: `POST /api/fulfillment/shopify/abandoned-checkouts/{id}/recover` → `sendAbandonedCheckoutRecovery`; dentro da janela, texto livre; fora (Cloud API), template aprovado (`recovery_template_id`, migration 020).
+6. **Automação simples tem precedência** (ver fluxo 7): carrinho real com automação ligada para o país e a linha não usa os gatilhos da conta.
+7. Disparo **manual** lado a lado: `POST /api/fulfillment/shopify/abandoned-checkouts/{id}/recover` → `sendAbandonedCheckoutRecovery`; dentro da janela, texto livre; fora (Cloud API), template aprovado (`recovery_template_id`, migration 020).
 
 ### 6. Atendimento humano via Slack
 
@@ -205,6 +214,16 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 2. Node `slackNotify` cria notificação `escalation` e posta no canal; com "Transferir para humano" marca `ai_sessions.requires_human` e encerra o fluxo — `lib/flow-engine.ts:1792`, `lib/slack-notifications.ts`
 3. Encaminhamento opcional (desligado por padrão, por conta, `slack_notification_settings`) de escalonamento da IA, node "Notificar" e "fora da janela de 24h" — `forwardNotificationToSlack`, nunca lança
 4. Botão "Assumir atendimento" → `POST /api/webhook/slack/interactivity` (assinatura `v0`, janela de 5 min) → claim atômico em `slack_messages` → notificação lida + `requires_human` + `chat.update`
+
+### 7. Automações simples (carrinho abandonado sem fluxo)
+
+> Guia completo em `docs/AUTOMATIONS.md`.
+
+1. Cadastro: aba Automações → assistente → `POST /api/automations`. `parseAutomationInput` (`lib/automation-rules.ts`) valida forma (país ISO, 1–3 lembretes com espera crescente); `validateReferences` (`lib/automations.ts`) valida linha, número (não sandbox), variáveis e, em Cloud API, template aprovado do próprio número em todo lembrete. Nasce `enabled=false`; ligar (`PATCH`) revalida.
+2. Cada lembrete gera/atualiza um fluxo `início → enviar mensagem → fim` (`syncSteps`), só enquanto `managed_by_automation_id` ainda aponta para a automação.
+3. Carrinho Shopify real → `findShopifyCartAutomation` (`lib/automation-runtime.ts`): automações ligadas → linha do carrinho por `line_items[].product_id` vinculados (`resolveShopifyCartProductLine`, menor prioridade vence) → `pickCartAutomation` (país e linha; a da linha vence a de "qualquer linha").
+4. Match → `scheduleCartAutomationSteps` (`lib/shopify-confirmation-service.ts`): um job por lembrete no número da automação, dedupe `abandoned-checkout:{checkout}:automation:{id}:{posição}`, e cancela os outros jobs pendentes do carrinho (`cancelStaleAbandonedCheckoutJobs`, `lib/flow-jobs.ts`). Sem match: gatilhos da conta, cancelando lembretes de automação que deixou de valer.
+5. Worker: `payload.automationId` → `runAbandonedCheckoutTrigger(..., { automationId })` só envia com a automação ligada e pelo número atual dela (`getEnabledAutomationInstance`).
 
 ## Regras de negócio
 
@@ -281,6 +300,12 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
   **Onde:** `lib/flow-engine.ts:1487-1497`
   **Contexto:** commit `00a67fa` — antes a conversa travava silenciosamente.
 
+- **Regra (Automações):** Uma automação por modelo + plataforma + país + linha; no carrinho, a da linha vence a de "qualquer linha" e, com produtos de linhas diferentes, vence a linha de menor prioridade — um envio só.
+  **Onde:** `migrations/030_automations.sql` (`automations_scope_key`), `lib/automation-rules.ts` (`pickCartAutomation`), `lib/product-line-match.ts` (`pickProductLine`)
+
+- **Regra (Automações):** A automação que casa com o carrinho tem precedência sobre os gatilhos "Carrinho abandonado" da conta — os jobs pendentes deles são cancelados. Os gatilhos antigos continuam valendo para carrinhos sem automação.
+  **Onde:** `scheduleAbandonedCheckoutTriggers` em `lib/shopify-confirmation-service.ts`
+
 - **Regra:** Um node `sendMessage` com `replyButtons` só pode se conectar diretamente a um único node `switchCase`; o save do fluxo bloqueia o resto.
   **Onde:** `lib/flow-connection-validation.ts:15-19`, `lib/flow-validation.ts:227-231`
 
@@ -289,6 +314,9 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 
 ## Coisas não óbvias / armadilhas
 
+- **Automações: país em dois formatos.** A automação guarda ISO (`ES`); o carrinho guarda o nome do FenixCOD (`SPAIN`) — a comparação passa por `automationMatchesCountry` (`lib/automation-rules.ts`). Comparar direto nunca casa.
+- **Automações: aplicar `029` e `030` antes do deploy.** `GET /api/flows` filtra por `managed_by_automation_id`; sem a coluna, a lista de Fluxos quebra.
+- **Fluxo gerado por automação não aparece nem é editável na aba Fluxos** (`PUT`/`DELETE` → 409, `app/api/flows/[id]/route.ts`): uma edição manual seria sobrescrita no próximo salvar da automação.
 - **`proxy.ts` não é `middleware.ts`** — no Next.js 16 o mecanismo de gate global foi renomeado.
 - **Rota nova de webhook precisa entrar em `PUBLIC_API_PATHS` (`proxy.ts`) e em `__tests__/proxy.test.ts`**: os testes de rota chamam o handler direto e não passam pelo proxy. Foi assim que `/api/webhook/shopify/draft-orders` ficou bloqueada (401 antes do HMAC) até a v1.20.1 — rascunhos só entravam pelo "Sincronizar". Depois de uma falha longa a Shopify pode remover a assinatura; abrir `/fulfillment` recria.
 - **Pedido Shopify que chega com gatilhos pausados nunca recebe a confirmação automática depois**: o job só é criado em `orders/create` de pedido novo (`app/api/webhook/shopify/orders/route.ts:50`, `lib/shopify-confirmation-service.ts:408`); religar os gatilhos não reenvia.
@@ -300,7 +328,7 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 - **`order_number` é chave interna** (`shopify-loja-123`, `lightfunnels-conta-456`); o número que o cliente reconhece é `getOrderDisplayNumber` (`lib/order-platform.ts:38-42`), usado em `{{pedido.numero}}` e na ferramenta de IA de consulta de pedido.
 - **País do Lightfunnels por nome em inglês nem sempre bate com o FenixCOD**: o mapeamento só converte ISO; um nome cai em `toUpperCase()` (`lib/lightfunnels-order-service.ts:109-112`). `Spain`/`France`/`Italy` batem, mas os nomes FenixCOD `HUNGRY`, `ESLOVAKIA`, `ESLOVENIA`, `CROACIA`, `CZECH REPUBLIC` (`lib/fulfillment-countries.ts`) não batem com `Hungary`/`Slovakia`/`Slovenia`/`Croatia`/`Czechia`. Nesses casos o pedido não casa conta por país nem integração FenixCOD.
 - **Cancelamento no Lightfunnels não dispara write-back** — `applyLightfunnelsCancellation` não chama `scheduleLightfunnelsWriteback` (`lib/lightfunnels-order-service.ts:385-404`), então `ff:desistiu` só é gravado na próxima mudança de estado feita no FlashFlow.
-- **Migrations `001`-`027` não são o schema completo.** As tabelas fundacionais (`conversations`, `messages`, `accounts`, `flows`, `triggers`, `ai_sessions`, `agent_memory_blocks`, `ai_provider_keys`, `instance_ai_config`) foram criadas antes do diretório `migrations/` e só têm `ALTER TABLE`s incrementais.
+- **Migrations `001`-`030` não são o schema completo.** As tabelas fundacionais (`conversations`, `messages`, `accounts`, `flows`, `triggers`, `ai_sessions`, `agent_memory_blocks`, `ai_provider_keys`, `instance_ai_config`) foram criadas antes do diretório `migrations/` e só têm `ALTER TABLE`s incrementais.
 - **`lib/sandbox.ts` é só duas constantes** — a lógica de "nunca enviar de verdade no sandbox" está em `resolveRealSendTarget` (`lib/flow-engine.ts:102`). Pedido simulado Lightfunnels usa a primeira integração ativa ou uma integração fictícia `id: null` (`app/api/fulfillment/sandbox/lightfunnels-order/route.ts:80-92`), e nunca é escrito de volta (`lib/lightfunnels-writeback.ts:71`).
 - **`lib/flow-transfer.ts` não tem relação com sandbox** — é o export/import de fluxos entre contas.
 - **Resolução de `@lid` é assimétrica por direção**: inbound busca por `contact_name`, outbound por `contact_phone` — já causou dois bugs de conversa duplicada (commits `d6a2343`, `579edf1`).
