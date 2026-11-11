@@ -14,6 +14,19 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+const MANAGED_FLOW_ERROR = 'Este fluxo é gerado por uma automação — edite ou apague pela aba Automações'
+
+// Fluxo gerado por automação (migration 030) só muda pela automação: editar
+// aqui seria sobrescrito no próximo salvar dela, e apagar quebraria o envio.
+async function isManagedFlow(id: string): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from('flows')
+    .select('managed_by_automation_id')
+    .eq('id', id)
+    .maybeSingle()
+  return Boolean(data?.managed_by_automation_id)
+}
+
 // PUT /api/flows/[id]
 export async function PUT(
   req: NextRequest,
@@ -28,6 +41,9 @@ export async function PUT(
     }
     if (!(await belongsToInstance(supabaseAdmin, 'flows', id, instanceName))) {
       return NextResponse.json({ ok: false, error: 'Fluxo não encontrado' }, { status: 404 })
+    }
+    if (await isManagedFlow(id)) {
+      return NextResponse.json({ ok: false, error: MANAGED_FLOW_ERROR }, { status: 409 })
     }
 
     // Allowlist explícita — nunca deixa o cliente sobrescrever id/instance_name/timestamps.
@@ -85,6 +101,9 @@ export async function DELETE(
   }
   if (!(await belongsToInstance(supabaseAdmin, 'flows', id, instanceName))) {
     return NextResponse.json({ ok: false, error: 'Fluxo não encontrado' }, { status: 404 })
+  }
+  if (await isManagedFlow(id)) {
+    return NextResponse.json({ ok: false, error: MANAGED_FLOW_ERROR }, { status: 409 })
   }
 
   const { error } = await supabaseAdmin.from('flows').delete().eq('id', id)

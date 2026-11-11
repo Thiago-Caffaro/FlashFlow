@@ -547,6 +547,9 @@ export interface Flow {
   name: string
   json: { nodes: FlowNode[]; edges: FlowEdge[] }
   ativo: boolean
+  // Fluxo gerado por uma automação simples (migration 030) — escondido da
+  // lista de Fluxos e mantido pela automação.
+  managed_by_automation_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -673,4 +676,58 @@ export interface CatalogProductOption {
   title: string
   image_url: string | null
   linked_line_product_id: string | null
+}
+
+// ─── Automações ───────────────────────────────────────────────────────────────
+
+export type AutomationKind = 'abandoned_cart'
+
+export interface Automation {
+  id: string
+  name: string
+  kind: AutomationKind
+  platform: CatalogPlatform
+  country: string
+  // null = qualquer linha de produto
+  product_line_id: string | null
+  instance_name: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AutomationStep {
+  id: string
+  automation_id: string
+  position: number
+  delay_minutes: number
+  message: string
+  fallback_template_id: string | null
+  fallback_template_variable_map: Record<string, string>
+  // Fluxo gerado e mantido pela automação (flows.managed_by_automation_id).
+  flow_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AutomationWithSteps extends Automation {
+  steps: AutomationStep[]
+}
+
+export interface AutomationStepInput {
+  delay_minutes: number
+  message: string
+  fallback_template_id: string | null
+  fallback_template_variable_map: Record<string, string>
+}
+
+export interface AutomationInput {
+  name: string
+  kind: AutomationKind
+  platform: CatalogPlatform
+  country: string
+  product_line_id: string | null
+  instance_name: string
+  enabled: boolean
+  steps: AutomationStepInput[]
 }

@@ -22,6 +22,8 @@ export async function GET(req: NextRequest) {
     .from('flows')
     .select('*')
     .eq('instance_name', instance)
+    // Fluxos gerados pelas automações simples ficam fora da lista (aba Automações).
+    .is('managed_by_automation_id', null)
     .order('created_at', { ascending: true })
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })

@@ -31,6 +31,10 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   if (!isAdminRequest(req)) return NextResponse.json({ ok: false }, { status: 401 })
   const { id } = await params
   const { data, error } = await supabaseAdmin.from('product_lines').delete().eq('id', id).select('id').maybeSingle()
+  // automations.product_line_id é ON DELETE RESTRICT (migration 030).
+  if (error?.code === '23503') {
+    return NextResponse.json({ ok: false, error: 'Linha usada por uma automação — apague ou mude a automação antes' }, { status: 409 })
+  }
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   if (!data) return NextResponse.json({ ok: false, error: 'Linha não encontrada' }, { status: 404 })
   return NextResponse.json({ ok: true })
