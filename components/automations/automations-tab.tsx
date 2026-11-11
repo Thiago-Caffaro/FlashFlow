@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Workflow } from 'lucide-react'
 import ProductLinesPanel from './product-lines-panel'
+import AutomationsPanel from './automations-panel'
 
 type Section = 'automacoes' | 'linhas'
 
@@ -12,10 +13,9 @@ const SECTIONS: { id: Section; label: string }[] = [
 ]
 
 // Automações simples (sem montar fluxo) — globais, não dependem da conta
-// ativa: cada automação escolhe o próprio número. Esta primeira entrega traz
-// só o cadastro de linhas e produtos; as automações entram nas próximas fases.
+// ativa: cada automação escolhe o próprio número.
 export default function AutomationsTab() {
-  const [section, setSection] = useState<Section>('linhas')
+  const [section, setSection] = useState<Section>('automacoes')
 
   return (
     <div className="h-full overflow-y-auto bg-[#f0f2f5] dark:bg-[#0b141a]">
@@ -52,10 +52,7 @@ export default function AutomationsTab() {
         {section === 'linhas' ? (
           <ProductLinesPanel />
         ) : (
-          <div className="rounded-2xl bg-white p-7 text-sm text-[#667781] shadow-sm dark:bg-[#111b21] dark:text-[#8696a0]">
-            As automações (começando por carrinho abandonado) chegam na próxima etapa. Cadastre e vincule as linhas e
-            produtos primeiro — é por eles que cada automação vai escolher o número.
-          </div>
+          <AutomationsPanel />
         )}
       </div>
     </div>
