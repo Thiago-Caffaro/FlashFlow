@@ -21,8 +21,12 @@ import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import { normalizePhone } from './phone'
 import { syncShopifyProductsForIntegration } from './shopify-products-service'
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
+import { findShopifyCartAutomation, getEnabledAutomationInstance, type CartAutomationMatch } from './automation-runtime'
+import { AUTOMATION_TRIGGER_PREFIX, automationStepTriggerId } from './automation-rules'
 import {
+  abandonedCheckoutDedupeKey,
   cancelPendingAbandonedCheckoutJobs,
+  cancelStaleAbandonedCheckoutJobs,
   enqueueAbandonedCheckoutFlowJob,
   enqueueShopifyOrderFlowJob,
 } from './flow-jobs'
@@ -553,6 +557,7 @@ type AbandonedCheckoutRow = {
   shopify_completed_at: string | null
   raw_shopify_payload: Record<string, unknown> | null
   created_at: string
+  country?: string | null
 }
 
 // Última atividade do cliente no checkout segundo a Shopify — é a partir
@@ -561,6 +566,50 @@ function checkoutLastActivityAt(checkout: AbandonedCheckoutRow): number {
   const raw = asRecord(checkout.raw_shopify_payload)
   const shopifyTimestamp = nullableDateString(raw.updated_at) ?? nullableDateString(raw.created_at)
   return new Date(shopifyTimestamp ?? checkout.created_at).getTime()
+}
+
+// Lembretes de uma automação simples (aba Automações) para o carrinho. Ela
+// tem precedência sobre os gatilhos "Carrinho abandonado" da conta: os jobs
+// pendentes que não são dela são cancelados, para o cliente não receber os
+// dois lembretes.
+async function scheduleCartAutomationSteps(
+  checkout: AbandonedCheckoutRow,
+  match: CartAutomationMatch,
+  lastActivityAt: number
+): Promise<number> {
+  const { automation } = match
+  const now = Date.now()
+  const keep = new Set<string>()
+  let scheduled = 0
+  for (const step of automation.steps) {
+    if (!step.flow_id) continue
+    const triggerId = automationStepTriggerId(automation.id, step.position)
+    keep.add(abandonedCheckoutDedupeKey(checkout.id, triggerId))
+    const idealRunAt = lastActivityAt + step.delay_minutes * 60 * 1000
+    if (idealRunAt < now - ABANDONED_CHECKOUT_MAX_LATENESS_MS) continue
+    await enqueueAbandonedCheckoutFlowJob({
+      checkoutId: checkout.id,
+      triggerId,
+      instanceName: automation.instance_name,
+      flowId: step.flow_id,
+      runAt: new Date(Math.max(now, idealRunAt)),
+      automationId: automation.id,
+    })
+    scheduled += 1
+  }
+  await cancelStaleAbandonedCheckoutJobs(
+    checkout.id,
+    (dedupeKey) => keep.has(dedupeKey),
+    `Substituído pela automação "${automation.name}"`
+  )
+  checkoutLog.info('automação de carrinho agendada', {
+    checkoutId: checkout.id,
+    automationId: automation.id,
+    productLineId: match.productLineId ?? 'none',
+    instance: automation.instance_name,
+    scheduled,
+  })
+  return scheduled
 }
 
 // `ignoreDelay` (só no sandbox) agenda para agora, sem esperar o delay do
@@ -582,10 +631,30 @@ async function scheduleAbandonedCheckoutTriggers(
   }
   // Carrinho sem telefone (só e-mail) é ignorado — não há para quem mandar WhatsApp.
   if (!checkout.contact_phone) return skip('sem telefone')
-  if (!instanceName) return skip('sem conta WhatsApp atribuída')
   // O interruptor global pausa automações reais; o sandbox segue testável,
   // como acontece com os pedidos simulados.
   if (!isSandbox && !(await getShopifyTriggersEnabled())) return skip('Gatilhos Shopify pausados')
+
+  const lastActivityAt = checkoutLastActivityAt(checkout)
+  // Automação simples escolhe o próprio número — não depende da conta
+  // atribuída ao carrinho. Carrinho simulado nunca usa automação real.
+  if (!isSandbox && !checkout.is_simulation && checkout.shopify_integration_id) {
+    const match = await findShopifyCartAutomation({
+      integrationId: checkout.shopify_integration_id,
+      country: checkout.country ?? null,
+      payload: checkout.raw_shopify_payload,
+    })
+    if (match) return scheduleCartAutomationSteps(checkout, match, lastActivityAt)
+    // A automação que valia para este carrinho deixou de valer (desligada,
+    // apagada ou o carrinho mudou de país/produto): os lembretes dela saem.
+    await cancelStaleAbandonedCheckoutJobs(
+      checkout.id,
+      (dedupeKey) => !dedupeKey.includes(`:${AUTOMATION_TRIGGER_PREFIX}`),
+      'Automação de carrinho não se aplica mais'
+    )
+  }
+
+  if (!instanceName) return skip('sem conta WhatsApp atribuída')
 
   const { data: triggers, error } = await supabaseAdmin
     .from('triggers')
@@ -596,7 +665,6 @@ async function scheduleAbandonedCheckoutTriggers(
   if (error) throw new Error(`Falha ao consultar gatilhos de carrinho: ${error.message}`)
 
   const now = Date.now()
-  const lastActivityAt = checkoutLastActivityAt(checkout)
   let scheduled = 0
   for (const trigger of triggers ?? []) {
     const flowId = asRecord(trigger.action_payload).flow_id
@@ -613,7 +681,7 @@ async function scheduleAbandonedCheckoutTriggers(
     })
     scheduled += 1
   }
-  if ((triggers ?? []).length === 0) return skip('conta sem gatilho "Carrinho abandonado"')
+  if ((triggers ?? []).length === 0) return skip('conta sem gatilho "Carrinho abandonado" nem automação')
   checkoutLog.info('gatilho de carrinho agendado', { checkoutId: checkout.id, instance: instanceName, scheduled })
   return scheduled
 }
@@ -872,7 +940,13 @@ async function findOrderConvertingCheckout(checkout: AbandonedCheckoutRow): Prom
 // ter comprado, o operador pode ter marcado "Não enviar" etc. Motivos de
 // "não enviar" retornam skipped (o job conclui sem retry); falhas reais
 // lançam para o worker tentar de novo.
-export async function runAbandonedCheckoutTrigger(checkoutId: string, flowId: string) {
+// `automationId`: lembrete de automação simples — sai pelo número atual dela
+// e não sai se ela foi desligada depois do agendamento.
+export async function runAbandonedCheckoutTrigger(
+  checkoutId: string,
+  flowId: string,
+  options: { automationId?: string } = {}
+) {
   const { data, error } = await supabaseAdmin
     .from('shopify_abandoned_checkouts')
     .select('*')
@@ -888,7 +962,12 @@ export async function runAbandonedCheckoutTrigger(checkoutId: string, flowId: st
   if (checkout.recovery_status === 'Convertido' || checkout.recovery_status === 'Não enviar') {
     return { skipped: `Checkout com status ${checkout.recovery_status}` }
   }
-  const instanceName = String(checkout.assigned_instance_name ?? '')
+  let instanceName = String(checkout.assigned_instance_name ?? '')
+  if (options.automationId) {
+    const automationInstance = await getEnabledAutomationInstance(options.automationId)
+    if (!automationInstance) return { skipped: 'Automação desligada ou apagada' }
+    instanceName = automationInstance
+  }
   const phone = String(checkout.contact_phone ?? '')
   if (!instanceName || !phone) return { skipped: 'Checkout sem conta WhatsApp ou telefone' }
   if (checkout.shopify_completed_at || await findOrderConvertingCheckout(checkout)) {

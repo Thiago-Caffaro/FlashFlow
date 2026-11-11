@@ -210,6 +210,26 @@ describe('flow job worker', () => {
     expect(completed.updates[0]).toMatchObject({ status: 'completed' })
   })
 
+  it('passes the automation of a simple-automation cart reminder', async () => {
+    mockRpc.mockResolvedValue({
+      data: [job({
+        job_type: 'abandoned_checkout_flow',
+        dedupe_key: 'abandoned-checkout:checkout-1:automation:auto-1:1',
+        order_id: null,
+        checkout_id: 'checkout-1',
+        payload: { triggerId: 'automation:auto-1:1', automationId: 'auto-1' },
+      })],
+      error: null,
+    })
+    mockRunAbandonedCheckoutTrigger.mockResolvedValue({ conversationId: 'conv-1' })
+    const completed = updateBuilder()
+    mockFrom.mockReturnValue(completed.chain)
+
+    await runFlowJobWorkerOnce('worker-1')
+
+    expect(mockRunAbandonedCheckoutTrigger).toHaveBeenCalledWith('checkout-1', 'flow-1', { automationId: 'auto-1' })
+  })
+
   it('completes an abandoned checkout job without sending when Shopify triggers were paused', async () => {
     mockRpc.mockResolvedValue({
       data: [job({ job_type: 'abandoned_checkout_flow', order_id: null, checkout_id: 'checkout-1' })],

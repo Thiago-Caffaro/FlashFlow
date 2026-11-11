@@ -2,7 +2,8 @@
 // fluxo de um envio que cada etapa gera.
 
 import { AUTOMATION_PRESETS, isAutomationKind } from './automation-presets'
-import type { AutomationInput, AutomationStepInput, FlowEdge, FlowNode } from '@/types'
+import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
+import type { Automation, AutomationInput, AutomationStepInput, CatalogPlatform, FlowEdge, FlowNode } from '@/types'
 
 export const AUTOMATION_NAME_MAX = 120
 export const AUTOMATION_MESSAGE_MAX = 4096
@@ -146,3 +147,37 @@ export function automationStepFlowName(automationName: string, position: number,
 // Postgres unique_violation na chave automations_scope_key.
 export const DUPLICATE_AUTOMATION_ERROR =
   'Já existe uma automação deste modelo para essa plataforma, país e linha'
+
+// O carrinho guarda o país no formato do fulfillment ("SPAIN"); a automação
+// guarda o código ISO ("ES"). País sem mapeamento fica no código mesmo.
+export function automationMatchesCountry(automationCountry: string, cartCountry: string | null | undefined): boolean {
+  if (!cartCountry) return false
+  const iso = automationCountry.toUpperCase()
+  const cart = cartCountry.toUpperCase()
+  return cart === iso || cart === (ISO_TO_FULFILLMENT_COUNTRY[iso] ?? iso)
+}
+
+// Automação ligada que atende o carrinho: mesma plataforma e país; a da
+// linha do carrinho vence a de "qualquer linha".
+export function pickCartAutomation<T extends Pick<Automation, 'kind' | 'platform' | 'country' | 'product_line_id' | 'enabled'>>(
+  automations: T[],
+  cart: { platform: CatalogPlatform; country: string | null | undefined; productLineId: string | null }
+): T | null {
+  const candidates = automations.filter((automation) =>
+    automation.enabled
+    && automation.kind === 'abandoned_cart'
+    && automation.platform === cart.platform
+    && automationMatchesCountry(automation.country, cart.country)
+    && (automation.product_line_id === null || automation.product_line_id === cart.productLineId)
+  )
+  return candidates.find((automation) => automation.product_line_id !== null)
+    ?? candidates.find((automation) => automation.product_line_id === null)
+    ?? null
+}
+
+// Gatilho (dedupe) do job de um lembrete: estável enquanto a automação e a
+// posição do lembrete não mudam, para o reagendamento empurrar o mesmo job.
+export const AUTOMATION_TRIGGER_PREFIX = 'automation:'
+export function automationStepTriggerId(automationId: string, position: number): string {
+  return `${AUTOMATION_TRIGGER_PREFIX}${automationId}:${position}`
+}

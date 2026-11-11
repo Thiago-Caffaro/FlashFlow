@@ -1,4 +1,9 @@
-import { buildAutomationStepFlowJson, parseAutomationInput } from '@/lib/automation-rules'
+import {
+  automationMatchesCountry,
+  buildAutomationStepFlowJson,
+  parseAutomationInput,
+  pickCartAutomation,
+} from '@/lib/automation-rules'
 import { validateFlowJson } from '@/lib/flow-validation'
 import { AUTOMATION_PRESETS } from '@/lib/automation-presets'
 
@@ -118,5 +123,41 @@ describe('buildAutomationStepFlowJson', () => {
       expect(validateFlowJson(buildAutomationStepFlowJson(step))).toEqual({ ok: true })
     }
     expect(parseAutomationInput({ ...base, steps: AUTOMATION_PRESETS.abandoned_cart.defaultSteps })).toHaveProperty('value')
+  })
+})
+
+describe('pickCartAutomation', () => {
+  const automation = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id,
+    kind: 'abandoned_cart' as const,
+    platform: 'shopify' as const,
+    country: 'ES',
+    product_line_id: null as string | null,
+    enabled: true,
+    ...overrides,
+  })
+  const cart = { platform: 'shopify' as const, country: 'SPAIN', productLineId: 'line-ema' }
+
+  it('casa o país ISO da automação com o país do fulfillment do carrinho', () => {
+    expect(automationMatchesCountry('ES', 'SPAIN')).toBe(true)
+    expect(automationMatchesCountry('es', 'ES')).toBe(true)
+    expect(automationMatchesCountry('PT', 'SPAIN')).toBe(false)
+    expect(automationMatchesCountry('ES', null)).toBe(false)
+  })
+
+  it('a automação da linha do carrinho vence a de qualquer linha', () => {
+    const any = automation('any')
+    const ema = automation('ema', { product_line_id: 'line-ema' })
+    expect(pickCartAutomation([any, ema], cart)?.id).toBe('ema')
+    expect(pickCartAutomation([any, ema], { ...cart, productLineId: null })?.id).toBe('any')
+  })
+
+  it('ignora desligada, outra linha, outro país e outra plataforma', () => {
+    expect(pickCartAutomation([
+      automation('off', { enabled: false }),
+      automation('memo', { product_line_id: 'line-memo' }),
+      automation('pt', { country: 'PT' }),
+      automation('lf', { platform: 'lightfunnels' }),
+    ], cart)).toBeNull()
   })
 })

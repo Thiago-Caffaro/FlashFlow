@@ -94,6 +94,10 @@ export async function enqueueLightfunnelsOrderFlowJob(input: {
 // agendado — um lembrete de carrinho entregue um dia atrasado só incomoda.
 const ABANDONED_CHECKOUT_JOB_TTL_MS = 6 * 60 * 60 * 1000
 
+export function abandonedCheckoutDedupeKey(checkoutId: string, triggerId: string): string {
+  return `abandoned-checkout:${checkoutId}:${triggerId}`
+}
+
 // Carrinho abandonado: roda só depois de (última atividade do checkout +
 // delay do gatilho). O dedupe é por checkout+gatilho — vários gatilhos com
 // delays diferentes (ex: 1h e 24h) viram uma sequência de lembretes. Cada
@@ -105,8 +109,11 @@ export async function enqueueAbandonedCheckoutFlowJob(input: {
   instanceName: string
   flowId: string
   runAt: Date
+  // Lembrete de automação simples: o worker confere se ela segue ligada e
+  // usa o número atual dela.
+  automationId?: string
 }): Promise<FlowJob | null> {
-  const dedupeKey = `abandoned-checkout:${input.checkoutId}:${input.triggerId}`
+  const dedupeKey = abandonedCheckoutDedupeKey(input.checkoutId, input.triggerId)
   const nextAttemptAt = input.runAt.toISOString()
   const expiresAt = new Date(input.runAt.getTime() + ABANDONED_CHECKOUT_JOB_TTL_MS).toISOString()
   const inserted = await insertJob({
@@ -119,7 +126,7 @@ export async function enqueueAbandonedCheckoutFlowJob(input: {
     checkout_id: input.checkoutId,
     conversation_id: null,
     remote_jid: null,
-    payload: { triggerId: input.triggerId },
+    payload: input.automationId ? { triggerId: input.triggerId, automationId: input.automationId } : { triggerId: input.triggerId },
     max_attempts: 10,
     next_attempt_at: nextAttemptAt,
     expires_at: expiresAt,
@@ -146,6 +153,34 @@ export async function cancelPendingAbandonedCheckoutJobs(checkoutIds: string[], 
     .eq('job_type', 'abandoned_checkout_flow')
     .eq('status', 'pending')
   if (error) throw new Error(`Falha ao cancelar fluxos de carrinho pendentes: ${error.message}`)
+}
+
+// Cancela os lembretes pendentes deste carrinho que não devem mais sair —
+// ex: passou a valer uma automação (que tem precedência sobre os gatilhos da
+// conta) ou deixou de valer. `keep` recebe o dedupe_key de cada job pendente.
+export async function cancelStaleAbandonedCheckoutJobs(
+  checkoutId: string,
+  keep: (dedupeKey: string) => boolean,
+  reason: string
+): Promise<number> {
+  const { data, error } = await supabaseAdmin
+    .from('flow_jobs')
+    .select('id, dedupe_key')
+    .eq('checkout_id', checkoutId)
+    .eq('job_type', 'abandoned_checkout_flow')
+    .eq('status', 'pending')
+  if (error) throw new Error(`Falha ao consultar lembretes de carrinho pendentes: ${error.message}`)
+  const stale = (data ?? [])
+    .filter((job) => !keep(String(job.dedupe_key ?? '')))
+    .map((job) => String(job.id))
+  if (stale.length === 0) return 0
+  const { error: updateError } = await supabaseAdmin
+    .from('flow_jobs')
+    .update({ status: 'failed', last_error: reason, updated_at: new Date().toISOString() })
+    .in('id', stale)
+    .eq('status', 'pending')
+  if (updateError) throw new Error(`Falha ao cancelar lembretes de carrinho: ${updateError.message}`)
+  return stale.length
 }
 
 export async function enqueueFlowMessageResumeJob(input: {
