@@ -623,3 +623,54 @@ export interface ItemFocusRequest {
   id: string
   nonce: number
 }
+
+// ─── Linhas de produto ────────────────────────────────────────────────────────
+
+export type CatalogPlatform = 'shopify' | 'lightfunnels'
+
+export interface ProductLine {
+  id: string
+  code: string
+  name: string
+  priority: number
+  created_at: string
+  updated_at: string
+}
+
+export interface LineProduct {
+  id: string
+  product_line_id: string
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ProductCatalogLink {
+  id: string
+  line_product_id: string
+  platform: CatalogPlatform
+  integration_id: string
+  external_product_id: string
+  title: string
+  created_at: string
+}
+
+export interface LineProductWithLinks extends LineProduct {
+  links: ProductCatalogLink[]
+}
+
+export interface ProductLineWithProducts extends ProductLine {
+  products: LineProductWithLinks[]
+}
+
+// Produto do catálogo de uma loja (Shopify ou Lightfunnels), agrupado por
+// produto (não variante), como aparece para vincular a um produto de linha.
+export interface CatalogProductOption {
+  platform: CatalogPlatform
+  integration_id: string
+  store_label: string
+  external_product_id: string
+  title: string
+  image_url: string | null
+  linked_line_product_id: string | null
+}

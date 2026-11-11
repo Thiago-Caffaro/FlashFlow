@@ -11,6 +11,7 @@ import NotificationsTab from '@/components/notifications/notifications-tab'
 import MemoryTab from '@/components/memory/memory-tab'
 import GalleryTab from '@/components/gallery/gallery-tab'
 import SandboxTab from '@/components/sandbox/sandbox-tab'
+import AutomationsTab from '@/components/automations/automations-tab'
 import AccountDropdown from '@/components/chat/account-dropdown'
 import VerticalTabBar, { View } from '@/components/nav/vertical-tab-bar'
 import { AccountProvider, useAccount } from '@/contexts/account-context'
@@ -24,12 +25,13 @@ const TAB_INDEX: Record<View, number> = {
   notificacoes: 1,
   gatilhos:     2,
   fluxos:       3,
-  memoria:      4,
-  sandbox:      5,
-  galeria:      6,
-  ia:           7,
-  integracoes:  8,
-  'conf-gerais': 9,
+  automacoes:   4,
+  memoria:      5,
+  sandbox:      6,
+  galeria:      7,
+  ia:           8,
+  integracoes:  9,
+  'conf-gerais': 10,
 }
 
 function getStoredView(): View {
@@ -184,8 +186,11 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 4: Memória */}
-        {panel(4,
+        {/* Panel 4: Automações — globais, cada automação escolhe o próprio número */}
+        {panel(4, <AutomationsTab />)}
+
+        {/* Panel 5: Memória */}
+        {panel(5,
           <div className="h-full bg-white dark:bg-[#111b21]">
             {activeAccount?.instanceName
               ? <MemoryTab instanceName={activeAccount.instanceName} />
@@ -193,11 +198,11 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 5: Sandbox — conta de testes fixa, independe da conta ativa */}
-        {panel(5, <SandboxTab active={activeView === 'sandbox'} />)}
+        {/* Panel 6: Sandbox — conta de testes fixa, independe da conta ativa */}
+        {panel(6, <SandboxTab active={activeView === 'sandbox'} />)}
 
-        {/* Panel 6: Galeria (conditional) */}
-        {FEATURES.gallery && panel(6,
+        {/* Panel 7: Galeria (conditional) */}
+        {FEATURES.gallery && panel(7,
           <div className="h-full bg-white dark:bg-[#111b21]">
             {activeAccount?.instanceName
               ? <GalleryTab instanceName={activeAccount.instanceName} />
@@ -205,14 +210,14 @@ function ChatApp() {
           </div>
         )}
 
-        {/* Panel 7: Config. IA */}
-        {panel(7, <AiSettingsTab />)}
+        {/* Panel 8: Config. IA */}
+        {panel(8, <AiSettingsTab />)}
 
-        {/* Panel 8: Integrações */}
-        {panel(8, <IntegrationsTab instanceName={activeAccount?.instanceName ?? null} />)}
+        {/* Panel 9: Integrações */}
+        {panel(9, <IntegrationsTab instanceName={activeAccount?.instanceName ?? null} />)}
 
-        {/* Panel 9: Conf. Gerais */}
-        {panel(9,
+        {/* Panel 10: Conf. Gerais */}
+        {panel(10,
           activeAccount?.instanceName
             ? <GeneralSettingsTab instanceName={activeAccount.instanceName} />
             : noAccount
