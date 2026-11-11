@@ -97,6 +97,11 @@ vêm de mensagem, vêm de eventos internos enfileirados.
   de fallback) — o carrinho é sempre contato iniciado pela empresa.
 - O botão manual "recuperar" em `/fulfillment` continua existindo lado a
   lado (texto fixo da integração, não é fluxo).
+- **Automação simples** (aba Automações, `docs/AUTOMATIONS.md`) que casa com
+  o país e a linha de produto do carrinho tem precedência: os lembretes
+  saem pelo número dela e os jobs dos gatilhos da conta para esse carrinho
+  são cancelados. Os fluxos que ela gera (`flows.managed_by_automation_id`)
+  ficam fora da lista de Fluxos e não podem ser editados pela API de fluxos.
 
 ## Execução
 

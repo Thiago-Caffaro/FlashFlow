@@ -46,12 +46,14 @@ app/
     accounts/     Contas/instâncias WhatsApp (QR, pairing, reconexão)
     shopify/, lightfunnels/, fulfillment/   Integrações de e-commerce (Shopify e Lightfunnels lado a lado — guia em docs/LIGHTFUNNELS.md) e envio
     integrations/ Slack (conexão, canais, encaminhamentos por conta) — guia em docs/SLACK.md
+    automations/, product-lines/   Automações simples (carrinho abandonado sem montar fluxo) e linhas de produto — guia em docs/AUTOMATIONS.md
     ai-keys/, ai-sessions/, memory-blocks/   Config e estado de IA
   fulfillment/, order-preview/, catalog-preview/, diagnostics/   Rotas de UI fora do chat principal
 components/
   ui/             shadcn — não editar
   chat/, chats/   Interface de atendimento
   flows/, flows/nodes/   Editor visual de fluxo — um arquivo por tipo de node
+  automations/    Aba Automações (cards, assistente, linhas e produtos)
   fulfillment/, sandbox/, auth/, sidebar-right/, memory/, gallery/, notifications/, ai-sessions/, nav/
 contexts/         Estado client-side global (account, auth, theme)
 lib/              Um módulo por domínio/integração — nome do arquivo já indica a camada (shopify-*.ts, fulfillment-*.ts, whatsapp-cloud-*.ts, flow-*.ts...)
