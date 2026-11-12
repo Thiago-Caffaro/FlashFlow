@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import AutomationCard from '@/components/automations/automation-card'
 import AutomationDialog from '@/components/automations/automation-dialog'
-import { countryLabel, formatDelay, splitDelay } from '@/lib/automation-display'
+import { AUTOMATION_COUNTRIES, countryLabel, formatDelay, splitDelay } from '@/lib/automation-display'
 import type { Account, AutomationWithSteps } from '@/types'
 
 const automation: AutomationWithSteps = {
@@ -13,6 +13,7 @@ const automation: AutomationWithSteps = {
   product_line_id: 'line-ema',
   instance_name: 'wa-es',
   enabled: true,
+  config: {},
   created_at: '2026-11-01T00:00:00.000Z',
   updated_at: '2026-11-01T00:00:00.000Z',
   steps: [
@@ -101,5 +102,52 @@ describe('AutomationDialog', () => {
     expect(html).toContain('Template de fallback')
     expect(html).toContain('Link do carrinho')
     expect(html).not.toContain('Pedido')
+  })
+})
+
+describe('modelos na tela', () => {
+  it('oferece os quatro modelos e a Colômbia', () => {
+    const html = renderToStaticMarkup(
+      <AutomationDialog automation={null} lines={[]} accounts={[account()]} onSaved={() => {}} onClose={() => {}} />,
+    )
+    for (const label of ['Carrinho abandonado', 'Pedido criado', 'Status de entrega', 'Resposta por palavra-chave']) {
+      expect(html).toContain(label)
+    }
+    expect(AUTOMATION_COUNTRIES.find((country) => country.code === 'CO')?.name).toBe('Colômbia')
+  })
+
+  it('card de palavra-chave mostra as palavras e envia na hora, sem país nem linha', () => {
+    const keyword: AutomationWithSteps = {
+      ...automation,
+      kind: 'message_keyword',
+      name: 'Preço',
+      platform: null,
+      country: null,
+      product_line_id: null,
+      config: { keywords: 'preço, valor', match: 'contains' },
+      steps: [{ ...automation.steps[0], delay_minutes: 0 }],
+    }
+    const html = renderToStaticMarkup(
+      <AutomationCard automation={keyword} line={null} account={account()} onToggle={noop} onEdit={() => {}} onDelete={noop} />,
+    )
+    expect(html).toContain('preço, valor')
+    expect(html).toContain('Envia na hora')
+    expect(html).not.toContain('Qualquer linha')
+  })
+
+  it('edição de status de entrega mostra só a mensagem, sem espera', () => {
+    const delivery: AutomationWithSteps = {
+      ...automation,
+      kind: 'delivery_status',
+      config: { statuses: ['Entregue'] },
+      steps: [{ ...automation.steps[0], delay_minutes: 0 }],
+    }
+    const html = renderToStaticMarkup(
+      <AutomationDialog automation={delivery} lines={[]} accounts={[account()]} onSaved={() => {}} onClose={() => {}} />,
+    )
+    expect(html).toContain('Mensagem')
+    expect(html).not.toContain('Lembrete 1')
+    expect(html).not.toContain('minutos sem atividade')
+    expect(html).toContain('Status de entrega')
   })
 })

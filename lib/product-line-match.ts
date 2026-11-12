@@ -22,6 +22,18 @@ export function extractShopifyProductIds(payload: unknown): string[] {
   return [...ids]
 }
 
+// Produtos Lightfunnels de um pedido gravado (fulfillment_orders.items):
+// cada item guarda o produto do funil em lightfunnels_product_id.
+export function extractLightfunnelsOrderProductIds(items: unknown): string[] {
+  if (!Array.isArray(items)) return []
+  const ids = new Set<string>()
+  for (const item of items) {
+    const raw = asRecord(item).lightfunnels_product_id
+    if (typeof raw === 'string' && raw) ids.add(raw)
+  }
+  return [...ids]
+}
+
 // Linha de um conjunto de produtos: a de menor `priority` entre as linhas dos
 // produtos vinculados; empate pelo código. Nenhum produto vinculado → null.
 export function pickProductLine(

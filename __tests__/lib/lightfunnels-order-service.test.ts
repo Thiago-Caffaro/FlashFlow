@@ -2,6 +2,7 @@ jest.mock('@/lib/supabase-admin', () => ({ supabaseAdmin: { from: jest.fn() } })
 jest.mock('@/lib/fulfillment-service', () => ({ recordOrderEvent: jest.fn() }))
 jest.mock('@/lib/flow-jobs', () => ({ enqueueLightfunnelsOrderFlowJob: jest.fn() }))
 jest.mock('@/lib/order-account-routing', () => ({ assignConfirmationAccount: jest.fn() }))
+jest.mock('@/lib/automation-runtime', () => ({ findOrderAutomation: jest.fn(async () => null) }))
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const service = require('@/lib/lightfunnels-order-service')

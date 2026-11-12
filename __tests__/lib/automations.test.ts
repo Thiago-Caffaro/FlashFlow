@@ -101,6 +101,7 @@ function input(overrides: Partial<AutomationInput> = {}): AutomationInput {
     product_line_id: 'line-ema',
     instance_name: 'conta-evo',
     enabled: false,
+    config: {},
     steps: [
       { delay_minutes: 60, message: 'Oi {{carrinho.link}}', fallback_template_id: 'tpl-ok', fallback_template_variable_map: { 1: 'x' } },
       { delay_minutes: 1440, message: 'Último aviso', fallback_template_id: null, fallback_template_variable_map: {} },
@@ -169,6 +170,19 @@ describe('createAutomation', () => {
     })
     await expect(createAutomation(fromOtherAccount)).rejects.toThrow('Lembrete 1: o template precisa ser aprovado e deste número')
     expect(db.automations).toHaveLength(0)
+  })
+
+  it('palavra-chave em número oficial não exige template', async () => {
+    const automation = await createAutomation(input({
+      kind: 'message_keyword',
+      platform: null,
+      country: null,
+      product_line_id: null,
+      instance_name: 'conta-cloud',
+      config: { keywords: 'preço', match: 'contains' },
+      steps: [{ delay_minutes: 0, message: 'Oi', fallback_template_id: null, fallback_template_variable_map: {} }],
+    }))
+    expect(automation.steps[0].fallback_template_id).toBeNull()
   })
 
   it('aceita conta Cloud API com templates aprovados', async () => {

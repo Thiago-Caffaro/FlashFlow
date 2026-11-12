@@ -21,7 +21,12 @@ import { SANDBOX_INSTANCE_NAME } from './sandbox'
 import { normalizePhone } from './phone'
 import { syncShopifyProductsForIntegration } from './shopify-products-service'
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
-import { findShopifyCartAutomation, getEnabledAutomationInstance, type CartAutomationMatch } from './automation-runtime'
+import {
+  findOrderAutomation,
+  findShopifyCartAutomation,
+  getEnabledAutomationInstance,
+  type CartAutomationMatch,
+} from './automation-runtime'
 import { AUTOMATION_TRIGGER_PREFIX, automationStepTriggerId } from './automation-rules'
 import {
   abandonedCheckoutDedupeKey,
@@ -410,6 +415,18 @@ export async function upsertShopifyOrder(
   }
 
   if ((isNewOrder || options.afterInsertConflict) && options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
+    // Automação simples "Pedido criado" do país/linha tem precedência sobre o
+    // gatilho da conta e sai pelo número dela.
+    const automationMatch = result.data.is_simulation ? null : await findOrderAutomation('order_created', result.data)
+    if (automationMatch) {
+      await enqueueShopifyOrderFlowJob({
+        orderId: result.data.id,
+        instanceName: automationMatch.automation.instance_name,
+        flowId: automationMatch.step.flow_id,
+        automationId: automationMatch.automation.id,
+      })
+      return result.data
+    }
     const instanceName = String(result.data.assigned_instance_name || result.data.instance_name || '')
     const { data: trigger, error: triggerError } = await supabaseAdmin
       .from('triggers')
@@ -1116,10 +1133,21 @@ async function executeOrderFlowForOrder(
   return { order, conversationId, remoteJid }
 }
 
+// Pedido atendido por automação simples: sai pelo número atual dela; null
+// quando ela foi desligada ou apagada depois de o job ser enfileirado.
+async function withAutomationInstance<T extends { assigned_instance_name: string | null }>(
+  order: T,
+  automationId: string | undefined
+): Promise<T | null> {
+  if (!automationId) return order
+  const instanceName = await getEnabledAutomationInstance(automationId)
+  return instanceName ? { ...order, assigned_instance_name: instanceName } : null
+}
+
 export async function runOrderFlow(
   orderId: string,
   flowId: string,
-  options: { paceAutomatedSend?: boolean } = {}
+  options: { paceAutomatedSend?: boolean; automationId?: string } = {}
 ) {
   const { data: order, error } = await supabaseAdmin
     .from('fulfillment_orders')
@@ -1127,7 +1155,9 @@ export async function runOrderFlow(
     .eq('id', orderId)
     .single()
   if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
-  return executeOrderFlowForOrder(orderId, flowId, order as OrderFlowOrder, options)
+  const target = await withAutomationInstance(order as OrderFlowOrder, options.automationId)
+  if (!target) return { order, skipped: true }
+  return executeOrderFlowForOrder(orderId, flowId, target, { paceAutomatedSend: options.paceAutomatedSend })
 }
 
 // Runs the "Pedido criado" flow trigger of the order's platform (Shopify ou
@@ -1137,14 +1167,16 @@ export async function runOrderFlow(
 export async function runShopifyOrderTrigger(
   orderId: string,
   flowIdOverride?: string,
-  options: { respectShopifyTriggerSetting?: boolean } = {}
+  options: { respectShopifyTriggerSetting?: boolean; automationId?: string } = {}
 ) {
-  const { data: order, error } = await supabaseAdmin
+  const { data: loaded, error } = await supabaseAdmin
     .from('fulfillment_orders')
     .select(ORDER_FLOW_SELECT)
     .eq('id', orderId)
     .single()
-  if (error || !order) throw new Error(error?.message ?? 'Pedido não encontrado')
+  if (error || !loaded) throw new Error(error?.message ?? 'Pedido não encontrado')
+  const order = await withAutomationInstance(loaded as OrderFlowOrder, options.automationId)
+  if (!order) return { order: loaded, skipped: true }
   const instanceName = String(order.assigned_instance_name || order.instance_name || '')
   const isSandboxOrder = instanceName === SANDBOX_INSTANCE_NAME
   if (order.is_simulation && !isSandboxOrder) throw new Error('Pedido de simulação não envia WhatsApp real')
@@ -1170,7 +1202,7 @@ export async function runShopifyOrderTrigger(
     if (options.respectShopifyTriggerSetting && !(await getOrderTriggersEnabled(order.source))) {
       return { order, skipped: true }
     }
-    await executeOrderFlowForOrder(orderId, flowId, order as OrderFlowOrder)
+    await executeOrderFlowForOrder(orderId, flowId, order)
 
     const { data: updated, error: updateError } = await supabaseAdmin
       .from('fulfillment_orders')

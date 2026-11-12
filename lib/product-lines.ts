@@ -122,13 +122,22 @@ export async function resolveShopifyCartProductLine(
   integrationId: string,
   payload: unknown
 ): Promise<ProductLine | null> {
-  const productIds = extractShopifyProductIds(payload)
+  return resolveCatalogProductLine('shopify', integrationId, extractShopifyProductIds(payload))
+}
+
+// Linha de um conjunto de produtos de uma loja/integração. Produtos de
+// linhas diferentes: vence a de menor prioridade (pickProductLine).
+export async function resolveCatalogProductLine(
+  platform: CatalogPlatform,
+  integrationId: string,
+  productIds: string[]
+): Promise<ProductLine | null> {
   if (productIds.length === 0) return null
 
   const { data: links, error } = await supabaseAdmin
     .from('product_catalog_links')
     .select('external_product_id, line_product_id')
-    .eq('platform', 'shopify')
+    .eq('platform', platform)
     .eq('integration_id', integrationId)
     .in('external_product_id', productIds)
   if (error) throw new Error(`Falha ao consultar vínculos de catálogo: ${error.message}`)

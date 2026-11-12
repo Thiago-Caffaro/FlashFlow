@@ -5,9 +5,19 @@ um assistente na aba **Automações**, sem montar fluxo. Para atendimento com
 caminhos diferentes (menu de botões, IA, condições), o caminho continua
 sendo o Flow Builder.
 
-Hoje existe um modelo: **Carrinho abandonado (Shopify)**. Cada automação
-casa com **plataforma + país + linha de produto** e envia pelo **número
-escolhido nela**, não pelo roteamento de conta do carrinho.
+Há um modelo para cada gatilho do sistema (`lib/automation-presets.ts`):
+
+| Modelo | Plataformas | Casa por | Envio |
+|---|---|---|---|
+| Carrinho abandonado | Shopify | país + linha | até 3 lembretes, espera desde a última atividade |
+| Pedido criado | Shopify, Lightfunnels | país + linha | 1 mensagem, na hora |
+| Status de entrega | Shopify, Lightfunnels | país + linha + estados escolhidos | 1 mensagem, na hora |
+| Resposta por palavra-chave | — | número + palavras | 1 mensagem, na hora |
+
+Cada automação envia pelo **número escolhido nela**, não pelo roteamento de
+conta do pedido/carrinho, e **tem precedência** sobre o gatilho equivalente
+da conta. Países: os 17 do FenixCOD mais a **Colômbia** (`CO`, que casa com
+pedido em `CO` ou `COLOMBIA` — `AUTOMATION_COUNTRY_ALIASES`).
 
 ## Peças
 
@@ -97,6 +107,33 @@ escolhido nela**, não pelo roteamento de conta do carrinho.
 5. O interruptor global de gatilhos Shopify (`shopify_triggers_enabled`)
    também pausa as automações, no agendamento e no worker.
 
+## Pedido criado, status de entrega e palavra-chave (migration 031)
+
+- **Pedido criado**: em `upsertShopifyOrder` (pedido novo) e no
+  `enqueueOrderTrigger` do Lightfunnels, `findOrderAutomation('order_created', pedido)`
+  roda antes do gatilho "Pedido criado" da conta; com match, o
+  `shopify_order_flow`/`lightfunnels_order_flow` leva o fluxo e o
+  `automationId` da automação e o gatilho não é consultado. A linha vem dos
+  `line_items[].product_id` (Shopify) ou de `items[].lightfunnels_product_id`.
+  Pedido manual nunca casa. A conversa do pedido passa a ser a do número da
+  automação.
+- **Status de entrega**: a RPC `apply_fulfillment_delivery_status` continua
+  enfileirando os gatilhos da conta; quando ela devolve `changed` e
+  `event_id`, `scheduleDeliveryStatusAutomation` (`lib/fulfillment-delivery-sync.ts`)
+  procura a automação do novo status e enfileira
+  `delivery-status:{evento}:automation:{id}`, cancelando os jobs
+  `delivery-status:{evento}:*` dos gatilhos. Falha aqui não desfaz o status.
+- **Palavra-chave**: em `executeTriggers` (`lib/message-triggers.ts`), antes
+  dos gatilhos de mensagem do número; mesma regra de comparação (vírgula,
+  `*`, contém/exato — `messageMatchesKeywords`). Não exige template em
+  número oficial (o cliente acabou de escrever).
+- No worker, `payload.automationId` → `runShopifyOrderTrigger`/`runOrderFlow`
+  com `{ automationId }`: automação desligada → não envia; senão usa o
+  número atual dela.
+- 031: `platform`/`country` opcionais, coluna `config` (estados de entrega,
+  palavras-chave), espera 0 permitida, e a chave única de escopo vale só
+  para carrinho e pedido criado.
+
 ## API
 
 | Rota | O quê |
@@ -109,14 +146,14 @@ escolhido nela**, não pelo roteamento de conta do carrinho.
 
 ## Deploy
 
-Aplicar **`029` e depois `030`** no Supabase **antes** de subir a versão:
+Aplicar **`029`, `030` e `031`, nessa ordem,** no Supabase **antes** de subir a versão:
 `GET /api/flows` passa a filtrar por `managed_by_automation_id` e quebra
 sem a coluna.
 
 ## Fora do escopo atual
 
 - Carrinho abandonado Lightfunnels (o serviço de carrinho LF não existe).
-- Outros modelos (confirmação de pedido, atualização de entrega…): entram
-  como nova entrada em `AUTOMATION_PRESETS` mais o ponto de disparo.
+- Modelo novo: entra como nova entrada em `AUTOMATION_PRESETS` mais o ponto
+  de disparo em `lib/automation-runtime.ts`.
 - "Testar no sandbox" e "Transformar em fluxo avançado" na UI.
 - Migrar os gatilhos de carrinho existentes para automações.

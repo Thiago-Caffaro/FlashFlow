@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import type { Account, AutomationWithSteps, ProductLineWithProducts } from '@/types'
 import { countryLabel } from '@/lib/automation-display'
+import { AUTOMATION_KIND_ORDER, AUTOMATION_PRESETS } from '@/lib/automation-presets'
 import AutomationCard from './automation-card'
 import AutomationDialog from './automation-dialog'
 
@@ -19,6 +20,7 @@ export default function AutomationsPanel() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [kindFilter, setKindFilter] = useState('')
   const [countryFilter, setCountryFilter] = useState('')
   const [lineFilter, setLineFilter] = useState('')
   // undefined = fechado; null = criar nova
@@ -65,9 +67,13 @@ export default function AutomationsPanel() {
     }
   }, [load])
 
-  const countries = useMemo(() => [...new Set(automations.map((automation) => automation.country))].sort(), [automations])
+  const countries = useMemo(
+    () => [...new Set(automations.map((automation) => automation.country).filter((country): country is string => Boolean(country)))].sort(),
+    [automations]
+  )
   const visible = automations.filter((automation) =>
-    (!countryFilter || automation.country === countryFilter)
+    (!kindFilter || automation.kind === kindFilter)
+    && (!countryFilter || automation.country === countryFilter)
     && (!lineFilter || (lineFilter === 'any' ? automation.product_line_id === null : automation.product_line_id === lineFilter)))
 
   if (loading) {
@@ -77,6 +83,10 @@ export default function AutomationsPanel() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
+        <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className={selectClass} aria-label="Filtrar por modelo">
+          <option value="">Todos os modelos</option>
+          {AUTOMATION_KIND_ORDER.map((kind) => <option key={kind} value={kind}>{AUTOMATION_PRESETS[kind].label}</option>)}
+        </select>
         <select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)} className={selectClass} aria-label="Filtrar por país">
           <option value="">Todos os países</option>
           {countries.map((country) => <option key={country} value={country}>{countryLabel(country)}</option>)}
@@ -99,8 +109,8 @@ export default function AutomationsPanel() {
 
       {automations.length === 0 ? (
         <div className="rounded-2xl bg-white p-7 text-sm text-[#667781] shadow-sm dark:bg-[#111b21] dark:text-[#8696a0]">
-          Nenhuma automação ainda. Comece por um carrinho abandonado: escolha o país, a linha de produto e o número, e
-          ajuste os lembretes prontos.
+          Nenhuma automação ainda. Escolha um modelo pronto (carrinho abandonado, pedido criado, status de entrega ou
+          palavra-chave), o país, a linha de produto e o número, e ajuste a mensagem.
         </div>
       ) : visible.length === 0 ? (
         <p className="text-sm text-[#667781] dark:text-[#8696a0]">Nenhuma automação com esses filtros.</p>

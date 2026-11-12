@@ -15,6 +15,7 @@ import {
 import { getFulfillmentClient } from './fulfillment-service'
 import { supabaseAdmin } from './supabase-admin'
 import { wakeFlowJobWorker } from './flow-job-signal'
+import { scheduleDeliveryStatusAutomation } from './automation-runtime'
 import { scheduleLightfunnelsWriteback } from './lightfunnels-writeback'
 import type { DeliveryStatus, FulfillmentOrder } from '@/types'
 
@@ -138,7 +139,12 @@ async function applyMappedStatus(input: {
     p_external_snapshot: input.snapshot,
   })
   if (error) throw new Error(`Falha ao aplicar status de entrega: ${error.message}`)
-  const result = Array.isArray(data) ? data[0] as { changed?: boolean } | undefined : undefined
+  const result = Array.isArray(data) ? data[0] as { changed?: boolean; event_id?: string | null } | undefined : undefined
+  if (result?.changed === true && result.event_id) {
+    // Falha da automação não desfaz o status já aplicado.
+    await scheduleDeliveryStatusAutomation(input.orderId, result.event_id, input.mapping.delivery_status)
+      .catch((error) => console.error('[delivery-sync] automação de entrega falhou:', error instanceof Error ? error.message : error))
+  }
   // A RPC enfileira o fluxo de entrega direto no banco — acorda o worker
   // para ele não esperar o intervalo ocioso.
   if (result?.changed === true) wakeFlowJobWorker()

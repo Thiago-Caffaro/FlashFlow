@@ -215,7 +215,7 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 3. Encaminhamento opcional (desligado por padrão, por conta, `slack_notification_settings`) de escalonamento da IA, node "Notificar" e "fora da janela de 24h" — `forwardNotificationToSlack`, nunca lança
 4. Botão "Assumir atendimento" → `POST /api/webhook/slack/interactivity` (assinatura `v0`, janela de 5 min) → claim atômico em `slack_messages` → notificação lida + `requires_human` + `chat.update`
 
-### 7. Automações simples (carrinho abandonado sem fluxo)
+### 7. Automações simples (carrinho, pedido criado, entrega e palavra-chave sem fluxo)
 
 > Guia completo em `docs/AUTOMATIONS.md`.
 
@@ -224,6 +224,7 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 3. Carrinho Shopify real → `findShopifyCartAutomation` (`lib/automation-runtime.ts`): automações ligadas → linha do carrinho por `line_items[].product_id` vinculados (`resolveShopifyCartProductLine`, menor prioridade vence) → `pickCartAutomation` (país e linha; a da linha vence a de "qualquer linha").
 4. Match → `scheduleCartAutomationSteps` (`lib/shopify-confirmation-service.ts`): um job por lembrete no número da automação, dedupe `abandoned-checkout:{checkout}:automation:{id}:{posição}`, e cancela os outros jobs pendentes do carrinho (`cancelStaleAbandonedCheckoutJobs`, `lib/flow-jobs.ts`). Sem match: gatilhos da conta, cancelando lembretes de automação que deixou de valer.
 5. Worker: `payload.automationId` → `runAbandonedCheckoutTrigger(..., { automationId })` só envia com a automação ligada e pelo número atual dela (`getEnabledAutomationInstance`).
+6. Os outros modelos (migration 031) seguem o mesmo padrão — automação antes do gatilho da conta: pedido criado em `upsertShopifyOrder` e no `enqueueOrderTrigger` do Lightfunnels (`findOrderAutomation`), status de entrega depois da RPC `apply_fulfillment_delivery_status` (`scheduleDeliveryStatusAutomation`, cancela os jobs do mesmo evento) e palavra-chave no início de `executeTriggers` (`findMessageAutomation`).
 
 ## Regras de negócio
 
@@ -315,7 +316,7 @@ __tests__/        api/ (rotas), lib/ (unidade), components/ — inclui testes de
 ## Coisas não óbvias / armadilhas
 
 - **Automações: país em dois formatos.** A automação guarda ISO (`ES`); o carrinho guarda o nome do FenixCOD (`SPAIN`) — a comparação passa por `automationMatchesCountry` (`lib/automation-rules.ts`). Comparar direto nunca casa.
-- **Automações: aplicar `029` e `030` antes do deploy.** `GET /api/flows` filtra por `managed_by_automation_id`; sem a coluna, a lista de Fluxos quebra.
+- **Automações: aplicar `029`, `030` e `031` antes do deploy.** `GET /api/flows` filtra por `managed_by_automation_id`; sem a coluna, a lista de Fluxos quebra.
 - **Fluxo gerado por automação não aparece nem é editável na aba Fluxos** (`PUT`/`DELETE` → 409, `app/api/flows/[id]/route.ts`): uma edição manual seria sobrescrita no próximo salvar da automação.
 - **`proxy.ts` não é `middleware.ts`** — no Next.js 16 o mecanismo de gate global foi renomeado.
 - **Rota nova de webhook precisa entrar em `PUBLIC_API_PATHS` (`proxy.ts`) e em `__tests__/proxy.test.ts`**: os testes de rota chamam o handler direto e não passam pelo proxy. Foi assim que `/api/webhook/shopify/draft-orders` ficou bloqueada (401 antes do HMAC) até a v1.20.1 — rascunhos só entravam pelo "Sincronizar". Depois de uma falha longa a Shopify pode remover a assinatura; abrir `/fulfillment` recria.

@@ -60,8 +60,10 @@ jest.mock('@/lib/flow-jobs', () => ({
 
 const mockFindShopifyCartAutomation = jest.fn()
 const mockGetEnabledAutomationInstance = jest.fn()
+const mockFindOrderAutomation = jest.fn()
 jest.mock('@/lib/automation-runtime', () => ({
   findShopifyCartAutomation: (...args: unknown[]) => mockFindShopifyCartAutomation(...args),
+  findOrderAutomation: (...args: unknown[]) => mockFindOrderAutomation(...args),
   getEnabledAutomationInstance: (...args: unknown[]) => mockGetEnabledAutomationInstance(...args),
 }))
 
@@ -235,6 +237,7 @@ describe('shopify-confirmation-service', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockFindShopifyCartAutomation.mockResolvedValue(null)
+    mockFindOrderAutomation.mockResolvedValue(null)
     _resetConfirmationSendPacingForTests()
     mockEnqueueShopifyOrderFlowJob.mockResolvedValue({ id: 'job-1' })
     mockSubmitFulfillmentOrder.mockResolvedValue({ id: 'order-1', status: 'created', send_status: 'Enviado' })
@@ -610,6 +613,43 @@ describe('shopify-confirmation-service', () => {
       instanceName: 'wa-country',
       flowId: 'flow-1',
     })
+    expect(mockExecuteFlow).not.toHaveBeenCalled()
+  })
+
+  it('automação "Pedido criado" do país/linha substitui o gatilho da conta', async () => {
+    mockFindOrderAutomation.mockResolvedValue({
+      automation: { id: 'auto-pedido', instance_name: 'wa-auto' },
+      productLineId: 'line-ema',
+      step: { flow_id: 'flow-auto' },
+    })
+    setTableQueues({
+      accounts: [queryBuilder({ data: { instance_name: 'wa-country' }, error: null })],
+      fulfillment_orders: [
+        queryBuilder({ data: null, error: null }),
+        queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country', source: 'shopify' }, error: null }),
+      ],
+      // sem fila de triggers: consultar o gatilho da conta quebraria o teste
+    })
+
+    await upsertShopifyOrder(integrationRow(), shopifyOrder())
+
+    expect(mockFindOrderAutomation).toHaveBeenCalledWith('order_created', expect.objectContaining({ id: 'order-1' }))
+    expect(mockEnqueueShopifyOrderFlowJob).toHaveBeenCalledWith({
+      orderId: 'order-1',
+      instanceName: 'wa-auto',
+      flowId: 'flow-auto',
+      automationId: 'auto-pedido',
+    })
+  })
+
+  it('pedido de automação desligada depois do agendamento não é enviado', async () => {
+    mockGetEnabledAutomationInstance.mockResolvedValue(null)
+    setTableQueues({
+      fulfillment_orders: [queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-country', contact_phone: '351900000000' }, error: null })],
+    })
+
+    await expect(runShopifyOrderTrigger('order-1', 'flow-auto', { automationId: 'auto-pedido' }))
+      .resolves.toMatchObject({ skipped: true })
     expect(mockExecuteFlow).not.toHaveBeenCalled()
   })
 

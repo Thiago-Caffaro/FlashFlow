@@ -1,5 +1,5 @@
 // Exibição das automações simples na UI (sem 'server-only'): países e tempo
-// de espera dos lembretes.
+// de espera dos lembretes. Também usado nas regras de casamento de país.
 
 import { ISO_TO_FULFILLMENT_COUNTRY } from './fulfillment-countries'
 
@@ -21,10 +21,20 @@ const COUNTRY_NAMES: Record<string, string> = {
   FR: 'França',
   BE: 'Bélgica',
   NL: 'Holanda',
+  CO: 'Colômbia',
 }
 
-// Países atendidos pelo fulfillment, na ordem alfabética do nome.
-export const AUTOMATION_COUNTRIES: Array<{ code: string; name: string }> = Object.keys(ISO_TO_FULFILLMENT_COUNTRY)
+// Países oferecidos nas automações além dos do FenixCOD (que não tem nome
+// próprio para eles): o pedido chega com o código ISO ou o nome em inglês.
+const EXTRA_AUTOMATION_COUNTRIES = ['CO']
+
+// Outras grafias com que o país pode chegar no pedido/carrinho.
+export const AUTOMATION_COUNTRY_ALIASES: Record<string, string[]> = {
+  CO: ['COLOMBIA'],
+}
+
+// Países das automações, na ordem alfabética do nome.
+export const AUTOMATION_COUNTRIES: Array<{ code: string; name: string }> = [...Object.keys(ISO_TO_FULFILLMENT_COUNTRY), ...EXTRA_AUTOMATION_COUNTRIES]
   .map((code) => ({ code, name: COUNTRY_NAMES[code] ?? code }))
   .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
 

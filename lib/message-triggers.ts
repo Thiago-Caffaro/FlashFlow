@@ -2,6 +2,7 @@ import 'server-only'
 import { checkActiveSession, executeFlow } from './flow-engine'
 import { supabaseAdmin } from './supabase-admin'
 import { dispatchSendText } from './whatsapp-dispatch'
+import { findMessageAutomation } from './automation-runtime'
 
 export async function executeTriggers(
   instanceName: string,
@@ -13,6 +14,20 @@ export async function executeTriggers(
   inboundWaMessageId?: string
 ) {
   if (messageType !== 'text') return
+
+  // Automação simples "Resposta por palavra-chave" do número vem antes dos
+  // gatilhos de mensagem (mesma regra: só a primeira que bate).
+  const automationMatch = await findMessageAutomation(instanceName, messageContent).catch((err) => {
+    console.error('Automation keyword lookup error:', err)
+    return null
+  })
+  if (automationMatch) {
+    const activeSession = await checkActiveSession(instanceName, remoteJid)
+    if (activeSession) return
+    await executeFlow(automationMatch.step.flow_id, { instanceName, remoteJid, conversationId, incomingMessage: messageContent, inboundWaMessageId })
+      .catch((err) => console.error('executeFlow error:', err))
+    return
+  }
 
   const { data: triggers, error } = await supabaseAdmin
     .from('triggers')
