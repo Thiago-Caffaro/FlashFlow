@@ -35,7 +35,7 @@ jest.mock('@/lib/supabase-admin', () => ({
 }))
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { getValidAccessToken, LightfunnelsAuthError } = require('@/lib/lightfunnels-token')
+const { getValidAccessToken, LightfunnelsAuthError, LightfunnelsTransientError } = require('@/lib/lightfunnels-token')
 
 function row(overrides: Record<string, unknown> = {}) {
   return {
@@ -100,5 +100,54 @@ describe('getValidAccessToken', () => {
 
   it('refuses to use a disconnected integration', async () => {
     await expect(getValidAccessToken(row({ oauth_connected: false }))).rejects.toThrow('desconectada')
+  })
+
+  it.each([
+    [502, 'Bad Gateway'],
+    [429, JSON.stringify({ error: 'rate_limited' })],
+    [401, '<html>Unauthorized</html>'],
+    [200, JSON.stringify({ ok: true })],
+  ])('trata HTTP %i como falha transitória e não desconecta', async (status, body) => {
+    fetchMock.mockResolvedValue({ ok: status === 200, status, text: async () => body })
+    mockLoadIntegration.mockResolvedValue(expiredRow())
+    await expect(getValidAccessToken(expiredRow())).rejects.toBeInstanceOf(LightfunnelsTransientError)
+    expect(mockUpdatePatch).not.toHaveBeenCalledWith(expect.objectContaining({ oauth_connected: false }))
+  })
+
+  it('trata falha de rede como transitória e não desconecta', async () => {
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'))
+    mockLoadIntegration.mockResolvedValue(expiredRow())
+    await expect(getValidAccessToken(expiredRow())).rejects.toBeInstanceOf(LightfunnelsTransientError)
+    expect(mockUpdatePatch).not.toHaveBeenCalledWith(expect.objectContaining({ oauth_connected: false }))
+  })
+
+  it('restaura oauth_connected e limpa last_error ao renovar com sucesso', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ access_token: 'app_v3_new', refresh_token: 'rt_new', expires_in: 7199 }),
+    })
+    await getValidAccessToken(expiredRow())
+    expect(mockUpdatePatch).toHaveBeenCalledWith(expect.objectContaining({ oauth_connected: true, last_error: null }))
+  })
+
+  it('faz um único refresh para chamadas concorrentes da mesma integração', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ access_token: 'app_v3_new', refresh_token: 'rt_new', expires_in: 7199 }),
+    })
+    const results = await Promise.all([getValidAccessToken(expiredRow()), getValidAccessToken(expiredRow())])
+    expect(results).toEqual(['app_v3_new', 'app_v3_new'])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('liberta o mutex depois de uma falha, permitindo nova tentativa', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 502, text: async () => 'Bad Gateway' })
+    mockLoadIntegration.mockResolvedValue(expiredRow())
+    await expect(getValidAccessToken(expiredRow())).rejects.toBeInstanceOf(LightfunnelsTransientError)
+    fetchMock.mockResolvedValueOnce({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ access_token: 'app_v3_new', refresh_token: 'rt_new', expires_in: 7199 }),
+    })
+    await expect(getValidAccessToken(expiredRow())).resolves.toBe('app_v3_new')
   })
 })

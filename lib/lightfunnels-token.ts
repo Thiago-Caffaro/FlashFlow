@@ -12,11 +12,15 @@ import { supabaseAdmin } from './supabase-admin'
 // Access token do Lightfunnels dura 2h; o refresh token é rotativo — cada
 // refresh devolve um novo e invalida o anterior. Se duas requisições
 // renovarem ao mesmo tempo, só a primeira consegue usar o refresh token; a
-// segunda recebe invalid_grant. Por isso o UPDATE é condicionado ao
+// segunda recebe invalid_grant. Dentro do mesmo processo, um mutex por
+// integração (refreshInFlight) garante um único refresh em curso. Entre
+// processos diferentes, o UPDATE é condicionado ao
 // refresh_token_iv lido (lock otimista) e, quando perde a corrida, relê a
 // linha e usa o token que a outra gravou.
 
 const REFRESH_MARGIN_MS = 5 * 60 * 1000
+const AUTH_REJECTION_CODES = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client', 'access_denied'])
+const refreshInFlight = new Map<string, Promise<string>>()
 
 export interface LightfunnelsTokenResponse {
   access_token: string
@@ -31,17 +35,33 @@ export class LightfunnelsAuthError extends Error {
   }
 }
 
+// Falha que não prova que o refresh token foi revogado (5xx, 429, rede,
+// corpo inesperado): não deve desconectar a integração.
+export class LightfunnelsTransientError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LightfunnelsTransientError'
+  }
+}
+
 export async function requestLightfunnelsToken(
   params: Record<string, string>,
   fetchImpl: typeof fetch = fetch
 ): Promise<LightfunnelsTokenResponse> {
-  const res = await fetchImpl(LIGHTFUNNELS_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(params).toString(),
-    cache: 'no-store',
-  })
-  const text = await res.text()
+  let res: Response
+  let text: string
+  try {
+    res = await fetchImpl(LIGHTFUNNELS_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params).toString(),
+      cache: 'no-store',
+    })
+    text = await res.text()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new LightfunnelsTransientError(`Lightfunnels indisponível: ${message}`)
+  }
   let json: Partial<LightfunnelsTokenResponse> & { error?: string; error_description?: string } = {}
   try {
     json = text ? JSON.parse(text) : {}
@@ -50,7 +70,10 @@ export async function requestLightfunnelsToken(
   }
   if (!res.ok || !json.access_token || !json.refresh_token) {
     const reason = json.error_description || json.error || text.slice(0, 200) || `HTTP ${res.status}`
-    throw new LightfunnelsAuthError(`Lightfunnels recusou o token: ${reason}`)
+    if ((res.status === 400 || res.status === 401) && json.error && AUTH_REJECTION_CODES.has(json.error)) {
+      throw new LightfunnelsAuthError(`Lightfunnels recusou o token: ${reason}`)
+    }
+    throw new LightfunnelsTransientError(`Lightfunnels indisponível (HTTP ${res.status}): ${reason}`)
   }
   return {
     access_token: json.access_token,
@@ -82,6 +105,18 @@ export async function getValidAccessToken(
   if (!row.oauth_connected) throw new LightfunnelsAuthError('Conta Lightfunnels desconectada — reconecte em Fulfillment → Lightfunnels')
   if (isFresh(row)) return decodeAccessToken(row)
 
+  const inFlight = refreshInFlight.get(row.id)
+  if (inFlight) return inFlight
+  const refresh = refreshAccessToken(row)
+  refreshInFlight.set(row.id, refresh)
+  try {
+    return await refresh
+  } finally {
+    refreshInFlight.delete(row.id)
+  }
+}
+
+async function refreshAccessToken(row: LightfunnelsIntegrationCredentialRow): Promise<string> {
   const app = await getLightfunnelsAppCredentials()
   if (!app.clientId || !app.clientSecret) throw new Error('Credenciais do app Lightfunnels não configuradas')
 
@@ -109,6 +144,7 @@ export async function getValidAccessToken(
     .from('lightfunnels_integrations')
     .update({
       ...encryptedTokenColumns(tokens.access_token, tokens.refresh_token, tokens.expires_in),
+      oauth_connected: true,
       last_error: null,
       updated_at: new Date().toISOString(),
     })
