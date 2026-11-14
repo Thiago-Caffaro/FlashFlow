@@ -253,15 +253,15 @@ export default function FulfillmentPage() {
   }
 
   async function toggleKeepLocalCopy(product: ShopifyProduct, enabled: boolean) {
-    setShopifyProductsBusyId(product.id)
-    const json = await fetch('/api/fulfillment/shopify/products', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: product.id, keep_local_copy: enabled }),
-    }).then(getJson)
-    showResult(json, enabled ? 'Cópia local ativada.' : 'Cópia local desativada.')
-    await load()
-    setShopifyProductsBusyId(null)
+    await runBusy((busy) => setShopifyProductsBusyId(busy ? product.id : null), async () => {
+      const json = await fetch('/api/fulfillment/shopify/products', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: product.id, keep_local_copy: enabled }),
+      }).then(getJson)
+      showResult(json, enabled ? 'Cópia local ativada.' : 'Cópia local desativada.')
+      await load()
+    }, reportError)
   }
 
   async function bulkToggleKeepLocalCopy(productIds: string[], enabled: boolean) {
@@ -313,11 +313,11 @@ export default function FulfillmentPage() {
   }
 
   async function deleteShopifyProduct(product: ShopifyProduct) {
-    setShopifyProductsBusyId(product.id)
-    const json = await fetch(`/api/fulfillment/shopify/products?id=${encodeURIComponent(product.id)}`, { method: 'DELETE' }).then(getJson)
-    showResult(json, product.source === 'manual' ? 'Produto excluído.' : 'Produto ocultado.')
-    await load()
-    setShopifyProductsBusyId(null)
+    await runBusy((busy) => setShopifyProductsBusyId(busy ? product.id : null), async () => {
+      const json = await fetch(`/api/fulfillment/shopify/products?id=${encodeURIComponent(product.id)}`, { method: 'DELETE' }).then(getJson)
+      showResult(json, product.source === 'manual' ? 'Produto excluído.' : 'Produto ocultado.')
+      await load()
+    }, reportError)
   }
 
   async function syncShopifyProducts() {
