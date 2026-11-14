@@ -24,6 +24,7 @@ import { ShopifyProductFormValues } from '@/components/fulfillment/shopify-produ
 import ShopifyOrderAccountSettings from '@/components/fulfillment/shopify-order-account-settings'
 import LightfunnelsConfig from '@/components/fulfillment/lightfunnels-config'
 import LightfunnelsProductsPanel from '@/components/fulfillment/lightfunnels-products-panel'
+import { runBusy } from '@/lib/run-busy'
 
 type Tab = 'queue' | 'orders' | 'products' | 'settings'
 type OrderAction = 'submit' | 'refresh' | 'cancel' | 'cancel-local'
@@ -137,6 +138,10 @@ export default function FulfillmentPage() {
     setMessage({ text: json.ok ? success : (json.error ?? 'Erro inesperado'), error: !json.ok })
   }
 
+  const reportError = (text: string) => setMessage({ text, error: true })
+  const withBusyId = (id: string, work: () => Promise<void>) =>
+    runBusy((busy) => setBusyId(busy ? id : null), work, reportError)
+
   async function updateOrderStatus(id: string, patch: {
     country?: string
     commercial_status?: CommercialStatus
@@ -145,106 +150,106 @@ export default function FulfillmentPage() {
     assigned_instance_name?: string
     confirmation_trigger_state?: ConfirmationTriggerState
   }) {
-    setBusyId(id)
-    const json = await fetch(`/api/fulfillment/orders/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    }).then(getJson)
-    const autoMsg = json.autoSubmit?.submitted
-      ? ' Enviado automaticamente ao FenixCOD.'
-      : json.autoSubmit?.error
-        ? ` FenixCOD: ${json.autoSubmit.error}`
-        : ''
-    showResult(json, `Pedido atualizado.${autoMsg}`)
-    await load()
-    setBusyId(null)
+    await withBusyId(id, async () => {
+      const json = await fetch(`/api/fulfillment/orders/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      }).then(getJson)
+      const autoMsg = json.autoSubmit?.submitted
+        ? ' Enviado automaticamente ao FenixCOD.'
+        : json.autoSubmit?.error
+          ? ` FenixCOD: ${json.autoSubmit.error}`
+          : ''
+      showResult(json, `Pedido atualizado.${autoMsg}`)
+      await load()
+    })
   }
 
   async function bulkUpdateOrderStatus(ids: string[], status: CommercialStatus) {
-    setBusyId('bulk')
-    const json = await fetch('/api/fulfillment/orders/bulk-status', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, commercial_status: status }),
-    }).then(getJson)
-    showResult(
-      json,
-      json.ok
-        ? `${json.succeeded ?? 0} pedido(s) atualizado(s).${json.failed ? ` ${json.failed} falharam.` : ''}`
-        : 'Falha ao atualizar pedidos selecionados.',
-    )
-    await load()
-    setBusyId(null)
+    await withBusyId('bulk', async () => {
+      const json = await fetch('/api/fulfillment/orders/bulk-status', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, commercial_status: status }),
+      }).then(getJson)
+      showResult(
+        json,
+        json.ok
+          ? `${json.succeeded ?? 0} pedido(s) atualizado(s).${json.failed ? ` ${json.failed} falharam.` : ''}`
+          : 'Falha ao atualizar pedidos selecionados.',
+      )
+      await load()
+    })
   }
 
   async function updateOrderItems(id: string, items: FulfillmentOrder['items']) {
-    setBusyId(id)
-    const json = await fetch(`/api/fulfillment/orders/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items }),
-    }).then(getJson)
-    showResult(json, 'Itens do pedido atualizados.')
-    await load()
-    setBusyId(null)
+    await withBusyId(id, async () => {
+      const json = await fetch(`/api/fulfillment/orders/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      }).then(getJson)
+      showResult(json, 'Itens do pedido atualizados.')
+      await load()
+    })
   }
 
   async function orderAction(id: string, action: OrderAction) {
-    setBusyId(id)
-    const json = await fetch(`/api/fulfillment/orders/${id}/${action}`, { method: 'POST' }).then(getJson)
-    const success = action === 'submit' ? 'Enviado ao FenixCOD.'
-      : action === 'refresh' ? 'Pedido atualizado do FenixCOD.'
-        : action === 'cancel-local' ? 'Pedido local cancelado.'
-          : 'Pedido cancelado no FenixCOD.'
-    showResult(json, success)
-    await load()
-    setBusyId(null)
+    await withBusyId(id, async () => {
+      const json = await fetch(`/api/fulfillment/orders/${id}/${action}`, { method: 'POST' }).then(getJson)
+      const success = action === 'submit' ? 'Enviado ao FenixCOD.'
+        : action === 'refresh' ? 'Pedido atualizado do FenixCOD.'
+          : action === 'cancel-local' ? 'Pedido local cancelado.'
+            : 'Pedido cancelado no FenixCOD.'
+      showResult(json, success)
+      await load()
+    })
   }
 
   async function resendConfirmation(orderId: string) {
-    setBusyId(orderId)
-    const json = await fetch(`/api/fulfillment/orders/${orderId}/confirmation-message`, { method: 'POST' }).then(getJson)
-    showResult(json, 'Confirmação enviada por WhatsApp.')
-    await load()
-    setBusyId(null)
+    await withBusyId(orderId, async () => {
+      const json = await fetch(`/api/fulfillment/orders/${orderId}/confirmation-message`, { method: 'POST' }).then(getJson)
+      showResult(json, 'Confirmação enviada por WhatsApp.')
+      await load()
+    })
   }
 
   async function updateCheckout(id: string, patch: { recovery_status?: AbandonedCheckoutStatus; assigned_instance_name?: string }) {
-    setBusyId(id)
-    const json = await fetch('/api/fulfillment/shopify/abandoned-checkouts', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, ...patch }),
-    }).then(getJson)
-    showResult(json, 'Carrinho atualizado.')
-    await load()
-    setBusyId(null)
+    await withBusyId(id, async () => {
+      const json = await fetch('/api/fulfillment/shopify/abandoned-checkouts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...patch }),
+      }).then(getJson)
+      showResult(json, 'Carrinho atualizado.')
+      await load()
+    })
   }
 
   async function recoverCheckout(id: string) {
-    setBusyId(id)
-    const json = await fetch(`/api/fulfillment/shopify/abandoned-checkouts/${id}/recover`, { method: 'POST' }).then(getJson)
-    showResult(json, 'Mensagem de recuperação enviada.')
-    await load()
-    setBusyId(null)
+    await withBusyId(id, async () => {
+      const json = await fetch(`/api/fulfillment/shopify/abandoned-checkouts/${id}/recover`, { method: 'POST' }).then(getJson)
+      showResult(json, 'Mensagem de recuperação enviada.')
+      await load()
+    })
   }
 
   async function syncShopify() {
-    setSyncBusy(true)
-    const json = await fetch('/api/fulfillment/shopify/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sendConfirmation: false }),
-    }).then(getJson)
-    showResult(
-      json,
-      json.ok
-        ? `Shopify sincronizado: ${json.importedOrders ?? 0} pedido(s), ${json.importedCheckouts ?? 0} carrinho(s).`
-        : 'Falha ao sincronizar Shopify.',
-    )
-    await load()
-    setSyncBusy(false)
+    await runBusy(setSyncBusy, async () => {
+      const json = await fetch('/api/fulfillment/shopify/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sendConfirmation: false }),
+      }).then(getJson)
+      showResult(
+        json,
+        json.ok
+          ? `Shopify sincronizado: ${json.importedOrders ?? 0} pedido(s), ${json.importedCheckouts ?? 0} carrinho(s).`
+          : 'Falha ao sincronizar Shopify.',
+      )
+      await load()
+    }, reportError)
   }
 
   async function toggleKeepLocalCopy(product: ShopifyProduct, enabled: boolean) {
@@ -316,16 +321,16 @@ export default function FulfillmentPage() {
   }
 
   async function syncShopifyProducts() {
-    setShopifyProductsSyncBusy(true)
-    const json = await fetch('/api/fulfillment/shopify/products/sync', { method: 'POST' }).then(getJson)
-    showResult(
-      json,
-      json.ok
-        ? `Produtos sincronizados: ${json.importedProducts ?? 0}.`
-        : json.error ?? 'Falha ao sincronizar produtos.',
-    )
-    await load()
-    setShopifyProductsSyncBusy(false)
+    await runBusy(setShopifyProductsSyncBusy, async () => {
+      const json = await fetch('/api/fulfillment/shopify/products/sync', { method: 'POST' }).then(getJson)
+      showResult(
+        json,
+        json.ok
+          ? `Produtos sincronizados: ${json.importedProducts ?? 0}.`
+          : json.error ?? 'Falha ao sincronizar produtos.',
+      )
+      await load()
+    }, reportError)
   }
 
   async function toggleShopifyTriggers() {
