@@ -9,6 +9,8 @@ export {}
 const fetchMock = jest.fn()
 global.fetch = fetchMock
 
+import { WhatsAppCloudApiError } from '@/lib/whatsapp-cloud-errors'
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { sendCloudText, sendCloudImage, sendCloudButtons, sendCloudTemplate, sendCloudTypingIndicator, verifyCloudCredentials } = require('@/lib/whatsapp-cloud-client')
 
@@ -95,6 +97,21 @@ describe('sendCloudText', () => {
 
     await expect(sendCloudText('123456', 'bad-token', '5511999999999', 'oi'))
       .rejects.toThrow('Invalid OAuth access token')
+  })
+
+  it('throws a WhatsAppCloudApiError carrying HTTP status and Meta error code', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(400, {
+      error: { message: 'Re-engagement message', code: 131047 },
+    }))
+
+    const error: unknown = await sendCloudText('123456', 'token', '5511999999999', 'oi').catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(WhatsAppCloudApiError)
+    const apiError = error as WhatsAppCloudApiError
+    expect(apiError.status).toBe(400)
+    expect(apiError.code).toBe(131047)
+    expect(apiError.message).toContain('(400)')
+    expect(apiError.message).toContain('code=131047')
   })
 
   it('propagates a network-level failure (e.g. timeout) instead of swallowing it', async () => {

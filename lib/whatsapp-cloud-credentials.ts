@@ -71,9 +71,10 @@ export async function storeCloudCredentials(input: {
   if (error) throw new Error(`Falha ao salvar credenciais da WhatsApp Cloud API: ${error.message}`)
 }
 
-// Best-effort — chamado a cada falha de envio para que o erro fique visível
-// na UI da conta (informações da conta), não só em log de servidor. Nunca
-// deve derrubar o fluxo de envio se a própria escrita falhar.
+// Best-effort — chamado só em falhas de envio ao nível da conta (token
+// inválido, permissão, conta restrita) para que o erro fique visível na UI da
+// conta, não só em log de servidor. Erros de destinatário ou de rede não
+// passam por aqui. Nunca deve derrubar o fluxo de envio se a escrita falhar.
 export async function recordCloudSendError(instanceName: string, message: string): Promise<void> {
   try {
     const { error } = await supabaseAdmin
@@ -83,5 +84,20 @@ export async function recordCloudSendError(instanceName: string, message: string
     if (error) console.error('[whatsapp-cloud-credentials] falha ao registrar last_error:', error.message)
   } catch (err) {
     console.error('[whatsapp-cloud-credentials] falha ao registrar last_error:', err)
+  }
+}
+
+// Best-effort — chamado após um envio bem-sucedido para limpar um last_error
+// antigo (a conta voltou a funcionar). Nunca lança: um envio que deu certo não
+// pode falhar por causa dessa escrita.
+export async function clearCloudSendError(instanceName: string): Promise<void> {
+  try {
+    const { error } = await supabaseAdmin
+      .from('whatsapp_cloud_credentials')
+      .update({ last_error: null, updated_at: new Date().toISOString() })
+      .eq('instance_name', instanceName)
+    if (error) console.error('[whatsapp-cloud-credentials] falha ao limpar last_error:', error.message)
+  } catch (err) {
+    console.error('[whatsapp-cloud-credentials] falha ao limpar last_error:', err)
   }
 }

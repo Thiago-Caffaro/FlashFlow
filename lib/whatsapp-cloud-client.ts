@@ -1,4 +1,5 @@
 import 'server-only'
+import { WhatsAppCloudApiError } from './whatsapp-cloud-errors'
 
 const DEFAULT_API_VERSION = 'v21.0'
 
@@ -63,6 +64,20 @@ function cloudApiErrorMessage(body: unknown, fallbackText: string): string {
   return fallbackText.slice(0, 300)
 }
 
+function cloudApiErrorCode(body: unknown): number | null {
+  const record = body && typeof body === 'object' ? body as Record<string, unknown> : null
+  const error = record?.error && typeof record.error === 'object' ? record.error as Record<string, unknown> : null
+  return error && typeof error.code === 'number' ? error.code : null
+}
+
+function cloudApiError(prefix: string, response: CloudFetchResult): WhatsAppCloudApiError {
+  return new WhatsAppCloudApiError(
+    `${prefix} (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`,
+    response.status,
+    cloudApiErrorCode(response.body)
+  )
+}
+
 export interface SendCloudTextResult {
   waMessageId: string | null
   raw: unknown
@@ -93,9 +108,7 @@ export async function sendCloudText(
   }, timeoutMs)
 
   if (!response.ok) {
-    throw new Error(
-      `Falha ao enviar mensagem via WhatsApp Cloud API (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`
-    )
+    throw cloudApiError('Falha ao enviar mensagem via WhatsApp Cloud API', response)
   }
 
   return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
@@ -173,9 +186,7 @@ export async function sendCloudButtons(
   }, timeoutMs)
 
   if (!response.ok) {
-    throw new Error(
-      `Falha ao enviar botões via WhatsApp Cloud API (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`
-    )
+    throw cloudApiError('Falha ao enviar botões via WhatsApp Cloud API', response)
   }
 
   return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
@@ -202,9 +213,7 @@ export async function sendCloudImage(
   }, timeoutMs)
 
   if (!response.ok) {
-    throw new Error(
-      `Falha ao enviar imagem via WhatsApp Cloud API (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`
-    )
+    throw cloudApiError('Falha ao enviar imagem via WhatsApp Cloud API', response)
   }
 
   return { waMessageId: extractCloudMessageId(response.body), raw: response.body }
@@ -261,9 +270,7 @@ export async function sendCloudTemplate(
   }, timeoutMs)
 
   if (!response.ok) {
-    throw new Error(
-      `Falha ao enviar template via WhatsApp Cloud API (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`
-    )
+    throw cloudApiError('Falha ao enviar template via WhatsApp Cloud API', response)
   }
 
   return { waMessageId: extractCloudMessageId(response.body), raw: response.body }

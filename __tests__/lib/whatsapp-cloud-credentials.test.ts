@@ -26,6 +26,7 @@ const {
   storeCloudCredentials,
   decodeCloudAccessToken,
   recordCloudSendError,
+  clearCloudSendError,
 } = require('@/lib/whatsapp-cloud-credentials')
 
 describe('whatsapp-cloud-credentials', () => {
@@ -148,6 +149,24 @@ describe('whatsapp-cloud-credentials', () => {
         update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: { message: 'boom' } }) }),
       })
       await expect(recordCloudSendError('wa-1', 'algum erro')).resolves.toBeUndefined()
+    })
+  })
+
+  describe('clearCloudSendError', () => {
+    it('grava last_error null para a instância certa', async () => {
+      const eqMock = jest.fn().mockResolvedValue({ error: null })
+      const updateMock = jest.fn().mockReturnValue({ eq: eqMock })
+      supabaseMock.from.mockReturnValue({ update: updateMock })
+      await clearCloudSendError('wa-1')
+      expect(updateMock.mock.calls[0][0]).toMatchObject({ last_error: null })
+      expect(eqMock).toHaveBeenCalledWith('instance_name', 'wa-1')
+    })
+
+    it('engole falha do banco — não pode quebrar um envio que deu certo', async () => {
+      supabaseMock.from.mockReturnValue({
+        update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: { message: 'boom' } }) }),
+      })
+      await expect(clearCloudSendError('wa-1')).resolves.toBeUndefined()
     })
   })
 })
