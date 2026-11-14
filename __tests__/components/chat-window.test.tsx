@@ -1,5 +1,5 @@
 /** @jest-environment jsdom */
-import { act, cleanup, fireEvent, render, screen, type RenderResult } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, type RenderResult } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import ChatWindow from '@/components/chat/chat-window'
 import type { Conversation } from '@/types'
@@ -55,5 +55,101 @@ describe('ChatWindow — rascunho por conversa', () => {
     await act(async () => rerender(<ChatWindow conversation={{ ...conversation('a'), contact_name: 'Nome atualizado' }} onMessageSent={jest.fn()} />))
 
     expect(screen.getByPlaceholderText<HTMLTextAreaElement>('Digite uma mensagem').value).toBe('ainda a escrever')
+  })
+})
+
+describe('ChatWindow — falha de envio', () => {
+  function mockSend(response: () => Promise<unknown>) {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+      url === '/api/messages' && init?.method === 'POST'
+        ? response()
+        : Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, messages: [] }) })
+    )
+  }
+
+  function typeAndSend(text: string) {
+    const input = screen.getByPlaceholderText('Digite uma mensagem')
+    fireEvent.change(input, { target: { value: text } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+  }
+
+  it('mostra o erro do servidor, remove a mensagem otimista e devolve o texto ao campo', async () => {
+    mockSend(async () => ({ ok: false, status: 502, json: async () => ({ ok: false, error: 'WhatsApp desconectado' }) }))
+    await renderAsync(<ChatWindow conversation={conversation('a')} onMessageSent={jest.fn()} />)
+
+    typeAndSend('olá')
+
+    expect((await screen.findByRole('alert')).textContent).toContain('WhatsApp desconectado')
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>('Digite uma mensagem').value).toBe('olá')
+    expect(screen.queryByText('olá', { ignore: 'textarea' })).toBeNull() // a bolha otimista saiu
+  })
+
+  it('trata erro de rede da mesma forma', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {})
+    mockSend(async () => { throw new TypeError('Failed to fetch') })
+    await renderAsync(<ChatWindow conversation={conversation('a')} onMessageSent={jest.fn()} />)
+
+    typeAndSend('olá')
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Não foi possível enviar')
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>('Digite uma mensagem').value).toBe('olá')
+    consoleError.mockRestore()
+  })
+
+  it('usa uma mensagem genérica quando a resposta de erro não é JSON', async () => {
+    mockSend(async () => ({ ok: false, status: 500, json: async () => { throw new SyntaxError('Unexpected token') } }))
+    await renderAsync(<ChatWindow conversation={conversation('a')} onMessageSent={jest.fn()} />)
+
+    typeAndSend('olá')
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Não foi possível enviar (HTTP 500)')
+  })
+
+  it('não mostra aviso nem repõe texto quando o envio dá certo', async () => {
+    const onMessageSent = jest.fn()
+    mockSend(async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }))
+    await renderAsync(<ChatWindow conversation={conversation('a')} onMessageSent={onMessageSent} />)
+
+    typeAndSend('olá')
+
+    await waitFor(() => expect(onMessageSent).toHaveBeenCalled())
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>('Digite uma mensagem').value).toBe('')
+  })
+
+  it('não repõe por cima do que o operador já começou a escrever', async () => {
+    let fail: () => void = () => {}
+    mockSend(() => new Promise((resolve) => {
+      fail = () => resolve({ ok: false, status: 502, json: async () => ({ ok: false, error: 'falhou' }) })
+    }))
+    await renderAsync(<ChatWindow conversation={conversation('a')} onMessageSent={jest.fn()} />)
+
+    typeAndSend('primeira')
+    fireEvent.change(screen.getByPlaceholderText('Digite uma mensagem'), { target: { value: 'segunda' } })
+    fail()
+
+    await screen.findByRole('alert')
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>('Digite uma mensagem').value).toBe('segunda')
+  })
+
+  it('uma falha que chega depois de trocar de conversa não aparece na conversa nova', async () => {
+    let fail: (() => void) | null = null
+    mockSend(() => new Promise((resolve) => {
+      fail = () => resolve({ ok: false, status: 502, json: async () => ({ ok: false, error: 'falhou' }) })
+    }))
+    const view = (id: string) => <ChatWindow key={id} conversation={conversation(id)} onMessageSent={jest.fn()} />
+    const { rerender } = await renderAsync(view('a'))
+
+    typeAndSend('para o cliente A')
+    // o envio da conversa A ainda está pendente quando se troca para B
+    expect(fail).not.toBeNull()
+    await act(async () => rerender(view('b')))
+    await act(async () => {
+      fail?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>('Digite uma mensagem').value).toBe('')
   })
 })
