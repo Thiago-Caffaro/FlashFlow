@@ -319,6 +319,41 @@ export async function mapShopifyOrderPayload(
   }
 }
 
+// Pedido mais antigo que isto não recebe a confirmação automática — cobre
+// reentregas tardias da Shopify e pedidos antigos tocados por orders/updated.
+export const CONFIRMATION_MAX_ORDER_AGE_MS = 24 * 60 * 60 * 1000
+
+// Status comerciais em que o operador ainda não tratou o pedido.
+const UNHANDLED_COMMERCIAL_STATUSES = new Set(['Não responde'])
+
+// Decide se um pedido deve receber a confirmação automática, seja qual for o
+// webhook (orders/create, orders/updated...) que chegou primeiro.
+// `commercialStatus: null` significa pedido novo (ainda não gravado).
+export function isOrderEligibleForConfirmation(input: {
+  confirmationSentAt: string | null
+  cancelledAt: string | null
+  commercialStatus: string | null
+  orderPlacedAt: string
+  nowMs: number
+}): boolean {
+  if (input.confirmationSentAt) return false
+  if (input.cancelledAt) return false
+  if (input.commercialStatus !== null && !UNHANDLED_COMMERCIAL_STATUSES.has(input.commercialStatus)) return false
+  const placedMs = Date.parse(input.orderPlacedAt)
+  if (Number.isNaN(placedMs)) return false
+  return input.nowMs - placedMs <= CONFIRMATION_MAX_ORDER_AGE_MS
+}
+
+// Payload de webhook mais antigo que o já gravado (entregas fora de ordem).
+// Na dúvida (data ausente ou inválida) não é obsoleto: grava como antes.
+export function isStaleShopifyPayload(payloadUpdatedAt: unknown, storedUpdatedAt: unknown): boolean {
+  if (typeof payloadUpdatedAt !== 'string' || typeof storedUpdatedAt !== 'string') return false
+  const payloadMs = Date.parse(payloadUpdatedAt)
+  const storedMs = Date.parse(storedUpdatedAt)
+  if (Number.isNaN(payloadMs) || Number.isNaN(storedMs)) return false
+  return payloadMs < storedMs
+}
+
 export async function upsertShopifyOrder(
   integrationRow: ShopifyIntegrationCredentialRow,
   payload: unknown,
@@ -348,13 +383,15 @@ export async function upsertShopifyOrder(
 
   const { data: existing, error: existingError } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, assigned_instance_name, commercial_status, send_status, delivery_status, confirmation_message_sent_at, shopify_financial_status, shopify_cancelled_at')
+    .select('id, assigned_instance_name, commercial_status, send_status, delivery_status, confirmation_message_sent_at, shopify_financial_status, shopify_cancelled_at, payload_updated_at:raw_shopify_payload->>updated_at')
     .eq('shopify_integration_id', integration.id)
     .eq('shopify_order_id', mapped.shopify_order_id)
     .maybeSingle()
   if (existingError) throw new Error(`Falha ao consultar pedido Shopify: ${existingError.message}`)
 
   const isNewOrder = !existing?.id
+  // Entrega fora de ordem: o gravado já veio de um payload mais recente.
+  const stale = !isNewOrder && isStaleShopifyPayload(asRecord(payload).updated_at, existing.payload_updated_at)
   const now = new Date().toISOString()
   const existingAssigned = typeof existing?.assigned_instance_name === 'string' && existing.assigned_instance_name
     ? existing.assigned_instance_name
@@ -381,18 +418,26 @@ export async function upsertShopifyOrder(
       })
       .select()
       .single()
-    : await supabaseAdmin
-      .from('fulfillment_orders')
-      .update(patch)
-      .eq('id', existing.id)
-      .select()
-      .single()
+    : stale
+      // Payload obsoleto não regrava o pedido: só relê a linha atual.
+      ? await supabaseAdmin
+        .from('fulfillment_orders')
+        .select()
+        .eq('id', existing.id)
+        .single()
+      : await supabaseAdmin
+        .from('fulfillment_orders')
+        .update(patch)
+        .eq('id', existing.id)
+        .select()
+        .single()
 
   // A Shopify manda orders/create e orders/updated do mesmo pedido quase ao
   // mesmo tempo: os dois veem "pedido novo" e os dois inserem — o segundo
-  // bate na chave única. Refaz uma vez: agora o pedido existe e vira update,
-  // e a confirmação do orders/create não se perde (o job é deduplicado por
-  // pedido).
+  // bate na chave única. Refaz uma vez: agora o pedido existe e vira update.
+  // A confirmação não depende de qual webhook chega primeiro (nem desta
+  // repetição): qualquer entrega de um pedido elegível enfileira, e o job é
+  // deduplicado por pedido.
   if (isNewOrder && result.error?.code === '23505' && !options.afterInsertConflict) {
     return upsertShopifyOrder(integrationRow, payload, { ...options, afterInsertConflict: true })
   }
@@ -403,7 +448,7 @@ export async function upsertShopifyOrder(
 
   await markAbandonedCheckoutsConvertedByOrder(integration.id, payload)
 
-  if (!isNewOrder && (
+  if (!isNewOrder && !stale && (
     existing.shopify_financial_status !== mapped.shopify_financial_status ||
     existing.shopify_cancelled_at !== mapped.shopify_cancelled_at
   )) {
@@ -414,7 +459,14 @@ export async function upsertShopifyOrder(
     })
   }
 
-  if ((isNewOrder || options.afterInsertConflict) && options.sendConfirmation !== false && !existing?.confirmation_message_sent_at) {
+  const eligible = options.sendConfirmation !== false && isOrderEligibleForConfirmation({
+    confirmationSentAt: existing?.confirmation_message_sent_at ?? null,
+    cancelledAt: stale ? existing.shopify_cancelled_at : mapped.shopify_cancelled_at,
+    commercialStatus: isNewOrder ? null : existing.commercial_status ?? null,
+    orderPlacedAt: mapped.order_placed_at,
+    nowMs: Date.now(),
+  })
+  if (eligible) {
     // Automação simples "Pedido criado" do país/linha tem precedência sobre o
     // gatilho da conta e sai pelo número dela.
     const automationMatch = result.data.is_simulation ? null : await findOrderAutomation('order_created', result.data)

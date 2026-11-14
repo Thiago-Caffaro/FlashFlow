@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     const payload = JSON.parse(rawBody) as unknown
     const triggersEnabled = await getShopifyTriggersEnabled()
     const order = await upsertShopifyOrder(integration, payload, {
-      sendConfirmation: topic === 'orders/create' && triggersEnabled,
+      sendConfirmation: triggersEnabled,
     })
     console.log(`[shopify-webhook] ${topic} accepted country=${order.country}`)
     return NextResponse.json({ ok: true, order })
