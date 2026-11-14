@@ -332,7 +332,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       </div>
 
       {/* Input */}
-      <MessageInput onSend={handleSend} onSendImage={handleSendImage} disabled={sending} />
+      <MessageInput key={conversation.id} onSend={handleSend} onSendImage={handleSendImage} disabled={sending} />
     </div>
   )
 }
