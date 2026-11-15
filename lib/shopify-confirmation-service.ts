@@ -328,16 +328,21 @@ const UNHANDLED_COMMERCIAL_STATUSES = new Set(['Não responde'])
 
 // Decide se um pedido deve receber a confirmação automática, seja qual for o
 // webhook (orders/create, orders/updated...) que chegou primeiro.
-// `commercialStatus: null` significa pedido novo (ainda não gravado).
+// `commercialStatus: null` / `orderStatus: null` significam pedido novo
+// (ainda não gravado). Pedido existente só é elegível enquanto está em
+// `pending_operator` — um cancelamento local (cancelLocalFulfillmentOrder)
+// muda o status para 'cancelled' mas deixa o comercial em 'Não responde'.
 export function isOrderEligibleForConfirmation(input: {
   confirmationSentAt: string | null
   cancelledAt: string | null
   commercialStatus: string | null
+  orderStatus: string | null
   orderPlacedAt: string
   nowMs: number
 }): boolean {
   if (input.confirmationSentAt) return false
   if (input.cancelledAt) return false
+  if (input.orderStatus !== null && input.orderStatus !== 'pending_operator') return false
   if (input.commercialStatus !== null && !UNHANDLED_COMMERCIAL_STATUSES.has(input.commercialStatus)) return false
   const placedMs = Date.parse(input.orderPlacedAt)
   if (Number.isNaN(placedMs)) return false
@@ -383,7 +388,7 @@ export async function upsertShopifyOrder(
 
   const { data: existing, error: existingError } = await supabaseAdmin
     .from('fulfillment_orders')
-    .select('id, assigned_instance_name, commercial_status, send_status, delivery_status, confirmation_message_sent_at, shopify_financial_status, shopify_cancelled_at, payload_updated_at:raw_shopify_payload->>updated_at')
+    .select('id, status, assigned_instance_name, commercial_status, send_status, delivery_status, confirmation_message_sent_at, shopify_financial_status, shopify_cancelled_at, payload_updated_at:raw_shopify_payload->>updated_at')
     .eq('shopify_integration_id', integration.id)
     .eq('shopify_order_id', mapped.shopify_order_id)
     .maybeSingle()
@@ -463,6 +468,7 @@ export async function upsertShopifyOrder(
     confirmationSentAt: existing?.confirmation_message_sent_at ?? null,
     cancelledAt: stale ? existing.shopify_cancelled_at : mapped.shopify_cancelled_at,
     commercialStatus: isNewOrder ? null : existing.commercial_status ?? null,
+    orderStatus: isNewOrder ? null : String(existing.status ?? ''),
     orderPlacedAt: mapped.order_placed_at,
     nowMs: Date.now(),
   })

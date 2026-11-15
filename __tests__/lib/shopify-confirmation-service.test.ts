@@ -241,6 +241,7 @@ describe('isOrderEligibleForConfirmation', () => {
     confirmationSentAt: null,
     cancelledAt: null,
     commercialStatus: null,
+    orderStatus: null,
     orderPlacedAt: '2026-11-14T11:00:00.000Z',
     nowMs,
   }
@@ -249,7 +250,13 @@ describe('isOrderEligibleForConfirmation', () => {
     expect(isOrderEligibleForConfirmation(base)).toBe(true)
   })
   it('aceita pedido existente ainda não tratado pelo operador', () => {
-    expect(isOrderEligibleForConfirmation({ ...base, commercialStatus: 'Não responde' })).toBe(true)
+    expect(isOrderEligibleForConfirmation({ ...base, commercialStatus: 'Não responde', orderStatus: 'pending_operator' })).toBe(true)
+  })
+  it('recusa pedido existente cancelado localmente mesmo com status comercial "Não responde"', () => {
+    expect(isOrderEligibleForConfirmation({ ...base, commercialStatus: 'Não responde', orderStatus: 'cancelled' })).toBe(false)
+  })
+  it.each(['submitting', 'created', 'failed'])('recusa pedido existente com status %s', (orderStatus) => {
+    expect(isOrderEligibleForConfirmation({ ...base, commercialStatus: 'Não responde', orderStatus })).toBe(false)
   })
   it('recusa quando a confirmação já foi enviada', () => {
     expect(isOrderEligibleForConfirmation({ ...base, confirmationSentAt: '2026-11-14T11:05:00.000Z' })).toBe(false)
@@ -551,6 +558,7 @@ describe('shopify-confirmation-service', () => {
     const existing = queryBuilder({
       data: {
         id: 'order-1',
+        status: 'pending_operator',
         assigned_instance_name: 'wa-country',
         commercial_status: 'Não responde',
         confirmation_message_sent_at: null,
@@ -771,7 +779,7 @@ describe('shopify-confirmation-service', () => {
       fulfillment_orders: [
         queryBuilder({ data: null, error: null }),
         queryBuilder({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "fulfillment_orders_order_number_key"' } }),
-        queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-1', commercial_status: 'Não responde', confirmation_message_sent_at: null, shopify_financial_status: 'pending', shopify_cancelled_at: null }, error: null }),
+        queryBuilder({ data: { id: 'order-1', status: 'pending_operator', assigned_instance_name: 'wa-1', commercial_status: 'Não responde', confirmation_message_sent_at: null, shopify_financial_status: 'pending', shopify_cancelled_at: null }, error: null }),
         queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-1', instance_name: 'wa-1' }, error: null }),
       ],
       triggers: [queryBuilder({ data: { action_payload: { flow_id: 'flow-1' } }, error: null })],
@@ -782,6 +790,24 @@ describe('shopify-confirmation-service', () => {
 
     expect(order).toMatchObject({ id: 'order-1' })
     expect(mockEnqueueShopifyOrderFlowJob).toHaveBeenCalledWith(expect.objectContaining({ orderId: 'order-1', flowId: 'flow-1' }))
+  })
+
+  it('não confirma um pedido existente cancelado localmente', async () => {
+    setTableQueues({
+      accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+      fulfillment_orders: [
+        queryBuilder({ data: { id: 'order-1', status: 'cancelled', assigned_instance_name: 'wa-1', commercial_status: 'Não responde', confirmation_message_sent_at: null, shopify_financial_status: 'pending', shopify_cancelled_at: null }, error: null }),
+        queryBuilder({ data: { id: 'order-1', status: 'cancelled', assigned_instance_name: 'wa-1', instance_name: 'wa-1' }, error: null }),
+      ],
+      triggers: [queryBuilder({ data: { action_payload: { flow_id: 'flow-1' } }, error: null })],
+      shopify_abandoned_checkouts: [queryBuilder({ data: [], error: null })],
+    })
+
+    await upsertShopifyOrder(integrationRow(), shopifyOrder(), { sendConfirmation: true })
+
+    expect(mockEnqueueShopifyOrderFlowJob).not.toHaveBeenCalled()
+    expect(mockExecuteFlow).not.toHaveBeenCalled()
+    expect(mockSendWhatsAppText).not.toHaveBeenCalled()
   })
 
   it('orders/updated antes de orders/create: enfileira nas duas entregas com o mesmo pedido', async () => {
@@ -797,7 +823,7 @@ describe('shopify-confirmation-service', () => {
         // 2.ª entrega (orders/create, payload mais antigo): existe → não regrava
         queryBuilder({
           data: {
-            id: 'order-1', assigned_instance_name: 'wa-1', commercial_status: 'Não responde',
+            id: 'order-1', status: 'pending_operator', assigned_instance_name: 'wa-1', commercial_status: 'Não responde',
             confirmation_message_sent_at: null, shopify_financial_status: null, shopify_cancelled_at: null,
             payload_updated_at: '2026-11-14T10:00:05.000Z',
           },
@@ -853,7 +879,7 @@ describe('shopify-confirmation-service', () => {
       fulfillment_orders: [
         queryBuilder({
           data: {
-            id: 'order-1', assigned_instance_name: 'wa-1', commercial_status: 'Não responde',
+            id: 'order-1', status: 'pending_operator', assigned_instance_name: 'wa-1', commercial_status: 'Não responde',
             confirmation_message_sent_at: null, shopify_financial_status: null,
             shopify_cancelled_at: '2026-11-14T10:00:04.000Z',
             payload_updated_at: '2026-11-14T10:00:05.000Z',
