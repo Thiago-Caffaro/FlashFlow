@@ -64,17 +64,21 @@ function cloudApiErrorMessage(body: unknown, fallbackText: string): string {
   return fallbackText.slice(0, 300)
 }
 
-function cloudApiErrorCode(body: unknown): number | null {
+function cloudApiErrorRecord(body: unknown): Record<string, unknown> | null {
   const record = body && typeof body === 'object' ? body as Record<string, unknown> : null
-  const error = record?.error && typeof record.error === 'object' ? record.error as Record<string, unknown> : null
-  return error && typeof error.code === 'number' ? error.code : null
+  return record?.error && typeof record.error === 'object' ? record.error as Record<string, unknown> : null
 }
 
 function cloudApiError(prefix: string, response: CloudFetchResult): WhatsAppCloudApiError {
+  const error = cloudApiErrorRecord(response.body)
   return new WhatsAppCloudApiError(
     `${prefix} (${response.status}): ${cloudApiErrorMessage(response.body, response.text)}`,
     response.status,
-    cloudApiErrorCode(response.body)
+    error && typeof error.code === 'number' ? error.code : null,
+    {
+      type: error && typeof error.type === 'string' ? error.type : null,
+      subcode: error && typeof error.error_subcode === 'number' ? error.error_subcode : null,
+    }
   )
 }
 

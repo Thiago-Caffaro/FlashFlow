@@ -18,16 +18,26 @@ async function requireCredentials(instanceName: string) {
 
 // Só falhas ao nível da conta (credencial/permissão) marcam last_error; erro de
 // destinatário ou de rede não deve fazer a conta parecer desconectada. Um envio
-// bem-sucedido limpa um last_error anterior.
+// bem-sucedido limpa um last_error anterior. Um token que não pode ser
+// decifrado (ex.: AI_ENCRYPTION_KEY rotacionada) também é problema da conta.
 async function sendWithAccountHealth<T>(
   instanceName: string,
   row: WhatsAppCloudCredentialsRow,
   fallbackMessage: string,
-  send: () => Promise<T>
+  send: (accessToken: string) => Promise<T>
 ): Promise<T> {
+  let accessToken: string
+  try {
+    accessToken = decodeCloudAccessToken(row)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    await recordCloudSendError(instanceName, `Não foi possível decifrar o token da conta: ${detail}`)
+    throw error
+  }
+
   let result: T
   try {
-    result = await send()
+    result = await send(accessToken)
   } catch (error) {
     if (isCloudAccountLevelError(error)) {
       const message = error instanceof Error ? error.message : fallbackMessage
@@ -46,8 +56,8 @@ async function sendText(
   timeoutMs?: number
 ): Promise<SendResult> {
   const row = await requireCredentials(instanceName)
-  return sendWithAccountHealth(instanceName, row, 'Falha ao enviar mensagem via WhatsApp Cloud API', async () => {
-    const result = await sendCloudText(row.phone_number_id, decodeCloudAccessToken(row), remoteJid, text, timeoutMs)
+  return sendWithAccountHealth(instanceName, row, 'Falha ao enviar mensagem via WhatsApp Cloud API', async (accessToken) => {
+    const result = await sendCloudText(row.phone_number_id, accessToken, remoteJid, text, timeoutMs)
     return { waMessageId: result.waMessageId, raw: result.raw }
   })
 }
@@ -77,8 +87,8 @@ async function sendImage(
   caption?: string
 ): Promise<SendResult> {
   const row = await requireCredentials(instanceName)
-  return sendWithAccountHealth(instanceName, row, 'Falha ao enviar imagem via WhatsApp Cloud API', async () => {
-    const result = await sendCloudImage(row.phone_number_id, decodeCloudAccessToken(row), remoteJid, imageUrl, caption)
+  return sendWithAccountHealth(instanceName, row, 'Falha ao enviar imagem via WhatsApp Cloud API', async (accessToken) => {
+    const result = await sendCloudImage(row.phone_number_id, accessToken, remoteJid, imageUrl, caption)
     return { waMessageId: result.waMessageId, raw: result.raw }
   })
 }
@@ -104,8 +114,8 @@ async function sendButtons(
   }
 
   const row = await requireCredentials(instanceName)
-  return sendWithAccountHealth(instanceName, row, 'Falha ao enviar botões via WhatsApp Cloud API', async () => {
-    const result = await sendCloudButtons(row.phone_number_id, decodeCloudAccessToken(row), remoteJid, {
+  return sendWithAccountHealth(instanceName, row, 'Falha ao enviar botões via WhatsApp Cloud API', async (accessToken) => {
+    const result = await sendCloudButtons(row.phone_number_id, accessToken, remoteJid, {
       headerText: content.title.trim() || undefined,
       headerImageUrl: opts.thumbnailUrl,
       bodyText,
@@ -128,8 +138,8 @@ async function sendTemplate(
   options?: SendTemplateOptions
 ): Promise<SendResult> {
   const row = await requireCredentials(instanceName)
-  return sendWithAccountHealth(instanceName, row, 'Falha ao enviar template via WhatsApp Cloud API', async () => {
-    const result = await sendCloudTemplate(row.phone_number_id, decodeCloudAccessToken(row), remoteJid, templateName, language, parameters, undefined, options)
+  return sendWithAccountHealth(instanceName, row, 'Falha ao enviar template via WhatsApp Cloud API', async (accessToken) => {
+    const result = await sendCloudTemplate(row.phone_number_id, accessToken, remoteJid, templateName, language, parameters, undefined, options)
     return { waMessageId: result.waMessageId, raw: result.raw }
   })
 }

@@ -3,7 +3,7 @@ import { WhatsAppCloudApiError, isCloudAccountLevelError } from '@/lib/whatsapp-
 describe('isCloudAccountLevelError', () => {
   it.each([
     [401, 190], [401, null], [403, 10], [403, null], [400, 190], [400, 200], [400, 299],
-    [400, 368], [400, 131005], [403, 131031], [400, 131045], [400, 133010],
+    [400, 368], [400, 131005], [403, 131031], [400, 131042], [400, 131045], [400, 133010],
   ])('HTTP %i code %p é erro da conta', (status, code) => {
     expect(isCloudAccountLevelError(new WhatsAppCloudApiError('x', status, code))).toBe(true)
   })
@@ -20,6 +20,21 @@ describe('isCloudAccountLevelError', () => {
     [500, null], [400, null],
   ])('HTTP %i code %p não é erro da conta', (status, code) => {
     expect(isCloudAccountLevelError(new WhatsAppCloudApiError('x', status, code))).toBe(false)
+  })
+
+  it('GraphMethodException (conta sem WABA atribuída) é erro da conta', () => {
+    const error = new WhatsAppCloudApiError('Unsupported post request', 400, 100, { type: 'GraphMethodException' })
+    expect(isCloudAccountLevelError(error)).toBe(true)
+  })
+
+  it('code 100 com subcode 33 (objeto inexistente ou sem permissão) é erro da conta', () => {
+    const error = new WhatsAppCloudApiError('Unsupported post request', 400, 100, { subcode: 33 })
+    expect(isCloudAccountLevelError(error)).toBe(true)
+  })
+
+  it('code 100 sem subcode nem GraphMethodException não é erro da conta', () => {
+    const error = new WhatsAppCloudApiError('Invalid parameter', 400, 100, { type: 'OAuthException', subcode: null })
+    expect(isCloudAccountLevelError(error)).toBe(false)
   })
 
   it('erros que não vieram da Graph API não são erro da conta', () => {

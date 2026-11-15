@@ -365,6 +365,18 @@ describe('cloudApiAdapter — saúde da conta', () => {
     expect(mockClearCloudSendError).not.toHaveBeenCalled()
   })
 
+  it('token indecifrável marca a conta com erro e relança sem enviar', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: null })
+    mockDecodeCloudAccessToken.mockImplementationOnce(() => { throw new Error('Unsupported state or unable to authenticate data') })
+    await expect(cloudApiAdapter.sendText('wa-1', '5511999999999', 'oi')).rejects.toThrow('unable to authenticate data')
+    expect(mockSendCloudText).not.toHaveBeenCalled()
+    expect(mockRecordCloudSendError).toHaveBeenCalledWith(
+      'wa-1',
+      'Não foi possível decifrar o token da conta: Unsupported state or unable to authenticate data'
+    )
+    expect(mockClearCloudSendError).not.toHaveBeenCalled()
+  })
+
   it('envio de texto com sucesso limpa um last_error anterior', async () => {
     mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: 'erro antigo' })
     mockSendCloudText.mockResolvedValue({ waMessageId: 'wamid.1', raw: {} })
