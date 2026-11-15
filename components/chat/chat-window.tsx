@@ -36,6 +36,9 @@ function msgDayKey(dateStr: string): string {
 const syncedConversations = new Set<string>()
 
 const NETWORK_SEND_ERROR = 'Não foi possível enviar a mensagem. Verifique a conexão e tente novamente.'
+// 504: o servidor não sabe se a mensagem saiu e mantém a linha como
+// 'sending' para não haver reenvio duplicado — o texto não volta ao campo.
+const UNCERTAIN_SEND_WARNING = 'A mensagem pode ter sido enviada — aguarde a confirmação antes de reenviar.'
 
 // Devolve a mensagem de erro do envio, ou null quando a API confirmou o envio.
 async function readSendFailure(res: Response): Promise<string | null> {
@@ -176,6 +179,11 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
         }),
       })
       const failure = await readSendFailure(res)
+      if (failure && res.status === 504) {
+        setSendError(UNCERTAIN_SEND_WARNING)
+        setTimeout(() => fetchMessages(false, true), 1500)
+        return true
+      }
       if (failure) {
         setMessages(prev => prev.filter(m => m.id !== tempId))
         setSendError(failure)

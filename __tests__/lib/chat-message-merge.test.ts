@@ -48,6 +48,15 @@ describe('mergeFetchedMessages', () => {
     expect(merged.map((m) => m.id)).toEqual(['m1', 'm5', 'temp-2'])
   })
 
+  it('mantém a otimista quando a única linha igual vinda do banco é uma falha antiga', () => {
+    const optimistic = message('temp-1', 6, { direction: 'outbound', status: 'sending', content: 'oi' })
+    const failedEarlier = message('m5', 5, { direction: 'outbound', status: 'failed', content: 'oi' })
+
+    const merged = mergeFetchedMessages([optimistic], [failedEarlier], true)
+
+    expect(merged.map((m) => m.id)).toEqual(['m5', 'temp-1'])
+  })
+
   it('ignores an empty response instead of wiping the conversation', () => {
     const prev = [message('m1', 1)]
     expect(mergeFetchedMessages(prev, [], true)).toBe(prev)

@@ -84,6 +84,23 @@ describe('ChatWindow — falha de envio', () => {
     expect(screen.queryByText('olá', { ignore: 'textarea' })).toBeNull() // a bolha otimista saiu
   })
 
+  it('em timeout (504) avisa sem repor o texto nem remover a mensagem otimista', async () => {
+    mockSend(async () => ({
+      ok: false,
+      status: 504,
+      json: async () => ({ ok: false, error: 'Tempo esgotado ao enviar — resultado desconhecido, verifique antes de reenviar.' }),
+    }))
+    await renderAsync(<ChatWindow conversation={conversation('a')} onMessageSent={jest.fn()} />)
+
+    typeAndSend('olá')
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'A mensagem pode ter sido enviada — aguarde a confirmação antes de reenviar.'
+    )
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>('Digite uma mensagem').value).toBe('')
+    expect(screen.getByText('olá', { ignore: 'textarea' })).toBeTruthy() // a bolha otimista continua
+  })
+
   it('trata erro de rede da mesma forma', async () => {
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {})
     mockSend(async () => { throw new TypeError('Failed to fetch') })
