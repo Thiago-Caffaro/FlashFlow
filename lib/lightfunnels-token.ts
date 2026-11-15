@@ -97,6 +97,22 @@ async function markDisconnected(integrationId: string, message: string) {
     .eq('id', integrationId)
 }
 
+// Falha transitória não desconecta, mas fica registada para o painel mostrar
+// porque a sincronização parou. Best-effort: uma falha ao gravar não pode
+// esconder o erro original do refresh.
+async function recordTransientRefreshError(integrationId: string, message: string) {
+  try {
+    const { error } = await supabaseAdmin
+      .from('lightfunnels_integrations')
+      .update({ last_error: message, updated_at: new Date().toISOString() })
+      .eq('id', integrationId)
+    if (error) console.warn(`[lightfunnels-token] falha ao gravar last_error da integração ${integrationId}: ${error.message}`)
+  } catch (writeError) {
+    const detail = writeError instanceof Error ? writeError.message : String(writeError)
+    console.warn(`[lightfunnels-token] falha ao gravar last_error da integração ${integrationId}: ${detail}`)
+  }
+}
+
 export async function getValidAccessToken(
   integration: LightfunnelsIntegrationCredentialRow | string
 ): Promise<string> {
@@ -137,6 +153,7 @@ async function refreshAccessToken(row: LightfunnelsIntegrationCredentialRow): Pr
     }
     const message = error instanceof Error ? error.message : 'Falha ao renovar token Lightfunnels'
     if (error instanceof LightfunnelsAuthError) await markDisconnected(row.id, message)
+    else if (error instanceof LightfunnelsTransientError) await recordTransientRefreshError(row.id, message)
     throw error
   }
 

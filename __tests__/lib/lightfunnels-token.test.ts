@@ -2,6 +2,7 @@ const mockLoadIntegration = jest.fn()
 const mockUpdateResult = jest.fn()
 const mockUpdatePatch = jest.fn()
 const mockUpdateFilters = jest.fn()
+const mockAwaitResult = jest.fn((): Promise<unknown> => Promise.resolve({ data: null, error: null }))
 
 jest.mock('@/lib/ai-crypto', () => ({
   decryptSecret: jest.fn((value: string) => `plain:${value}`),
@@ -28,7 +29,7 @@ jest.mock('@/lib/supabase-admin', () => ({
       builder.eq = (column: string, value: unknown) => { mockUpdateFilters(column, value); return builder }
       builder.select = () => builder
       builder.maybeSingle = () => mockUpdateResult()
-      builder.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(resolve)
+      builder.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => mockAwaitResult().then(resolve, reject)
       return builder
     }),
   },
@@ -119,6 +120,27 @@ describe('getValidAccessToken', () => {
     mockLoadIntegration.mockResolvedValue(expiredRow())
     await expect(getValidAccessToken(expiredRow())).rejects.toBeInstanceOf(LightfunnelsTransientError)
     expect(mockUpdatePatch).not.toHaveBeenCalledWith(expect.objectContaining({ oauth_connected: false }))
+  })
+
+  it('regista a falha transitória em last_error sem mexer em oauth_connected', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 502, text: async () => 'Bad Gateway' })
+    mockLoadIntegration.mockResolvedValue(expiredRow())
+    await expect(getValidAccessToken(expiredRow())).rejects.toBeInstanceOf(LightfunnelsTransientError)
+    expect(mockUpdatePatch).toHaveBeenCalledWith(expect.objectContaining({
+      last_error: expect.stringContaining('indisponível'),
+    }))
+    expect(mockUpdatePatch).not.toHaveBeenCalledWith(expect.objectContaining({ oauth_connected: expect.anything() }))
+    expect(mockUpdateFilters).toHaveBeenCalledWith('id', 'int-1')
+  })
+
+  it('uma falha ao gravar last_error não esconde o erro transitório original', async () => {
+    const consoleWarn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchMock.mockResolvedValue({ ok: false, status: 502, text: async () => 'Bad Gateway' })
+    mockLoadIntegration.mockResolvedValue(expiredRow())
+    mockAwaitResult.mockImplementationOnce(() => Promise.reject(new Error('supabase fora do ar')))
+    await expect(getValidAccessToken(expiredRow())).rejects.toBeInstanceOf(LightfunnelsTransientError)
+    expect(consoleWarn).toHaveBeenCalledWith(expect.stringContaining('supabase fora do ar'))
+    consoleWarn.mockRestore()
   })
 
   it('restaura oauth_connected e limpa last_error ao renovar com sucesso', async () => {
