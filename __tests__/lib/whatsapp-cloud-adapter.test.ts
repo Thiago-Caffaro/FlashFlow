@@ -154,7 +154,7 @@ describe('cloudApiAdapter.sendImage', () => {
     expect(mockSendCloudImage).not.toHaveBeenCalled()
   })
 
-  it('records the error via recordCloudSendError and re-throws when the send fails', async () => {
+  it('não marca a conta em erro 400 de URL de imagem e relança', async () => {
     mockLoadCloudCredentials.mockResolvedValue({
       instance_name: 'wa-1', phone_number_id: '123456',
       encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
@@ -265,7 +265,7 @@ describe('cloudApiAdapter.sendButtons', () => {
     expect(mockLoadCloudCredentials).not.toHaveBeenCalled()
   })
 
-  it('records the error via recordCloudSendError and re-throws when the send fails', async () => {
+  it('não marca a conta em erro 400 de payload dos botões e relança', async () => {
     mockLoadCloudCredentials.mockResolvedValue({
       instance_name: 'wa-1', phone_number_id: '123456',
       encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
@@ -320,7 +320,7 @@ describe('cloudApiAdapter.sendTemplate', () => {
     expect(mockSendCloudTemplate).not.toHaveBeenCalled()
   })
 
-  it('records the error via recordCloudSendError and re-throws when the send fails', async () => {
+  it('não marca a conta em erro 400 de template inexistente e relança', async () => {
     mockLoadCloudCredentials.mockResolvedValue({
       instance_name: 'wa-1', phone_number_id: '123456',
       encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
