@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { MoreVertical, Search } from 'lucide-react'
+import { MoreVertical, Search, X } from 'lucide-react'
 import { Conversation, Message } from '@/types'
 import { mergeFetchedMessages, RECENT_MESSAGES_POLL_LIMIT } from '@/lib/chat-message-merge'
 import MessageBubble from './message-bubble'
@@ -35,6 +35,22 @@ function msgDayKey(dateStr: string): string {
 
 const syncedConversations = new Set<string>()
 
+const NETWORK_SEND_ERROR = 'Não foi possível enviar a mensagem. Verifique a conexão e tente novamente.'
+// 504: o servidor não sabe se a mensagem saiu e mantém a linha como
+// 'sending' para não haver reenvio duplicado — o texto não volta ao campo.
+const UNCERTAIN_SEND_WARNING = 'A mensagem pode ter sido enviada — aguarde a confirmação antes de reenviar.'
+
+// Devolve a mensagem de erro do envio, ou null quando a API confirmou o envio.
+async function readSendFailure(res: Response): Promise<string | null> {
+  const body: unknown = await res.json().catch(() => null)
+  const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : null
+  if (res.ok && record?.ok !== false) return null
+  const error = record?.error
+  return typeof error === 'string' && error.trim()
+    ? error
+    : `Não foi possível enviar (HTTP ${res.status})`
+}
+
 interface ChatWindowProps {
   conversation: Conversation | null
   onMessageSent: () => void
@@ -57,6 +73,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
   const [imgError, setImgError] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const currentConvIdRef = useRef<string | null>(null)
@@ -130,8 +147,8 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     if (el && isAtBottomRef.current) el.scrollTop = el.scrollHeight
   }, [messages])
 
-  const handleSend = async (content: string) => {
-    if (!conversation) return
+  const handleSend = async (content: string): Promise<boolean> => {
+    if (!conversation) return false
 
     const tempId = `temp-${Date.now()}`
     const optimisticMsg: Message = {
@@ -153,7 +170,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
     }, 50)
 
     try {
-      await fetch('/api/messages', {
+      const res = await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -161,11 +178,26 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
           content,
         }),
       })
+      const failure = await readSendFailure(res)
+      if (failure && res.status === 504) {
+        setSendError(UNCERTAIN_SEND_WARNING)
+        setTimeout(() => fetchMessages(false, true), 1500)
+        return true
+      }
+      if (failure) {
+        setMessages(prev => prev.filter(m => m.id !== tempId))
+        setSendError(failure)
+        return false
+      }
+      setSendError(null)
       onMessageSent()
       setTimeout(() => fetchMessages(false, true), 1500)
+      return true
     } catch (err) {
       console.error('Erro ao enviar:', err)
       setMessages(prev => prev.filter(m => m.id !== tempId))
+      setSendError(NETWORK_SEND_ERROR)
+      return false
     }
   }
 
@@ -196,11 +228,19 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
       const formData = new FormData()
       formData.append('file', file)
       formData.append('conversationId', conversation.id)
-      await fetch('/api/messages/image', { method: 'POST', body: formData })
+      const res = await fetch('/api/messages/image', { method: 'POST', body: formData })
+      const failure = await readSendFailure(res)
+      if (failure) {
+        setMessages(prev => prev.filter(m => m.id !== tempId))
+        setSendError(`Imagem não enviada: ${failure}`)
+        return
+      }
+      setSendError(null)
       onMessageSent()
     } catch (err) {
       console.error('Erro ao enviar imagem:', err)
       setMessages(prev => prev.filter(m => m.id !== tempId))
+      setSendError(`Imagem não enviada: ${NETWORK_SEND_ERROR}`)
     } finally {
       URL.revokeObjectURL(localUrl)
     }
@@ -331,8 +371,25 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
         )}
       </div>
 
+      {sendError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 px-4 py-2 text-sm bg-red-50 text-red-700 border-t border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900 shrink-0"
+        >
+          <span className="flex-1 min-w-0 break-words">{sendError}</span>
+          <button
+            type="button"
+            aria-label="Dispensar aviso"
+            onClick={() => setSendError(null)}
+            className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors shrink-0"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       {/* Input */}
-      <MessageInput onSend={handleSend} onSendImage={handleSendImage} disabled={sending} />
+      <MessageInput key={conversation.id} onSend={handleSend} onSendImage={handleSendImage} disabled={sending} />
     </div>
   )
 }

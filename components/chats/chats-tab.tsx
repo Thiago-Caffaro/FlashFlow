@@ -491,7 +491,7 @@ export default function ChatsTab({ instanceName }: ChatsTabProps) {
       {/* ── Right panel ── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {isPrincipal ? (
-          <ChatWindow conversation={selectedConversation} onMessageSent={() => {}} />
+          <ChatWindow key={selectedConversation?.id ?? 'none'} conversation={selectedConversation} onMessageSent={() => {}} />
         ) : selectedSession ? (
           <SessionChatView
             key={selectedSession.session.id}

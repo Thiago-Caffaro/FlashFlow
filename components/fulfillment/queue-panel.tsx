@@ -309,9 +309,12 @@ export default function QueuePanel({
 
   async function handleBulkStatus(status: CommercialStatus) {
     setBulkBusy(true)
-    await onBulkUpdateStatus(selectedVisibleIds, status)
-    setSelectedIds(new Set())
-    setBulkBusy(false)
+    try {
+      await onBulkUpdateStatus(selectedVisibleIds, status)
+      setSelectedIds(new Set())
+    } finally {
+      setBulkBusy(false)
+    }
   }
 
   return (

@@ -4,7 +4,9 @@ import { useState, KeyboardEvent, useRef, useEffect } from 'react'
 import { Send, Smile, Paperclip } from 'lucide-react'
 
 interface MessageInputProps {
-  onSend: (content: string) => void
+  // Pode devolver uma promise: se resolver com `false`, o texto enviado volta
+  // ao campo (desde que o operador ainda não tenha começado outra mensagem).
+  onSend: (content: string) => void | Promise<boolean | void>
   onSendImage: (file: File) => void
   disabled?: boolean
   leftAction?: React.ReactNode
@@ -24,9 +26,12 @@ export default function MessageInput({ onSend, onSendImage, disabled, leftAction
 
   const handleSend = () => {
     if (!text.trim() || disabled) return
-    onSend(text.trim())
+    const content = text.trim()
     setText('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
+    void Promise.resolve(onSend(content)).then((ok) => {
+      if (ok === false) setText((current) => current || content)
+    })
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

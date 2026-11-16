@@ -8,10 +8,12 @@ export {}
 const mockLoadCloudCredentials = jest.fn()
 const mockDecodeCloudAccessToken = jest.fn()
 const mockRecordCloudSendError = jest.fn()
+const mockClearCloudSendError = jest.fn()
 jest.mock('@/lib/whatsapp-cloud-credentials', () => ({
   loadCloudCredentials: (...args: unknown[]) => mockLoadCloudCredentials(...args),
   decodeCloudAccessToken: (...args: unknown[]) => mockDecodeCloudAccessToken(...args),
   recordCloudSendError: (...args: unknown[]) => mockRecordCloudSendError(...args),
+  clearCloudSendError: (...args: unknown[]) => mockClearCloudSendError(...args),
 }))
 
 const mockSendCloudText = jest.fn()
@@ -26,6 +28,8 @@ jest.mock('@/lib/whatsapp-cloud-client', () => ({
   sendCloudButtons: (...args: unknown[]) => mockSendCloudButtons(...args),
   sendCloudTemplate: (...args: unknown[]) => mockSendCloudTemplate(...args),
 }))
+
+import { WhatsAppCloudApiError } from '@/lib/whatsapp-cloud-errors'
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { cloudApiAdapter } = require('@/lib/whatsapp-cloud-adapter')
@@ -66,7 +70,7 @@ describe('cloudApiAdapter.sendText', () => {
       encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
     })
     mockDecodeCloudAccessToken.mockReturnValue('plain-token')
-    mockSendCloudText.mockRejectedValue(new Error('Falha ao enviar mensagem via WhatsApp Cloud API (401): Invalid OAuth access token'))
+    mockSendCloudText.mockRejectedValue(new WhatsAppCloudApiError('Falha ao enviar mensagem via WhatsApp Cloud API (401): Invalid OAuth access token code=190', 401, 190))
 
     await expect(cloudApiAdapter.sendText('wa-1', '5511999999999', 'oi'))
       .rejects.toThrow('Invalid OAuth access token')
@@ -150,20 +154,17 @@ describe('cloudApiAdapter.sendImage', () => {
     expect(mockSendCloudImage).not.toHaveBeenCalled()
   })
 
-  it('records the error via recordCloudSendError and re-throws when the send fails', async () => {
+  it('não marca a conta em erro 400 de URL de imagem e relança', async () => {
     mockLoadCloudCredentials.mockResolvedValue({
       instance_name: 'wa-1', phone_number_id: '123456',
       encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
     })
     mockDecodeCloudAccessToken.mockReturnValue('plain-token')
-    mockSendCloudImage.mockRejectedValue(new Error('Falha ao enviar imagem via WhatsApp Cloud API (400): Invalid image URL'))
+    mockSendCloudImage.mockRejectedValue(new WhatsAppCloudApiError('Falha ao enviar imagem via WhatsApp Cloud API (400): Invalid image URL', 400, null))
 
     await expect(cloudApiAdapter.sendImage('wa-1', '5511999999999', 'https://x/img.jpg'))
       .rejects.toThrow('Invalid image URL')
-    expect(mockRecordCloudSendError).toHaveBeenCalledWith(
-      'wa-1',
-      expect.stringContaining('Invalid image URL')
-    )
+    expect(mockRecordCloudSendError).not.toHaveBeenCalled()
   })
 })
 
@@ -264,20 +265,17 @@ describe('cloudApiAdapter.sendButtons', () => {
     expect(mockLoadCloudCredentials).not.toHaveBeenCalled()
   })
 
-  it('records the error via recordCloudSendError and re-throws when the send fails', async () => {
+  it('não marca a conta em erro 400 de payload dos botões e relança', async () => {
     mockLoadCloudCredentials.mockResolvedValue({
       instance_name: 'wa-1', phone_number_id: '123456',
       encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
     })
     mockDecodeCloudAccessToken.mockReturnValue('plain-token')
-    mockSendCloudButtons.mockRejectedValue(new Error('Falha ao enviar botões via WhatsApp Cloud API (400): Body text cannot be empty'))
+    mockSendCloudButtons.mockRejectedValue(new WhatsAppCloudApiError('Falha ao enviar botões via WhatsApp Cloud API (400): Body text cannot be empty', 400, null))
 
     await expect(cloudApiAdapter.sendButtons('wa-1', '5511999999999', fullContent))
       .rejects.toThrow('Body text cannot be empty')
-    expect(mockRecordCloudSendError).toHaveBeenCalledWith(
-      'wa-1',
-      expect.stringContaining('Body text cannot be empty')
-    )
+    expect(mockRecordCloudSendError).not.toHaveBeenCalled()
   })
 })
 
@@ -322,19 +320,111 @@ describe('cloudApiAdapter.sendTemplate', () => {
     expect(mockSendCloudTemplate).not.toHaveBeenCalled()
   })
 
-  it('records the error via recordCloudSendError and re-throws when the send fails', async () => {
+  it('não marca a conta em erro 400 de template inexistente e relança', async () => {
     mockLoadCloudCredentials.mockResolvedValue({
       instance_name: 'wa-1', phone_number_id: '123456',
       encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
     })
     mockDecodeCloudAccessToken.mockReturnValue('plain-token')
-    mockSendCloudTemplate.mockRejectedValue(new Error('Falha ao enviar template via WhatsApp Cloud API (400): Template name does not exist'))
+    mockSendCloudTemplate.mockRejectedValue(new WhatsAppCloudApiError('Falha ao enviar template via WhatsApp Cloud API (400): Template name does not exist', 400, null))
 
     await expect(cloudApiAdapter.sendTemplate('wa-1', '5511999999999', 'inexistente', 'pt_BR', []))
       .rejects.toThrow('Template name does not exist')
+    expect(mockRecordCloudSendError).not.toHaveBeenCalled()
+  })
+})
+
+describe('cloudApiAdapter — saúde da conta', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockDecodeCloudAccessToken.mockReturnValue('plain-token')
+  })
+
+  const credentials = {
+    instance_name: 'wa-1', phone_number_id: '123456',
+    encrypted_access_token: 'enc', access_token_iv: 'iv', access_token_auth_tag: 'tag',
+  }
+  const accountError = () => new WhatsAppCloudApiError('Invalid OAuth access token code=190', 401, 190)
+  const buttonContent = {
+    title: '', message: 'Escolha', footer: '',
+    replyButtons: [{ id: 'a', label: 'Sim' }],
+  }
+
+  it('erro de destinatário não marca a conta com erro', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: null })
+    mockSendCloudText.mockRejectedValue(new WhatsAppCloudApiError('Re-engagement message code=131047', 400, 131047))
+    await expect(cloudApiAdapter.sendText('wa-1', '5511999999999', 'oi')).rejects.toThrow('131047')
+    expect(mockRecordCloudSendError).not.toHaveBeenCalled()
+  })
+
+  it('timeout de rede não marca a conta com erro nem limpa um erro existente', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: 'Invalid OAuth access token code=190' })
+    mockSendCloudText.mockRejectedValue(new Error('The operation was aborted'))
+    await expect(cloudApiAdapter.sendText('wa-1', '5511999999999', 'oi')).rejects.toThrow('aborted')
+    expect(mockRecordCloudSendError).not.toHaveBeenCalled()
+    expect(mockClearCloudSendError).not.toHaveBeenCalled()
+  })
+
+  it('token indecifrável marca a conta com erro e relança sem enviar', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: null })
+    mockDecodeCloudAccessToken.mockImplementationOnce(() => { throw new Error('Unsupported state or unable to authenticate data') })
+    await expect(cloudApiAdapter.sendText('wa-1', '5511999999999', 'oi')).rejects.toThrow('unable to authenticate data')
+    expect(mockSendCloudText).not.toHaveBeenCalled()
     expect(mockRecordCloudSendError).toHaveBeenCalledWith(
       'wa-1',
-      expect.stringContaining('Template name does not exist')
+      'Não foi possível decifrar o token da conta: Unsupported state or unable to authenticate data'
     )
+    expect(mockClearCloudSendError).not.toHaveBeenCalled()
+  })
+
+  it('envio de texto com sucesso limpa um last_error anterior', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: 'erro antigo' })
+    mockSendCloudText.mockResolvedValue({ waMessageId: 'wamid.1', raw: {} })
+    await cloudApiAdapter.sendText('wa-1', '5511999999999', 'oi')
+    expect(mockClearCloudSendError).toHaveBeenCalledWith('wa-1')
+  })
+
+  it('envio com sucesso não escreve no banco quando não há last_error', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: null })
+    mockSendCloudText.mockResolvedValue({ waMessageId: 'wamid.1', raw: {} })
+    await cloudApiAdapter.sendText('wa-1', '5511999999999', 'oi')
+    expect(mockClearCloudSendError).not.toHaveBeenCalled()
+  })
+
+  it('sendText: erro de conta marca a conta', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: null })
+    mockSendCloudText.mockRejectedValue(accountError())
+    await expect(cloudApiAdapter.sendText('wa-1', '5511999999999', 'oi')).rejects.toThrow('190')
+    expect(mockRecordCloudSendError).toHaveBeenCalledWith('wa-1', expect.stringContaining('190'))
+  })
+
+  it('sendImage: erro de conta marca a conta e sucesso limpa last_error', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: 'erro antigo' })
+    mockSendCloudImage.mockRejectedValueOnce(accountError())
+    await expect(cloudApiAdapter.sendImage('wa-1', '5511999999999', 'https://x/i.jpg')).rejects.toThrow('190')
+    expect(mockRecordCloudSendError).toHaveBeenCalledWith('wa-1', expect.stringContaining('190'))
+    mockSendCloudImage.mockResolvedValueOnce({ waMessageId: 'w', raw: {} })
+    await cloudApiAdapter.sendImage('wa-1', '5511999999999', 'https://x/i.jpg')
+    expect(mockClearCloudSendError).toHaveBeenCalledWith('wa-1')
+  })
+
+  it('sendButtons: erro de conta marca a conta e sucesso limpa last_error', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: 'erro antigo' })
+    mockSendCloudButtons.mockRejectedValueOnce(accountError())
+    await expect(cloudApiAdapter.sendButtons('wa-1', '5511999999999', buttonContent)).rejects.toThrow('190')
+    expect(mockRecordCloudSendError).toHaveBeenCalledWith('wa-1', expect.stringContaining('190'))
+    mockSendCloudButtons.mockResolvedValueOnce({ waMessageId: 'w', raw: {} })
+    await cloudApiAdapter.sendButtons('wa-1', '5511999999999', buttonContent)
+    expect(mockClearCloudSendError).toHaveBeenCalledWith('wa-1')
+  })
+
+  it('sendTemplate: erro de conta marca a conta e sucesso limpa last_error', async () => {
+    mockLoadCloudCredentials.mockResolvedValue({ ...credentials, last_error: 'erro antigo' })
+    mockSendCloudTemplate.mockRejectedValueOnce(accountError())
+    await expect(cloudApiAdapter.sendTemplate('wa-1', '5511999999999', 'tpl', 'pt_BR', [])).rejects.toThrow('190')
+    expect(mockRecordCloudSendError).toHaveBeenCalledWith('wa-1', expect.stringContaining('190'))
+    mockSendCloudTemplate.mockResolvedValueOnce({ waMessageId: 'w', raw: {} })
+    await cloudApiAdapter.sendTemplate('wa-1', '5511999999999', 'tpl', 'pt_BR', [])
+    expect(mockClearCloudSendError).toHaveBeenCalledWith('wa-1')
   })
 })

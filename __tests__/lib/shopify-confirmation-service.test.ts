@@ -231,7 +231,68 @@ const {
   upsertShopifyDraftOrder,
   removeShopifyDraftOrder,
   _resetConfirmationSendPacingForTests,
+  isOrderEligibleForConfirmation,
+  isStaleShopifyPayload,
 } = require('@/lib/shopify-confirmation-service')
+
+describe('isOrderEligibleForConfirmation', () => {
+  const nowMs = Date.parse('2026-11-14T12:00:00.000Z')
+  const base = {
+    confirmationSentAt: null,
+    cancelledAt: null,
+    commercialStatus: null,
+    orderStatus: null,
+    orderPlacedAt: '2026-11-14T11:00:00.000Z',
+    nowMs,
+  }
+
+  it('aceita pedido novo e recente', () => {
+    expect(isOrderEligibleForConfirmation(base)).toBe(true)
+  })
+  it('aceita pedido existente ainda não tratado pelo operador', () => {
+    expect(isOrderEligibleForConfirmation({ ...base, commercialStatus: 'Não responde', orderStatus: 'pending_operator' })).toBe(true)
+  })
+  it('recusa pedido existente cancelado localmente mesmo com status comercial "Não responde"', () => {
+    expect(isOrderEligibleForConfirmation({ ...base, commercialStatus: 'Não responde', orderStatus: 'cancelled' })).toBe(false)
+  })
+  it.each(['submitting', 'created', 'failed'])('recusa pedido existente com status %s', (orderStatus) => {
+    expect(isOrderEligibleForConfirmation({ ...base, commercialStatus: 'Não responde', orderStatus })).toBe(false)
+  })
+  it('recusa quando a confirmação já foi enviada', () => {
+    expect(isOrderEligibleForConfirmation({ ...base, confirmationSentAt: '2026-11-14T11:05:00.000Z' })).toBe(false)
+  })
+  it('recusa pedido cancelado', () => {
+    expect(isOrderEligibleForConfirmation({ ...base, cancelledAt: '2026-11-14T11:30:00.000Z' })).toBe(false)
+  })
+  it.each(['Confirmado', 'Desistiu'])('recusa pedido existente com status comercial %s', (commercialStatus) => {
+    expect(isOrderEligibleForConfirmation({ ...base, commercialStatus })).toBe(false)
+  })
+  it('recusa pedido criado há mais de 24 h', () => {
+    expect(isOrderEligibleForConfirmation({ ...base, orderPlacedAt: '2026-11-13T11:59:59.000Z' })).toBe(false)
+  })
+  it('aceita pedido criado há exatamente 24 h', () => {
+    expect(isOrderEligibleForConfirmation({ ...base, orderPlacedAt: '2026-11-13T12:00:00.000Z' })).toBe(true)
+  })
+  it('recusa data de criação inválida', () => {
+    expect(isOrderEligibleForConfirmation({ ...base, orderPlacedAt: 'lixo' })).toBe(false)
+  })
+})
+
+describe('isStaleShopifyPayload', () => {
+  it('é obsoleto quando o payload é mais antigo que o gravado', () => {
+    expect(isStaleShopifyPayload('2026-11-14T10:00:00Z', '2026-11-14T10:00:05Z')).toBe(true)
+  })
+  it('não é obsoleto quando é igual ou mais recente', () => {
+    expect(isStaleShopifyPayload('2026-11-14T10:00:05Z', '2026-11-14T10:00:05Z')).toBe(false)
+    expect(isStaleShopifyPayload('2026-11-14T10:00:06Z', '2026-11-14T10:00:05Z')).toBe(false)
+  })
+  it.each([[undefined, '2026-11-14T10:00:05Z'], ['2026-11-14T10:00:00Z', null], ['lixo', 'lixo'], [undefined, undefined]])(
+    'não é obsoleto quando falta ou é inválida uma das datas (%p, %p)',
+    (payload, stored) => {
+      expect(isStaleShopifyPayload(payload, stored)).toBe(false)
+    },
+  )
+})
 
 describe('shopify-confirmation-service', () => {
   beforeEach(() => {
@@ -492,12 +553,14 @@ describe('shopify-confirmation-service', () => {
     expect(mockSendWhatsAppText).not.toHaveBeenCalled()
   })
 
-  it('does not run a confirmation flow when an existing unconfirmed order is reprocessed', async () => {
+  it('does not confirm an existing order older than the confirmation window', async () => {
     const account = queryBuilder({ data: { instance_name: 'wa-country' }, error: null })
     const existing = queryBuilder({
       data: {
         id: 'order-1',
+        status: 'pending_operator',
         assigned_instance_name: 'wa-country',
+        commercial_status: 'Não responde',
         confirmation_message_sent_at: null,
       },
       error: null,
@@ -508,11 +571,12 @@ describe('shopify-confirmation-service', () => {
       fulfillment_orders: [existing, updated],
     })
 
-    await upsertShopifyOrder(integrationRow(), shopifyOrder())
+    await upsertShopifyOrder(integrationRow(), shopifyOrder({ created_at: '2020-01-01T00:00:00.000Z' }))
 
     expect(mockExecuteFlow).not.toHaveBeenCalled()
     expect(mockSendWhatsAppText).not.toHaveBeenCalled()
     expect(updated.update).toHaveBeenCalledTimes(1)
+    expect(mockEnqueueShopifyOrderFlowJob).not.toHaveBeenCalled()
   })
 
   it('archives a Shopify-deleted order and cancels its pending confirmation job', async () => {
@@ -653,12 +717,13 @@ describe('shopify-confirmation-service', () => {
     expect(mockExecuteFlow).not.toHaveBeenCalled()
   })
 
-  it('não enfileira confirmação quando um pedido existente é reprocessado, mesmo sem sent_at', async () => {
+  it('não enfileira confirmação para pedido existente já tratado pelo operador', async () => {
     const account = queryBuilder({ data: { instance_name: 'wa-country' }, error: null })
     const existing = queryBuilder({
       data: {
         id: 'order-1',
         assigned_instance_name: 'wa-country',
+        commercial_status: 'Confirmado',
         confirmation_message_sent_at: null,
       },
       error: null,
@@ -714,7 +779,7 @@ describe('shopify-confirmation-service', () => {
       fulfillment_orders: [
         queryBuilder({ data: null, error: null }),
         queryBuilder({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "fulfillment_orders_order_number_key"' } }),
-        queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-1', confirmation_message_sent_at: null, shopify_financial_status: 'pending', shopify_cancelled_at: null }, error: null }),
+        queryBuilder({ data: { id: 'order-1', status: 'pending_operator', assigned_instance_name: 'wa-1', commercial_status: 'Não responde', confirmation_message_sent_at: null, shopify_financial_status: 'pending', shopify_cancelled_at: null }, error: null }),
         queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-1', instance_name: 'wa-1' }, error: null }),
       ],
       triggers: [queryBuilder({ data: { action_payload: { flow_id: 'flow-1' } }, error: null })],
@@ -725,6 +790,126 @@ describe('shopify-confirmation-service', () => {
 
     expect(order).toMatchObject({ id: 'order-1' })
     expect(mockEnqueueShopifyOrderFlowJob).toHaveBeenCalledWith(expect.objectContaining({ orderId: 'order-1', flowId: 'flow-1' }))
+  })
+
+  it('não confirma um pedido existente cancelado localmente', async () => {
+    setTableQueues({
+      accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+      fulfillment_orders: [
+        queryBuilder({ data: { id: 'order-1', status: 'cancelled', assigned_instance_name: 'wa-1', commercial_status: 'Não responde', confirmation_message_sent_at: null, shopify_financial_status: 'pending', shopify_cancelled_at: null }, error: null }),
+        queryBuilder({ data: { id: 'order-1', status: 'cancelled', assigned_instance_name: 'wa-1', instance_name: 'wa-1' }, error: null }),
+      ],
+      triggers: [queryBuilder({ data: { action_payload: { flow_id: 'flow-1' } }, error: null })],
+      shopify_abandoned_checkouts: [queryBuilder({ data: [], error: null })],
+    })
+
+    await upsertShopifyOrder(integrationRow(), shopifyOrder(), { sendConfirmation: true })
+
+    expect(mockEnqueueShopifyOrderFlowJob).not.toHaveBeenCalled()
+    expect(mockExecuteFlow).not.toHaveBeenCalled()
+    expect(mockSendWhatsAppText).not.toHaveBeenCalled()
+  })
+
+  it('orders/updated antes de orders/create: enfileira nas duas entregas com o mesmo pedido', async () => {
+    const account = () => queryBuilder({ data: { instance_name: 'wa-1' }, error: null })
+    const trigger = () => queryBuilder({ data: { action_payload: { flow_id: 'flow-1' } }, error: null })
+    const saved = { id: 'order-1', assigned_instance_name: 'wa-1', instance_name: 'wa-1' }
+    setTableQueues({
+      accounts: [account(), account()],
+      fulfillment_orders: [
+        // 1.ª entrega (orders/updated): pedido ainda não existe → insert
+        queryBuilder({ data: null, error: null }),
+        queryBuilder({ data: saved, error: null }),
+        // 2.ª entrega (orders/create, payload mais antigo): existe → não regrava
+        queryBuilder({
+          data: {
+            id: 'order-1', status: 'pending_operator', assigned_instance_name: 'wa-1', commercial_status: 'Não responde',
+            confirmation_message_sent_at: null, shopify_financial_status: null, shopify_cancelled_at: null,
+            payload_updated_at: '2026-11-14T10:00:05.000Z',
+          },
+          error: null,
+        }),
+        queryBuilder({ data: saved, error: null }),
+      ],
+      triggers: [trigger(), trigger()],
+      shopify_abandoned_checkouts: [queryBuilder({ data: [], error: null }), queryBuilder({ data: [], error: null })],
+    })
+
+    await upsertShopifyOrder(integrationRow(), shopifyOrder({ updated_at: '2026-11-14T10:00:05.000Z' }), { sendConfirmation: true })
+    await upsertShopifyOrder(integrationRow(), shopifyOrder({ updated_at: '2026-11-14T10:00:00.000Z' }), { sendConfirmation: true })
+
+    expect(mockEnqueueShopifyOrderFlowJob).toHaveBeenCalledTimes(2)
+    expect(mockEnqueueShopifyOrderFlowJob).toHaveBeenNthCalledWith(1, expect.objectContaining({ orderId: 'order-1' }))
+    expect(mockEnqueueShopifyOrderFlowJob).toHaveBeenNthCalledWith(2, expect.objectContaining({ orderId: 'order-1' }))
+  })
+
+  it('payload mais antigo que o gravado não sobrescreve o pedido', async () => {
+    const stored = queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-1' }, error: null })
+    setTableQueues({
+      accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+      fulfillment_orders: [
+        queryBuilder({
+          data: {
+            id: 'order-1', assigned_instance_name: 'wa-1', commercial_status: 'Confirmado',
+            confirmation_message_sent_at: '2026-11-14T10:01:00.000Z',
+            shopify_financial_status: 'paid', shopify_cancelled_at: null,
+            payload_updated_at: '2026-11-14T10:00:05.000Z',
+          },
+          error: null,
+        }),
+        stored,
+      ],
+      shopify_abandoned_checkouts: [queryBuilder({ data: [], error: null })],
+    })
+
+    await upsertShopifyOrder(
+      integrationRow(),
+      shopifyOrder({ updated_at: '2026-11-14T10:00:00.000Z', financial_status: 'pending' }),
+      { sendConfirmation: true },
+    )
+
+    expect(stored.update).not.toHaveBeenCalled()
+    expect(mockRecordOrderEvent).not.toHaveBeenCalled()
+  })
+
+  it('payload antigo não reativa um pedido já cancelado nem dispara confirmação', async () => {
+    const stored = queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-1' }, error: null })
+    setTableQueues({
+      accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+      fulfillment_orders: [
+        queryBuilder({
+          data: {
+            id: 'order-1', status: 'pending_operator', assigned_instance_name: 'wa-1', commercial_status: 'Não responde',
+            confirmation_message_sent_at: null, shopify_financial_status: null,
+            shopify_cancelled_at: '2026-11-14T10:00:04.000Z',
+            payload_updated_at: '2026-11-14T10:00:05.000Z',
+          },
+          error: null,
+        }),
+        stored,
+      ],
+      shopify_abandoned_checkouts: [queryBuilder({ data: [], error: null })],
+    })
+
+    await upsertShopifyOrder(integrationRow(), shopifyOrder({ updated_at: '2026-11-14T10:00:00.000Z' }), { sendConfirmation: true })
+
+    expect(stored.update).not.toHaveBeenCalled()
+    expect(mockEnqueueShopifyOrderFlowJob).not.toHaveBeenCalled()
+  })
+
+  it('pedido novo já cancelado não recebe confirmação', async () => {
+    setTableQueues({
+      accounts: [queryBuilder({ data: { instance_name: 'wa-1' }, error: null })],
+      fulfillment_orders: [
+        queryBuilder({ data: null, error: null }),
+        queryBuilder({ data: { id: 'order-1', assigned_instance_name: 'wa-1' }, error: null }),
+      ],
+      shopify_abandoned_checkouts: [queryBuilder({ data: [], error: null })],
+    })
+
+    await upsertShopifyOrder(integrationRow(), shopifyOrder({ cancelled_at: '2026-11-14T10:00:00.000Z' }), { sendConfirmation: true })
+
+    expect(mockEnqueueShopifyOrderFlowJob).not.toHaveBeenCalled()
   })
 
   describe('rascunhos (draft orders)', () => {

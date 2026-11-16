@@ -113,17 +113,6 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
     fallbackTemplateVariableMap: messageMode === 'text' ? fallbackVariableMap : {},
   }), [title, text, footer, replyButtons, images, combineImageAndMessage, messageMode, templateId, templateVariableMap, fallbackTemplateId, fallbackVariableMap])
 
-  const messageDataRef = useRef(buildSaveData())
-  messageDataRef.current = buildSaveData()
-
-  // Save on unmount (closing without Salvar)
-  useEffect(() => {
-    return () => {
-      onChange(node.id, messageDataRef.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   const fetchVariables = useCallback(async () => {
     setVariablesLoading(true)
     setVariableError(null)
@@ -446,10 +435,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   }
 
   function handleOverlayClick(e: React.MouseEvent) {
-    if (e.target === e.currentTarget) {
-      onChange(node.id, buildSaveData())
-      onClose()
-    }
+    if (e.target === e.currentTarget) onClose()
   }
 
   const selectedIds = new Set(images.map((img) => img.id))
@@ -461,6 +447,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      data-testid="message-editor-overlay"
       onClick={handleOverlayClick}
     >
       <div
@@ -472,10 +459,8 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
           <h2 className="text-base font-bold text-[#111b21] dark:text-[#e9edef]">Editar Mensagem</h2>
           <button
-            onClick={() => {
-              onChange(node.id, buildSaveData())
-              onClose()
-            }}
+            onClick={onClose}
+            aria-label="Fechar"
             className="p-1.5 rounded-lg text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942] transition-colors"
           >
             <X size={18} />
@@ -1082,10 +1067,7 @@ export default function MessageEditorModal({ node, onChange, onClose, instanceNa
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#f0f2f5] dark:border-[#2a3942] shrink-0">
           <button
-            onClick={() => {
-              onChange(node.id, buildSaveData())
-              onClose()
-            }}
+            onClick={onClose}
             className="px-4 py-2 text-sm text-[#667781] hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors"
           >
             Cancelar

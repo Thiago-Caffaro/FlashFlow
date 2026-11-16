@@ -1,4 +1,4 @@
-import { CheckCheck, ChevronsRight, Play } from 'lucide-react'
+import { CheckCheck, ChevronsRight, CircleAlert, Play } from 'lucide-react'
 import { Message } from '@/types'
 import AudioPlayer from './audio-player'
 
@@ -88,6 +88,13 @@ function buildMediaProxyUrl(
 function StatusIcon({ status, size = 14 }: { status: string; size?: number }) {
   if (status === 'sending') {
     return <ChevronsRight size={size} className="text-[#667781] dark:text-[#8696a0] animate-move-right" />
+  }
+  if (status === 'failed') {
+    return (
+      <span title="Falha no envio" aria-label="Falha no envio" role="img" className="inline-flex">
+        <CircleAlert size={size} className="text-red-500" aria-hidden="true" />
+      </span>
+    )
   }
   return (
     <CheckCheck

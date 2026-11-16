@@ -10,11 +10,14 @@ export function mergeFetchedMessages(prev: Message[], fetched: Message[], partia
   // Uma vez que a mensagem real (confirmada pelo banco) aparece com o
   // mesmo conteúdo/direção de uma otimista "sending" ainda pendente,
   // a otimista precisa sumir — senão o ícone de "enviando" nunca
-  // troca pro de confirmado, mesmo com o envio já concluído.
+  // troca pro de confirmado, mesmo com o envio já concluído. Uma linha
+  // 'failed' (ex.: tentativa anterior com o mesmo texto) não confirma nada.
   const stillPending = prev.filter((m) => (
     m.id.startsWith('temp-')
     && m.status === 'sending'
-    && !fetched.some((real) => real.content === m.content && real.direction === m.direction)
+    && !fetched.some((real) => (
+      real.status !== 'failed' && real.content === m.content && real.direction === m.direction
+    ))
   ))
   const fetchedIds = new Set(fetched.map((m) => m.id))
   const olderHistory = partial
