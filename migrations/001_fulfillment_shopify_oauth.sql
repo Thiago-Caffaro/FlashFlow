@@ -1,6 +1,6 @@
 -- Consolidated migration for the codex/fulfillment-integration branch.
--- Applies on top of the main-branch schema (notifications_migration.sql,
--- tools_support_migration.sql and everything before them already applied).
+-- Applies on top of the main-branch schema (000_notifications.sql,
+-- 000_tools_support.sql and everything before them already applied).
 -- Run this once against the dev Supabase project to bring it level with
 -- this branch. NOT yet applied to production.
 --
