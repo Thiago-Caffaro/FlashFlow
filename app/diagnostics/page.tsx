@@ -1,5 +1,7 @@
 'use client'
 
+import '@/lib/demo/install'
+
 import { useEffect, useState, useCallback } from 'react'
 
 interface DiagData {

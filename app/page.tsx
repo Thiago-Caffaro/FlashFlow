@@ -1,5 +1,7 @@
 'use client'
 
+import '@/lib/demo/install'
+
 import { useEffect, useRef, useState } from 'react'
 import ChatsTab from '@/components/chats/chats-tab'
 import TriggersTab from '@/components/sidebar-right/triggers-tab'
