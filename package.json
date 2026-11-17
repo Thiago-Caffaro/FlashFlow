@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "build:demo": "node scripts/build-demo.js",
+    "serve:demo": "node scripts/serve-demo.js",
     "start": "next start",
     "test": "jest",
     "test:watch": "jest --watch"

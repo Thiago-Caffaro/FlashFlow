@@ -33,12 +33,12 @@ export function seedSandboxFlows(): Flow[] {
           { id: 'case-morada', conditionType: 'contains', value: 'morada' },
         ],
       }),
-      node('estado', 'captureOrderData', 40, 550, {
+      node('estado', 'captureOrderData', -180, 550, {
         label: 'Marcar como confirmado',
         orderStateField: 'commercial_status',
         orderStateValue: 'Confirmado WhatsApp',
       }),
-      node('msg-ok', 'sendMessage', 40, 710, {
+      node('msg-ok', 'sendMessage', -180, 710, {
         label: 'Confirmado',
         message: 'Encomenda confirmada ✅ Avisamos assim que sair do armazém.',
       }),
@@ -50,7 +50,7 @@ export function seedSandboxFlows(): Flow[] {
         label: 'Pedir nova morada',
         message: 'Sem problema. Escreva a morada completa e um colega atualiza já a encomenda.',
       }),
-      node('ia', 'aiAssistant', 600, 550, {
+      node('ia', 'aiAssistant', 820, 550, {
         label: 'IA tira dúvidas',
         systemPrompt: 'Responde em português de Portugal a dúvidas sobre a encomenda contra-reembolso. Se o cliente quiser cancelar, passa a um humano.',
         useDefaultModel: true, historyLimit: 20, temperature: 0.4, timeoutType: 'minutes', timeoutValue: 360, responseDelayMs: 3000,
@@ -73,16 +73,16 @@ export function seedSandboxFlows(): Flow[] {
 
   const message = flow(SANDBOX_FLOW_MESSAGE_ID, 'Sandbox · Atendimento', {
     nodes: [
-      node('start', 'start', 300, 0, { label: 'Mensagem do cliente' }),
-      node('cond', 'condition', 300, 130, { label: 'Pede um humano?', conditionType: 'contains', conditionValue: 'humano' }),
-      node('notify', 'notify', 40, 320, { label: 'Avisar operador', notificationMessage: '{{contato.primeiro_nome}} pediu para falar com uma pessoa.' }),
-      node('msg-humano', 'sendMessage', 40, 480, { label: 'Aviso ao cliente', message: 'Claro, vou passar a um colega. Em breve alguém lhe responde.' }),
-      node('ia', 'aiAssistant', 560, 320, {
+      node('start', 'start', 320, 0, { label: 'Mensagem do cliente' }),
+      node('cond', 'condition', 320, 130, { label: 'Pede um humano?', conditionType: 'contains', conditionValue: 'humano' }),
+      node('notify', 'notify', -180, 320, { label: 'Avisar operador', notificationMessage: '{{contato.primeiro_nome}} pediu para falar com uma pessoa.' }),
+      node('msg-humano', 'sendMessage', -180, 480, { label: 'Aviso ao cliente', message: 'Claro, vou passar a um colega. Em breve alguém lhe responde.' }),
+      node('ia', 'aiAssistant', 820, 320, {
         label: 'Atendimento com IA',
         systemPrompt: 'És a assistente da Casa Brisa. Responde em português de Portugal sobre produtos, prazos de envio e pagamento na entrega.',
         useDefaultModel: true, historyLimit: 20, temperature: 0.5, continueConversation: true, timeoutType: 'minutes', timeoutValue: 360, responseDelayMs: 3000,
       }),
-      node('end', 'end', 300, 660, { label: 'Fim' }),
+      node('end', 'end', 320, 660, { label: 'Fim' }),
     ],
     edges: [
       edge('start', 'cond'),
@@ -96,8 +96,8 @@ export function seedSandboxFlows(): Flow[] {
 
   const cart = flow(SANDBOX_FLOW_CART_ID, 'Sandbox · Carrinho abandonado', {
     nodes: [
-      node('start', 'start', 300, 0, { label: 'Carrinho abandonado' }),
-      node('msg', 'sendMessage', 300, 130, {
+      node('start', 'start', 320, 0, { label: 'Carrinho abandonado' }),
+      node('msg', 'sendMessage', 320, 130, {
         label: 'Lembrete do carrinho',
         message: 'Olá {{contato.primeiro_nome}}, reparámos que deixou isto no carrinho 🛒\n{{carrinho.produtos}}\n\nQuer ajuda para concluir? O pagamento é feito só na entrega.',
         replyButtons: [
@@ -105,21 +105,21 @@ export function seedSandboxFlows(): Flow[] {
           { id: 'btn-nao', label: 'Agora não' },
         ],
       }),
-      node('switch', 'switchCase', 300, 340, {
+      node('switch', 'switchCase', 320, 340, {
         label: 'Resposta do cliente',
         cases: [
           { id: 'case-quero', conditionType: 'contains', value: 'quero' },
           { id: 'case-nao', conditionType: 'contains', value: 'não' },
         ],
       }),
-      node('msg-link', 'sendMessage', 20, 550, { label: 'Enviar link', message: 'Perfeito! Pode concluir aqui: {{carrinho.link}}' }),
-      node('msg-nao', 'sendMessage', 300, 550, { label: 'Despedida', message: 'Sem problema! Se mudar de ideias, é só responder a esta mensagem 🙂' }),
-      node('ia', 'aiAssistant', 580, 550, {
+      node('msg-link', 'sendMessage', -180, 550, { label: 'Enviar link', message: 'Perfeito! Pode concluir aqui: {{carrinho.link}}' }),
+      node('msg-nao', 'sendMessage', 320, 550, { label: 'Despedida', message: 'Sem problema! Se mudar de ideias, é só responder a esta mensagem 🙂' }),
+      node('ia', 'aiAssistant', 820, 550, {
         label: 'IA tira dúvidas',
         systemPrompt: 'Responde em português de Portugal a dúvidas sobre o produto do carrinho, sem pressionar.',
         useDefaultModel: true, historyLimit: 20, temperature: 0.5, timeoutType: 'messages', timeoutValue: 12, responseDelayMs: 3000,
       }),
-      node('end', 'end', 300, 740, { label: 'Fim' }),
+      node('end', 'end', 320, 740, { label: 'Fim' }),
     ],
     edges: [
       edge('start', 'msg'),

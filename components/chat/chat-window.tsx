@@ -1,5 +1,6 @@
 'use client'
 
+import { IS_DEMO } from '@/lib/demo/config'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { MoreVertical, Search, X } from 'lucide-react'
 import { Conversation, Message } from '@/types'
@@ -273,7 +274,7 @@ export default function ChatWindow({ conversation, onMessageSent }: ChatWindowPr
   const contactName = conversation.contact_name
   const contactPhone = conversation.contact_phone
   const initials = getInitials(contactName, contactPhone)
-  const canHavePic = !conversation.wa_id.endsWith('@lid')
+  const canHavePic = !IS_DEMO && !conversation.wa_id.endsWith('@lid')
   const proxyUrl = canHavePic
     ? `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
     : null

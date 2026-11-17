@@ -1,3 +1,4 @@
+import { IS_DEMO } from '@/lib/demo/config'
 import { CheckCheck, ChevronsRight, CircleAlert, Play } from 'lucide-react'
 import { Message } from '@/types'
 import AudioPlayer from './audio-player'
@@ -31,7 +32,7 @@ function SenderLabel({
   const color = senderColor(senderJid)
   const phone = senderJid.replace('@s.whatsapp.net', '').replace('@lid', '')
   const displayName = senderName || phone
-  const proxyUrl = instanceName
+  const proxyUrl = instanceName && !IS_DEMO
     ? `/api/profile-picture/proxy?waId=${encodeURIComponent(senderJid)}&instance=${encodeURIComponent(instanceName)}`
     : null
 

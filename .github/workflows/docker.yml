@@ -1,7 +1,9 @@
 name: Build & Push Docker Image
 
 on:
-  push: {}
+  # O branch `demo` só publica o site estático (pages.yml); não gera imagem.
+  push:
+    branches-ignore: [demo]
   workflow_dispatch:
     inputs:
       tag:

@@ -30,7 +30,7 @@ async function withStashed(paths, stashDir, run) {
     fs.mkdirSync(stashDir, { recursive: true })
     paths.forEach((from, index) => {
       if (!fs.existsSync(from)) return
-      const to = path.join(stashDir, `${index}-${path.basename(from)}`)
+      const to = path.join(stashDir, stashName(from, index))
       fs.renameSync(from, to)
       moved.push({ from, to })
     })
@@ -38,6 +38,28 @@ async function withStashed(paths, stashDir, run) {
   } finally {
     restore()
   }
+}
+
+const stashName = (/** @type {string} */ from, /** @type {number} */ index) => `${index}-${path.basename(from)}`
+
+/**
+ * Repõe o que um build interrompido (Ctrl+C, processo morto) deixou afastado.
+ * Nunca escreve por cima de um caminho que já existe.
+ * @param {string[]} paths
+ * @param {string} stashDir
+ * @returns {number} caminhos repostos
+ */
+function recoverStash(paths, stashDir) {
+  if (!fs.existsSync(stashDir)) return 0
+  let restored = 0
+  paths.forEach((from, index) => {
+    const stashed = path.join(stashDir, stashName(from, index))
+    if (!fs.existsSync(stashed) || fs.existsSync(from)) return
+    fs.renameSync(stashed, from)
+    restored += 1
+  })
+  if (fs.readdirSync(stashDir).length === 0) fs.rmdirSync(stashDir)
+  return restored
 }
 
 /** @returns {Promise<void>} */
@@ -67,10 +89,54 @@ function runNextBuild() {
   })
 }
 
+// O export grava os dados de cada segmento em pastas (`__next.rota/__PAGE__.txt`),
+// mas o router pede-os com pontos (`__next.rota.__PAGE__.txt`). Num servidor de
+// ficheiros como o Pages isso dá 404 em cada navegação entre páginas; esta
+// cópia cria os nomes pedidos.
+/**
+ * @param {string} dir
+ * @returns {number} ficheiros criados
+ */
+function flattenSegmentFiles(dir) {
+  let created = 0
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const full = path.join(dir, entry.name)
+    if (!entry.name.startsWith('__next.')) {
+      created += flattenSegmentFiles(full)
+      continue
+    }
+    /** @param {string} current @param {string} prefix */
+    const walk = (current, prefix) => {
+      for (const child of fs.readdirSync(current, { withFileTypes: true })) {
+        const childPath = path.join(current, child.name)
+        const dotted = `${prefix}.${child.name}`
+        if (child.isDirectory()) walk(childPath, dotted)
+        else {
+          fs.copyFileSync(childPath, path.join(dir, dotted))
+          created += 1
+        }
+      }
+    }
+    walk(full, entry.name)
+  }
+  return created
+}
+
 async function main() {
   const stashDir = path.join(ROOT, '.demo-stash')
+  const stashed = [path.join(ROOT, 'app', 'api'), path.join(ROOT, 'proxy.ts')]
+  if (recoverStash(stashed, stashDir) > 0) console.log('Reposto o que um build anterior interrompido deixou em .demo-stash/')
+  // Ctrl+C a meio do build não corre o `finally` de withStashed.
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => {
+      recoverStash(stashed, stashDir)
+      process.exit(1)
+    })
+  }
   fs.rmSync(path.join(ROOT, 'out'), { recursive: true, force: true })
-  await withStashed([path.join(ROOT, 'app', 'api'), path.join(ROOT, 'proxy.ts')], stashDir, runNextBuild)
+  await withStashed(stashed, stashDir, runNextBuild)
+  flattenSegmentFiles(path.join(ROOT, 'out'))
   // Sem isto o GitHub Pages passa o site pelo Jekyll, que ignora `_next/`.
   fs.writeFileSync(path.join(ROOT, 'out', '.nojekyll'), '')
   console.log('Demo gerada em out/')
@@ -83,4 +149,4 @@ if (require.main === module) {
   })
 }
 
-module.exports = { withStashed }
+module.exports = { withStashed, flattenSegmentFiles, recoverStash }

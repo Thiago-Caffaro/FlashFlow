@@ -1,5 +1,6 @@
 'use client'
 
+import { IS_DEMO } from '@/lib/demo/config'
 import { useEffect, useState } from 'react'
 import { Conversation } from '@/types'
 
@@ -50,7 +51,7 @@ function formatTime(dateStr: string | null): string {
 export default function ConversationItem({ conversation, isActive, onClick }: ConversationItemProps) {
   const displayName = conversation.contact_name ?? conversation.contact_phone
   const initials = getInitials(conversation.contact_name, conversation.contact_phone)
-  const canHavePic = !conversation.wa_id.endsWith('@lid')
+  const canHavePic = !IS_DEMO && !conversation.wa_id.endsWith('@lid')
   const proxyUrl = canHavePic
     ? `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
     : null

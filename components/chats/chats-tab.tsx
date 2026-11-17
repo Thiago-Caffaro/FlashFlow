@@ -1,5 +1,6 @@
 'use client'
 
+import { IS_DEMO } from '@/lib/demo/config'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, BellOff, Bot, CheckSquare,
@@ -55,7 +56,7 @@ function SessionItem({ item, index, isActive, isSelected, selectionActive, onIte
   const { session, conversation, flow_name } = item
   const [imgError, setImgError] = useState(false)
   const displayName = conversation.contact_name || conversation.contact_phone
-  const canHavePic = !conversation.wa_id.endsWith('@lid')
+  const canHavePic = !IS_DEMO && !conversation.wa_id.endsWith('@lid')
   const proxyUrl = canHavePic
     ? `/api/profile-picture/proxy?waId=${encodeURIComponent(conversation.wa_id)}&instance=${encodeURIComponent(conversation.instance_name)}`
     : null

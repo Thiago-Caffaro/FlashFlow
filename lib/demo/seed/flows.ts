@@ -32,12 +32,12 @@ function codFlow(): Flow {
         { id: 'case-cambiar', conditionType: 'contains', value: 'cambiar' },
       ],
     }),
-    node('estado-confirmado', 'captureOrderData', 40, 540, {
+    node('estado-confirmado', 'captureOrderData', -180, 540, {
       label: 'Marcar como confirmado',
       orderStateField: 'commercial_status',
       orderStateValue: 'Confirmado WhatsApp',
     }),
-    node('msg-ok', 'sendMessage', 40, 700, {
+    node('msg-ok', 'sendMessage', -180, 700, {
       label: 'Confirmado',
       message: '¡Perfecto! Tu pedido queda confirmado ✅ Te avisaremos cuando salga del almacén.',
     }),
@@ -49,7 +49,7 @@ function codFlow(): Flow {
       label: 'Pedir nova morada',
       message: 'Sin problema. Escríbeme la dirección completa y un compañero la actualiza enseguida.',
     }),
-    node('ia-duvidas', 'aiAssistant', 600, 540, {
+    node('ia-duvidas', 'aiAssistant', 820, 540, {
       label: 'IA tira dúvidas',
       systemPrompt: 'És o assistente da loja Casa Brisa. Responde em espanhol, de forma breve, a dúvidas sobre o pedido contra-reembolso. Se o cliente quiser alterar ou cancelar, passa a um humano.',
       useDefaultModel: true,
@@ -82,24 +82,24 @@ function codFlow(): Flow {
 
 function aiFlow(): Flow {
   const nodes: FlowNode[] = [
-    node('start', 'start', 300, 0, {
+    node('start', 'start', 320, 0, {
       label: 'Mensagem do cliente',
       sessionEndMessage: { enabled: true, text: 'Gracias por escribirnos. Si necesitas algo más, aquí estamos 💚' },
     }),
-    node('cond-humano', 'condition', 300, 130, {
+    node('cond-humano', 'condition', 320, 130, {
       label: 'Pede um humano?',
       conditionType: 'contains',
       conditionValue: 'humano',
     }),
-    node('notify-humano', 'notify', 40, 320, {
+    node('notify-humano', 'notify', -180, 320, {
       label: 'Avisar operador',
       notificationMessage: '{{contato.primeiro_nome}} pediu para falar com uma pessoa.',
     }),
-    node('msg-humano', 'sendMessage', 40, 480, {
+    node('msg-humano', 'sendMessage', -180, 480, {
       label: 'Aviso ao cliente',
       message: 'Claro, te paso con una persona del equipo. En breve te escriben.',
     }),
-    node(FLOW_AI_NODE_ID, 'aiAssistant', 560, 320, {
+    node(FLOW_AI_NODE_ID, 'aiAssistant', 820, 320, {
       label: 'Atendimento com IA',
       systemPrompt: 'És a assistente da Casa Brisa. Responde em espanhol sobre produtos, prazos de envio (24–48 h) e pagamento na entrega. Nunca inventes preços: usa os blocos de memória. Se não souberes, passa a um humano.',
       useDefaultModel: true,
@@ -112,7 +112,7 @@ function aiFlow(): Flow {
       memoryBlockIds: ['mem-envios', 'mem-devolucoes'],
       inactivityMessage: '¿Sigues ahí? Si quieres, seguimos más tarde 🙂',
     }),
-    node('end', 'end', 300, 660, { label: 'Fim' }),
+    node('end', 'end', 320, 660, { label: 'Fim' }),
   ]
   const edges: FlowEdge[] = [
     edge('start', 'cond-humano'),
@@ -131,8 +131,8 @@ function aiFlow(): Flow {
 
 function cartFlow(): Flow {
   const nodes: FlowNode[] = [
-    node('start', 'start', 300, 0, { label: 'Carrinho abandonado' }),
-    node('msg-carrinho', 'sendMessage', 300, 130, {
+    node('start', 'start', 320, 0, { label: 'Carrinho abandonado' }),
+    node('msg-carrinho', 'sendMessage', 320, 130, {
       label: 'Lembrete do carrinho',
       message: 'Olá {{contato.primeiro_nome}}, reparámos que deixou {{carrinho.produtos}} no carrinho 🛒 Posso ajudar a concluir a encomenda? O pagamento é feito só na entrega.',
       images: [{ id: 'img-almofada', url: demoImage('Almofada Brisa', '#00a884'), filename: 'almofada-brisa.svg' }],
@@ -145,25 +145,25 @@ function cartFlow(): Flow {
         { id: 'btn-nao', label: 'Agora não' },
       ],
     }),
-    node('switch', 'switchCase', 300, 360, {
+    node('switch', 'switchCase', 320, 360, {
       label: 'Resposta do cliente',
       cases: [
         { id: 'case-quero', conditionType: 'contains', value: 'quero' },
         { id: 'case-nao', conditionType: 'contains', value: 'não' },
       ],
     }),
-    node('slack', 'slackNotify', 20, 570, {
+    node('slack', 'slackNotify', -180, 570, {
       label: 'Avisar equipa no Slack',
       slackTitle: 'Carrinho recuperado',
       slackMessage: '{{contato.primeiro_nome}} quer concluir a encomenda de {{carrinho.produtos}}.',
       slackMention: 'here',
       slackHandoff: true,
     }),
-    node('msg-nao', 'sendMessage', 300, 570, {
+    node('msg-nao', 'sendMessage', 320, 570, {
       label: 'Despedida',
       message: 'Sem problema! Se mudar de ideias, é só responder a esta mensagem 🙂',
     }),
-    node('ia', 'aiAssistant', 580, 570, {
+    node('ia', 'aiAssistant', 820, 570, {
       label: 'IA tira dúvidas',
       systemPrompt: 'És a assistente da Casa Brisa. Responde em português de Portugal a dúvidas sobre o produto do carrinho e incentiva a concluir a encomenda, sem pressionar.',
       useDefaultModel: true,
@@ -173,7 +173,7 @@ function cartFlow(): Flow {
       timeoutValue: 12,
       responseDelayMs: 4000,
     }),
-    node('end', 'end', 300, 760, { label: 'Fim' }),
+    node('end', 'end', 320, 760, { label: 'Fim' }),
   ]
   const edges: FlowEdge[] = [
     edge('start', 'msg-carrinho'),
