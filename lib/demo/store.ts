@@ -1,5 +1,6 @@
 import type {
   AISession,
+  AgentMemoryBlock,
   Account,
   AppNotification,
   AutomationWithSteps,
@@ -19,6 +20,9 @@ import type {
   ShopifyAbandonedCheckout,
   ShopifyIntegration,
   ShopifyProduct,
+  SlackChannel,
+  SlackConnectionStatus,
+  SlackNotificationSettings,
   Trigger,
 } from '@/types'
 import type { DeliveryStatusMapping } from '@/lib/fulfillment-delivery-status'
@@ -40,6 +44,14 @@ import {
   seedShopifyProducts,
   type DemoFenixIntegration,
 } from './seed/orders'
+import {
+  seedAiKeys,
+  seedMemoryBlocks,
+  seedSlackChannels,
+  seedSlackSettings,
+  seedSlackStatus,
+  type DemoAiConfig,
+} from './seed/settings'
 import { seedSandboxContacts, seedSandboxFlows, seedSandboxTriggers } from './seed/sandbox'
 
 // Estado em memória da demo. Nada é persistido: recarregar a página repõe
@@ -75,6 +87,10 @@ export interface DemoStore {
     lightfunnelsTriggersEnabled: boolean
     shopifyOrderInstanceName: string | null
   }
+  memoryBlocks: AgentMemoryBlock[]
+  aiKeys: ReturnType<typeof seedAiKeys>
+  aiConfigs: Record<string, DemoAiConfig>
+  slack: { status: SlackConnectionStatus; channels: SlackChannel[]; settings: SlackNotificationSettings[] }
   sandboxContacts: SandboxContact[]
   sandboxMessages: Message[]
   /** Fluxo em curso por conversa de teste. */
@@ -109,6 +125,10 @@ function createStore(): DemoStore {
     deliveryMappings: seedDeliveryMappings(),
     externalLeads: seedExternalLeads(),
     settings: { shopifyTriggersEnabled: true, lightfunnelsTriggersEnabled: true, shopifyOrderInstanceName: DEMO_INSTANCE_ES },
+    memoryBlocks: seedMemoryBlocks(),
+    aiKeys: seedAiKeys(),
+    aiConfigs: {},
+    slack: { status: seedSlackStatus(), channels: seedSlackChannels(), settings: seedSlackSettings() },
     sandboxContacts: seedSandboxContacts(),
     sandboxMessages: [],
     sandboxRuns: {},

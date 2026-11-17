@@ -5,6 +5,7 @@ import { registerChatHandlers } from './chat'
 import { registerFlowHandlers } from './flows'
 import { registerFulfillmentHandlers } from './fulfillment'
 import { registerSandboxHandlers } from './sandbox'
+import { registerSettingsHandlers } from './settings'
 
 let registered = false
 
@@ -19,4 +20,5 @@ export function registerDemoHandlers(): void {
   registerAutomationHandlers()
   registerFulfillmentHandlers()
   registerSandboxHandlers()
+  registerSettingsHandlers()
 }
