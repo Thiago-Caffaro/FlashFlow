@@ -1,5 +1,6 @@
 'use client'
 
+import { withBasePath } from '@/lib/demo/config'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowUpRight, FlaskConical, Loader2, MessageSquareText, Package, PackageSearch, PhoneCall, RefreshCw, Settings2, Zap } from 'lucide-react'
@@ -448,7 +449,7 @@ export default function FulfillmentPage() {
             <button
               onClick={() => {
                 try { localStorage.setItem('activeView', 'sandbox') } catch { /* abre na última aba */ }
-                window.location.href = '/'
+                window.location.href = withBasePath('/')
               }}
               className="flex shrink-0 items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-[#667781] hover:bg-[#f0f2f5] dark:hover:bg-[#2a3942]"
               title="O Sandbox agora fica no menu principal, abaixo de Memória"
