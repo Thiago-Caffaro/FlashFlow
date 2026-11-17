@@ -1,5 +1,6 @@
 import { registerAccountHandlers } from './accounts'
 import { registerAuthHandlers } from './auth'
+import { registerChatHandlers } from './chat'
 
 let registered = false
 
@@ -9,4 +10,5 @@ export function registerDemoHandlers(): void {
   registered = true
   registerAuthHandlers()
   registerAccountHandlers()
+  registerChatHandlers()
 }
