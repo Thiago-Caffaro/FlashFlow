@@ -4,10 +4,10 @@ import { DEMO_INSTANCE_ES, DEMO_INSTANCE_PT } from './accounts'
 import { FLOW_AI_ID, FLOW_AI_NODE_ID, FLOW_CART_ID, FLOW_COD_ID } from './ids'
 import { demoImage } from './images'
 
-const node = (id: string, type: FlowNodeType, x: number, y: number, data: FlowNodeData = {}): FlowNode =>
+export const node = (id: string, type: FlowNodeType, x: number, y: number, data: FlowNodeData = {}): FlowNode =>
   ({ id, type, position: { x, y }, data })
 
-const edge = (source: string, target: string, sourceHandle?: string): FlowEdge =>
+export const edge = (source: string, target: string, sourceHandle?: string): FlowEdge =>
   ({ id: `e-${source}-${sourceHandle ?? 'out'}-${target}`, source, target, sourceHandle: sourceHandle ?? null, targetHandle: null })
 
 // Modelo de template aprovado usado pela conta oficial (ver seedTemplates).
@@ -19,7 +19,7 @@ function codFlow(): Flow {
     node('start', 'start', 320, 0, { label: 'Novo pedido (Shopify)' }),
     node('msg-confirma', 'sendMessage', 320, 130, {
       label: 'Pedir confirmação',
-      message: 'Hola {{nome}} 👋 Hemos recibido tu pedido {{pedido}}: {{produtos}} ({{total}}), pago contra reembolso.\n\n¿Confirmas la dirección: {{endereco}}?',
+      message: 'Hola {{contato.primeiro_nome}} 👋 Hemos recibido tu pedido {{pedido.numero}}: {{pedido.produtos}} ({{pedido.total}}), pago contra reembolso.\n\n¿Confirmas la dirección: {{pedido.endereco_completo}}?',
       replyButtons: [
         { id: 'btn-si', label: 'Sí, confirmo' },
         { id: 'btn-cambiar', label: 'Cambiar dirección' },
@@ -43,7 +43,7 @@ function codFlow(): Flow {
     }),
     node('notify-morada', 'notify', 320, 540, {
       label: 'Avisar operador',
-      notificationMessage: '{{nome}} quer alterar a morada do pedido {{pedido}}.',
+      notificationMessage: '{{contato.primeiro_nome}} quer alterar a morada do pedido {{pedido.numero}}.',
     }),
     node('msg-morada', 'sendMessage', 320, 700, {
       label: 'Pedir nova morada',
@@ -93,7 +93,7 @@ function aiFlow(): Flow {
     }),
     node('notify-humano', 'notify', 40, 320, {
       label: 'Avisar operador',
-      notificationMessage: '{{nome}} pediu para falar com uma pessoa.',
+      notificationMessage: '{{contato.primeiro_nome}} pediu para falar com uma pessoa.',
     }),
     node('msg-humano', 'sendMessage', 40, 480, {
       label: 'Aviso ao cliente',
@@ -134,12 +134,12 @@ function cartFlow(): Flow {
     node('start', 'start', 300, 0, { label: 'Carrinho abandonado' }),
     node('msg-carrinho', 'sendMessage', 300, 130, {
       label: 'Lembrete do carrinho',
-      message: 'Olá {{nome}}, reparámos que deixou {{produtos}} no carrinho 🛒 Posso ajudar a concluir a encomenda? O pagamento é feito só na entrega.',
+      message: 'Olá {{contato.primeiro_nome}}, reparámos que deixou {{carrinho.produtos}} no carrinho 🛒 Posso ajudar a concluir a encomenda? O pagamento é feito só na entrega.',
       images: [{ id: 'img-almofada', url: demoImage('Almofada Brisa', '#00a884'), filename: 'almofada-brisa.svg' }],
       combineImageAndMessage: true,
       // Conta oficial: fora da janela de 24 h, o template aprovado entra no lugar do texto livre.
       fallbackTemplateId: TEMPLATE_CARRINHO_ID,
-      fallbackTemplateVariableMap: { '1': 'nome', '2': 'produtos' },
+      fallbackTemplateVariableMap: { '1': 'contato.primeiro_nome', '2': 'carrinho.produtos' },
       replyButtons: [
         { id: 'btn-quero', label: 'Quero concluir' },
         { id: 'btn-nao', label: 'Agora não' },
@@ -155,7 +155,7 @@ function cartFlow(): Flow {
     node('slack', 'slackNotify', 20, 570, {
       label: 'Avisar equipa no Slack',
       slackTitle: 'Carrinho recuperado',
-      slackMessage: '{{nome}} quer concluir a encomenda de {{produtos}}.',
+      slackMessage: '{{contato.primeiro_nome}} quer concluir a encomenda de {{carrinho.produtos}}.',
       slackMention: 'here',
       slackHandoff: true,
     }),
@@ -209,7 +209,7 @@ export function seedTriggers(): Trigger[] {
     {
       ...stamp, id: 'trg-3', instance_name: DEMO_INSTANCE_ES, alias: 'Horário',
       tipo: 'contains', valor: 'horario', delay_ms: 1500, action: 'send_message',
-      action_payload: { message: 'Atendemos {{horario}}.' }, source: 'message',
+      action_payload: { message: 'Atendemos {{personalizada.horario}}.' }, source: 'message',
     },
     {
       ...stamp, id: 'trg-4', instance_name: DEMO_INSTANCE_PT, alias: 'Carrinho abandonado → recuperação',

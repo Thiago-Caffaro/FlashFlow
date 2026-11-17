@@ -3,6 +3,8 @@ import { registerAuthHandlers } from './auth'
 import { registerAutomationHandlers } from './automations'
 import { registerChatHandlers } from './chat'
 import { registerFlowHandlers } from './flows'
+import { registerFulfillmentHandlers } from './fulfillment'
+import { registerSandboxHandlers } from './sandbox'
 
 let registered = false
 
@@ -15,4 +17,6 @@ export function registerDemoHandlers(): void {
   registerChatHandlers()
   registerFlowHandlers()
   registerAutomationHandlers()
+  registerFulfillmentHandlers()
+  registerSandboxHandlers()
 }

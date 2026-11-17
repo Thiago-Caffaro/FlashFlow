@@ -71,8 +71,8 @@ export function seedAutomations(): AutomationWithSteps[] {
       ...stamp(), id: 'auto-carrinho-es', name: 'Carrinho abandonado · Espanha', kind: 'abandoned_cart',
       platform: 'shopify', country: 'ES', product_line_id: null, instance_name: DEMO_INSTANCE_ES, enabled: true, config: {},
       steps: [
-        step('auto-carrinho-es', 0, 30, 'Hola {{nome}}, vimos que dejaste {{produtos}} en el carrito 🛒 ¿Te ayudo a terminar el pedido? Pagas al recibir.'),
-        step('auto-carrinho-es', 1, 1440, '{{nome}}, tu carrito sigue guardado. Si quieres, te lo dejo listo en un minuto 🙂'),
+        step('auto-carrinho-es', 0, 30, 'Hola {{contato.primeiro_nome}}, vimos que dejaste {{carrinho.produtos}} en el carrito 🛒 ¿Te ayudo a terminar el pedido? Pagas al recibir.'),
+        step('auto-carrinho-es', 1, 1440, '{{contato.primeiro_nome}}, tu carrito sigue guardado. Si quieres, te lo dejo listo en un minuto 🙂'),
       ],
     },
     {
@@ -80,7 +80,7 @@ export function seedAutomations(): AutomationWithSteps[] {
       platform: 'shopify', country: 'PT', product_line_id: 'line-descanso', instance_name: DEMO_INSTANCE_PT, enabled: false,
       config: { statuses: ['Entregue'] },
       steps: [
-        step('auto-entregue-pt', 0, 120, 'Olá {{nome}}, a sua encomenda {{pedido}} foi entregue. Esperamos que goste! 💚', 'tpl-avaliacao'),
+        step('auto-entregue-pt', 0, 120, 'Olá {{contato.primeiro_nome}}, a sua encomenda {{pedido.numero}} foi entregue. Esperamos que goste! 💚', 'tpl-avaliacao'),
       ],
     },
   ]

@@ -3,6 +3,7 @@ import { dispatch } from '@/lib/demo/router'
 import { resetStore } from '@/lib/demo/store'
 import { DEMO_INSTANCE_ES, DEMO_INSTANCE_PT } from '@/lib/demo/seed/accounts'
 import { validateFlowJson } from '@/lib/flow-validation'
+import { SANDBOX_INSTANCE_NAME } from '@/lib/sandbox'
 import type { AutomationWithSteps, Flow, ProductLineWithProducts, Trigger } from '@/types'
 
 const flowsOf = async (instance: string) =>
@@ -21,6 +22,12 @@ describe('demo: fluxos, gatilhos e automações', () => {
       expect(validateFlowJson(flow.json)).toEqual({ ok: true })
       expect(flow.json.nodes.length).toBeGreaterThan(3)
     }
+  })
+
+  it('os fluxos da conta sandbox também passam na validação real', async () => {
+    const flows = await flowsOf(SANDBOX_INSTANCE_NAME)
+    expect(flows).toHaveLength(3)
+    for (const flow of flows) expect(validateFlowJson(flow.json)).toEqual({ ok: true })
   })
 
   it('cria, edita e apaga um fluxo', async () => {
