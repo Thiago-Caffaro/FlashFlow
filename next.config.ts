@@ -1,6 +1,8 @@
 import type { NextConfig } from 'next'
 
 const isDev = process.env.NODE_ENV === 'development'
+// Build estático da demo (GitHub Pages) — ver scripts/build-demo.js
+const isDemo = process.env.NEXT_PUBLIC_DEMO_MODE === '1'
 
 // Origem do Supabase Storage — as imagens da galeria de mídia dos fluxos
 // (components/gallery/gallery-tab.tsx) e mensagens de imagem apontam
@@ -41,7 +43,7 @@ const securityHeaders = [
   { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
 ]
 
-const nextConfig: NextConfig = {
+const serverConfig: NextConfig = {
   output: 'standalone',
   async headers() {
     return [
@@ -52,5 +54,18 @@ const nextConfig: NextConfig = {
     ]
   },
 }
+
+// O Pages só serve ficheiros: sem headers() (não os aplicaria) e com o site
+// sob /FlashFlow. O typecheck corre à parte (`tsc --noEmit`); aqui é ignorado
+// porque os testes importam rotas de `app/api`, que o build da demo afasta.
+const demoConfig: NextConfig = {
+  output: 'export',
+  basePath: '/FlashFlow',
+  trailingSlash: true,
+  images: { unoptimized: true },
+  typescript: { ignoreBuildErrors: true },
+}
+
+const nextConfig: NextConfig = isDemo ? demoConfig : serverConfig
 
 export default nextConfig
