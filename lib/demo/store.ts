@@ -1,6 +1,21 @@
-import type { AISession, Account, AppNotification, Conversation, Flow, Message, MessageVariable } from '@/types'
+import type {
+  AISession,
+  Account,
+  AppNotification,
+  AutomationWithSteps,
+  CatalogProductOption,
+  Conversation,
+  Flow,
+  FlowMedia,
+  Message,
+  MessageVariable,
+  ProductLineWithProducts,
+  Trigger,
+} from '@/types'
 import { seedAccounts } from './seed/accounts'
+import { seedAutomations, seedCatalog, seedProductLines } from './seed/automations'
 import { seedAiSessions, seedChat, seedMessageVariables, seedNotifications } from './seed/conversations'
+import { seedFlowMedia, seedFlows, seedTemplates, seedTriggers, type DemoTemplate } from './seed/flows'
 
 // Estado em memória da demo. Nada é persistido: recarregar a página repõe
 // os dados de exemplo.
@@ -14,6 +29,12 @@ export interface DemoStore {
   notifications: AppNotification[]
   messageVariables: MessageVariable[]
   flows: Flow[]
+  triggers: Trigger[]
+  flowMedia: FlowMedia[]
+  templates: DemoTemplate[]
+  automations: AutomationWithSteps[]
+  productLines: ProductLineWithProducts[]
+  catalog: CatalogProductOption[]
 }
 
 function createStore(): DemoStore {
@@ -26,7 +47,13 @@ function createStore(): DemoStore {
     aiSessions: seedAiSessions(),
     notifications: seedNotifications(),
     messageVariables: seedMessageVariables(),
-    flows: [],
+    flows: seedFlows(),
+    triggers: seedTriggers(),
+    flowMedia: seedFlowMedia(),
+    templates: seedTemplates(),
+    automations: seedAutomations(),
+    productLines: seedProductLines(),
+    catalog: seedCatalog(),
   }
 }
 

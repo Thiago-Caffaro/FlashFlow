@@ -1,6 +1,8 @@
 import { registerAccountHandlers } from './accounts'
 import { registerAuthHandlers } from './auth'
+import { registerAutomationHandlers } from './automations'
 import { registerChatHandlers } from './chat'
+import { registerFlowHandlers } from './flows'
 
 let registered = false
 
@@ -11,4 +13,6 @@ export function registerDemoHandlers(): void {
   registerAuthHandlers()
   registerAccountHandlers()
   registerChatHandlers()
+  registerFlowHandlers()
+  registerAutomationHandlers()
 }
